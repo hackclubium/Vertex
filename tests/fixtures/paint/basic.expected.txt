@@ -1,0 +1,4 @@
+box x=16 y=0 w=768 h=20 text="html"
+box x=32 y=0 w=736 h=20 text="body"
+box x=48 y=0 w=704 h=20 text="p"
+text x=64 y=0 w=672 h=20 text="Paint me"

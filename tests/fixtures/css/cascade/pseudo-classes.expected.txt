@@ -1,0 +1,9 @@
+first: color=1,0,0,1 
+middle: 
+last: bold=true 
+only: color=1,0,0,1 bold=true italic=true 
+empty: underline=true 
+not-empty: 
+link: fontSize=19 
+not-link: 
+hover-target: 

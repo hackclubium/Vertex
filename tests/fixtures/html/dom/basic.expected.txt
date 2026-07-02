@@ -1,0 +1,7 @@
+#document
+  <html>
+    <body>
+      <h1 id="title">
+        #text "Hi & bye"
+      <p>
+        #text "Second line"

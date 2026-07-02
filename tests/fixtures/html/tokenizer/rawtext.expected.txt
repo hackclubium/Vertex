@@ -1,0 +1,8 @@
+StartTag name=style
+Text data="p::before { content: \"<\"; }"
+EndTag name=style
+StartTag name=script
+Text data="if (a < b) run();"
+EndTag name=script
+Text data="\n"
+EOF

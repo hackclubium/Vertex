@@ -1,0 +1,16 @@
+ready: color=1,0,0,1 bold=true 
+busy: color=1,0,0,1 
+div-ready: 
+missing: 
+token-hit: color=0,0,1,1 
+token-miss: 
+dash-hit: bold=true 
+dash-exact: bold=true 
+dash-miss: 
+prefix-hit: fontSize=18 
+prefix-miss: 
+suffix-hit: marginTop=7 
+suffix-miss: 
+substring-hit: paddingLeft=5 
+substring-miss: 
+escaped-class: italic=true underline=true 

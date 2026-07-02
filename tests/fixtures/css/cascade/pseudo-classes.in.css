@@ -1,0 +1,6 @@
+section p:first-child { color: red; }
+section p:last-child { font-weight: bold; }
+#solo-wrap p:only-child { font-style: italic; }
+span:empty { text-decoration: underline; }
+a:link { font-size: 19px; }
+p:hover { color: blue; }

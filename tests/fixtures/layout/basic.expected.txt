@@ -1,0 +1,7 @@
+#document x=0 y=0 w=800 h=40
+  html x=16 y=0 w=768 h=40
+    body x=32 y=0 w=736 h=40
+      h1 x=48 y=0 w=704 h=20
+        #text x=64 y=0 w=672 h=20 text="Hello"
+      p x=48 y=20 w=704 h=20
+        #text x=64 y=20 w=672 h=20 text="World"

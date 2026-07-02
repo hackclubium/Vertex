@@ -1,0 +1,10 @@
+StartTag name=html
+StartTag name=body
+StartTag name=h1 attr.id="title"
+Text data="Hi & bye"
+EndTag name=h1
+StartTag name=br
+EndTag name=body
+EndTag name=html
+Text data="\n"
+EOF

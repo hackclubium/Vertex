@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><head><style>
+  body { margin: 0; }
+  .box { width: 1000px; }
+  .infobox { float: right; width: 300px; height: 400px; background: #ccc; }
+  .wrapper { }
+  p { margin: 0; }
+</style></head>
+<body>
+  <div class="box">
+    <div class="infobox">sidebar</div>
+    <div class="wrapper">
+      <p>Nested paragraph text that should still wrap to the left of the floated infobox even though it lives inside an extra wrapper div, because intruding floats propagate into nested in-flow block formatting unless a new block formatting context is established. Repeat repeat repeat repeat repeat repeat repeat repeat repeat repeat.</p>
+    </div>
+  </div>
+</body></html>

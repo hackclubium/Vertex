@@ -1,0 +1,2 @@
+rule tag=p class=note specificity=11 color=1,0,0,1 bold=true marginTop=12 marginRight=12 marginBottom=12 marginLeft=12 
+rule id=hero specificity=100 fontSize=22 

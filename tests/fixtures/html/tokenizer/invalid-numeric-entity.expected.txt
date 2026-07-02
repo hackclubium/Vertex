@@ -1,0 +1,5 @@
+StartTag name=p
+Text data="bad &#notanumber; ok A"
+EndTag name=p
+Text data="\n"
+EOF

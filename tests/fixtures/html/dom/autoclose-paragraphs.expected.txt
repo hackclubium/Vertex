@@ -1,0 +1,7 @@
+#document
+  <html>
+    <body>
+      <p>
+        #text "First"
+      <p>
+        #text "Second"

@@ -1,0 +1,9 @@
+p[data-state] { color: red; }
+p[data-state=ready] { font-weight: bold; }
+[data-tags~=beta] { color: blue; }
+[lang|=en] { font-weight: bold; }
+[data-code^=vertex] { font-size: 18px; }
+[data-file$=".css"] { margin-top: 7px; }
+[data-url*=css] { padding-left: 5px; }
+[class=second\ two] { font-style: italic; }
+[class="second two"] { text-decoration: underline; }
