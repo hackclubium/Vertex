@@ -245,6 +245,182 @@ static float ParseLineHeightValue(const std::string& raw, float baseFontSize) {
     return length > 0 ? length : 0;
 }
 
+static bool IsIgnoredCssKeyword(const std::string& raw) {
+    std::string v = sLower(sTrim(raw));
+    return v.empty() || v == "inherit" || v == "initial" || v == "unset";
+}
+
+static std::vector<std::string> SplitCssWhitespace(const std::string& raw) {
+    std::vector<std::string> out;
+    std::istringstream ss(raw);
+    std::string tok;
+    while (ss >> tok) out.push_back(tok);
+    return out;
+}
+
+static void ApplyMarginToken(float& side, const std::string& token) {
+    std::string v = sLower(sTrim(token));
+    if (v == "auto") {
+        side = kCssAuto;
+    } else if (!IsIgnoredCssKeyword(v)) {
+        float f = ParseLength(v);
+        if (f > -1e5f) side = f;
+    }
+}
+
+static void ApplyPaddingToken(float& side, const std::string& token) {
+    if (IsIgnoredCssKeyword(token)) return;
+    float f = ParseLength(token);
+    if (f >= 0) side = f;
+}
+
+static void ApplyInsetToken(float& side, bool& sideSet, bool& sidePercent, const std::string& token) {
+    std::string v = sTrim(token);
+    std::string low = sLower(v);
+    if (low == "auto" || IsIgnoredCssKeyword(low)) return;
+    sideSet = true;
+    float pct = ParsePercentage(v);
+    if (pct >= 0) {
+        side = pct;
+        sidePercent = true;
+    } else {
+        side = ParseLength(v);
+        sidePercent = false;
+    }
+}
+
+static bool ParseTransformLengthToken(const std::string& raw, float& value, bool& isPercent) {
+    std::string t = sTrim(raw);
+    if (t.empty()) return false;
+    isPercent = !t.empty() && t.back() == '%';
+    if (isPercent) {
+        try { value = std::stof(t.substr(0, t.size() - 1)); return true; } catch (...) { value = 0; return false; }
+    }
+    float f = ParseLength(t);
+    if (f <= -1e5f) {
+        try { f = std::stof(t); } catch (...) { return false; }
+    }
+    value = f;
+    return true;
+}
+
+static bool ParseAngleToken(const std::string& raw, float& degrees) {
+    std::string t = sLower(sTrim(raw));
+    if (t.empty()) return false;
+    try {
+        if (t.size() > 3 && t.substr(t.size() - 3) == "deg") {
+            degrees = std::stof(t.substr(0, t.size() - 3));
+            return true;
+        }
+        if (t.size() > 4 && t.substr(t.size() - 4) == "turn") {
+            degrees = std::stof(t.substr(0, t.size() - 4)) * 360.f;
+            return true;
+        }
+        if (t.size() > 3 && t.substr(t.size() - 3) == "rad") {
+            degrees = std::stof(t.substr(0, t.size() - 3)) * 57.2957795f;
+            return true;
+        }
+        degrees = std::stof(t);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static void ApplyDeclaration(const std::string& prop,
+                             const std::string& val,
+                             ComputedStyle& out);
+
+static bool ApplyLogicalDeclaration(const std::string& prop,
+                                    const std::string& val,
+                                    ComputedStyle& out) {
+    if (prop == "inline-size") { ApplyDeclaration("width", val, out); return true; }
+    if (prop == "block-size") { ApplyDeclaration("height", val, out); return true; }
+    if (prop == "min-inline-size") { ApplyDeclaration("min-width", val, out); return true; }
+    if (prop == "max-inline-size") { ApplyDeclaration("max-width", val, out); return true; }
+    if (prop == "min-block-size") { ApplyDeclaration("min-height", val, out); return true; }
+    if (prop == "max-block-size") { ApplyDeclaration("max-height", val, out); return true; }
+
+    if (prop == "margin-inline") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyMarginToken(out.marginLeft, vals[0]);
+            ApplyMarginToken(out.marginRight, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "margin-block") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyMarginToken(out.marginTop, vals[0]);
+            ApplyMarginToken(out.marginBottom, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "margin-inline-start") { ApplyMarginToken(out.marginLeft, val); return true; }
+    if (prop == "margin-inline-end") { ApplyMarginToken(out.marginRight, val); return true; }
+    if (prop == "margin-block-start") { ApplyMarginToken(out.marginTop, val); return true; }
+    if (prop == "margin-block-end") { ApplyMarginToken(out.marginBottom, val); return true; }
+
+    if (prop == "padding-inline") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyPaddingToken(out.paddingLeft, vals[0]);
+            ApplyPaddingToken(out.paddingRight, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "padding-block") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyPaddingToken(out.paddingTop, vals[0]);
+            ApplyPaddingToken(out.paddingBottom, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "padding-inline-start") { ApplyPaddingToken(out.paddingLeft, val); return true; }
+    if (prop == "padding-inline-end") { ApplyPaddingToken(out.paddingRight, val); return true; }
+    if (prop == "padding-block-start") { ApplyPaddingToken(out.paddingTop, val); return true; }
+    if (prop == "padding-block-end") { ApplyPaddingToken(out.paddingBottom, val); return true; }
+
+    if (prop == "inset") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            const std::string& top = vals[0];
+            const std::string& right = vals.size() > 1 ? vals[1] : vals[0];
+            const std::string& bottom = vals.size() > 2 ? vals[2] : vals[0];
+            const std::string& left = vals.size() > 3 ? vals[3] : right;
+            ApplyInsetToken(out.top, out.topSet, out.topPercent, top);
+            ApplyInsetToken(out.right, out.rightSet, out.rightPercent, right);
+            ApplyInsetToken(out.bottom, out.bottomSet, out.bottomPercent, bottom);
+            ApplyInsetToken(out.left, out.leftSet, out.leftPercent, left);
+        }
+        return true;
+    }
+    if (prop == "inset-inline") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyInsetToken(out.left, out.leftSet, out.leftPercent, vals[0]);
+            ApplyInsetToken(out.right, out.rightSet, out.rightPercent, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "inset-block") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyInsetToken(out.top, out.topSet, out.topPercent, vals[0]);
+            ApplyInsetToken(out.bottom, out.bottomSet, out.bottomPercent, vals.size() > 1 ? vals[1] : vals[0]);
+        }
+        return true;
+    }
+    if (prop == "inset-inline-start") { ApplyInsetToken(out.left, out.leftSet, out.leftPercent, val); return true; }
+    if (prop == "inset-inline-end") { ApplyInsetToken(out.right, out.rightSet, out.rightPercent, val); return true; }
+    if (prop == "inset-block-start") { ApplyInsetToken(out.top, out.topSet, out.topPercent, val); return true; }
+    if (prop == "inset-block-end") { ApplyInsetToken(out.bottom, out.bottomSet, out.bottomPercent, val); return true; }
+
+    return false;
+}
+
 static bool IsHexDigit(char c) {
     return std::isxdigit((unsigned char)c) != 0;
 }
@@ -601,6 +777,8 @@ static bool ParseLinearGradient(const std::string& raw, ComputedStyle& out) {
 static void ApplyDeclaration(const std::string& prop,
                              const std::string& val,
                              ComputedStyle& out) {
+    if (ApplyLogicalDeclaration(prop, val, out)) return;
+
     if (prop == "color") {
         out.color = ParseCssColor(val);
     } else if (prop == "background-color") {
@@ -1235,6 +1413,41 @@ static void ApplyDeclaration(const std::string& prop,
                     out.transformRotate = fargs[0];
                 }
                 pos = end + 1;
+            }
+        }
+    } else if (prop == "translate") {
+        std::string low = sLower(sTrim(val));
+        if (low != "none" && !IsIgnoredCssKeyword(low)) {
+            auto vals = SplitCssWhitespace(val);
+            float tx = 0, ty = 0;
+            bool txPct = false, tyPct = false;
+            if (!vals.empty() && ParseTransformLengthToken(vals[0], tx, txPct)) {
+                if (vals.size() > 1) ParseTransformLengthToken(vals[1], ty, tyPct);
+                out.transformSet = true;
+                out.transformTx = tx;
+                out.transformTy = ty;
+                out.transformTxPercent = txPct;
+                out.transformTyPercent = tyPct;
+            }
+        }
+    } else if (prop == "scale") {
+        std::string low = sLower(sTrim(val));
+        if (low != "none" && !IsIgnoredCssKeyword(low)) {
+            auto vals = SplitCssWhitespace(val);
+            if (!vals.empty()) {
+                try {
+                    out.transformSet = true;
+                    out.transformScale = std::stof(vals[0]);
+                } catch (...) {}
+            }
+        }
+    } else if (prop == "rotate") {
+        std::string low = sLower(sTrim(val));
+        if (low != "none" && !IsIgnoredCssKeyword(low)) {
+            float degrees = 0;
+            if (ParseAngleToken(val, degrees)) {
+                out.transformSet = true;
+                out.transformRotate = degrees;
             }
         }
     } else if (prop == "object-fit") {
@@ -2685,6 +2898,7 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.widthCalcPercent >= 0) out << "widthCalc=" << style.widthCalcPercent << "%+" << style.widthCalcOffset << " ";
     if (style.height       >= 0) out << "height="       << style.height       << " ";
     if (style.maxWidth     >= 0) out << "maxWidth="     << style.maxWidth     << " ";
+    if (style.minWidth     >= 0) out << "minWidth="     << style.minWidth     << " ";
     if (style.minHeight    >= 0) out << "minHeight="    << style.minHeight    << " ";
     if (style.maxHeight    >= 0) out << "maxHeight="    << style.maxHeight    << " ";
     if (style.contentSet) out << "content=" << style.content << " ";

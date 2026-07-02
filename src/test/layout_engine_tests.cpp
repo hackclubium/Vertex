@@ -647,6 +647,44 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    // MediaWiki/Vector increasingly uses logical sizing and inset properties.
+    // The search row should resolve those aliases before layout so the input,
+    // language picker, and submit button keep a single stable row.
+    {
+        auto ldom = ParseHtml(
+            "<html><body><form id=\"search\">"
+            "<div id=\"search-input\"><input id=\"q\" type=\"search\"><div id=\"picker\"><select id=\"lang\"><option>Afrikaans</option></select></div></div>"
+            "<button id=\"go\">Search</button>"
+            "</form></body></html>");
+        auto lsheet = ParseStylesheet(
+            "#search { inline-size:360px; margin:0; }"
+            "#search-input { display:inline-block; position:relative; inline-size:calc(100% - 64px); block-size:44px; vertical-align:top; }"
+            "#q { inline-size:100%; block-size:100%; }"
+            "#picker { position:absolute; inset-inline-end:0; inset-block-start:0; inline-size:120px; block-size:44px; }"
+            "#lang { inline-size:100%; block-size:100%; }"
+            "#go { display:inline-block; inline-size:64px; min-block-size:44px; padding:0; vertical-align:top; }");
+        FixedMeasure lmeasure;
+        LayoutInput lin; lin.document = ldom.get(); lin.sheet = &lsheet;
+        lin.measure = &lmeasure; lin.viewportW = 800.f; lin.viewportH = 400.f;
+        auto ll = LayoutDocument(lin);
+        auto* wrap = FindEngineBoxById(ll.get(), "search-input");
+        auto* q = FindEngineBoxById(ll.get(), "q");
+        auto* picker = FindEngineBoxById(ll.get(), "picker");
+        auto* lang = FindEngineBoxById(ll.get(), "lang");
+        auto* go = FindEngineBoxById(ll.get(), "go");
+        bool ok = wrap && q && picker && lang && go
+            && std::abs(wrap->contentW - 296.f) < 1.f
+            && std::abs(q->contentW - 296.f) < 1.f
+            && std::abs(picker->x - (wrap->contentX() + wrap->contentW - picker->borderBoxW())) < 1.f
+            && std::abs(lang->contentH - 44.f) < 1.f
+            && go->x >= wrap->x + wrap->borderBoxW() - 1.f
+            && std::abs(go->y - wrap->y) < 1.f;
+        ExpectEqual("layout-engine/wikipedia-search-row-logical-properties",
+            ok ? "logical-row\n" : "broken-row\n",
+            "logical-row\n",
+            result);
+    }
+
     // Dense language lists should wrap into multiple inline lines inside the
     // container instead of overflowing as one massive line.
     {

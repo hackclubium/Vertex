@@ -320,6 +320,23 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><div id=\"logo\"></div></body></html>");
+        auto sheet = ParseStylesheet("#logo { translate: -50% -25%; scale: 1.5; rotate: -12deg; }");
+        auto* node = FindElementById(dom.get(), "logo");
+        auto cs = sheet.resolve(node);
+        char buf[256];
+        snprintf(buf, sizeof buf,
+            "tx=%g txPct=%d ty=%g tyPct=%d scale=%g rotate=%g\n",
+            cs.transformTx, cs.transformTxPercent ? 1 : 0,
+            cs.transformTy, cs.transformTyPercent ? 1 : 0,
+            cs.transformScale, cs.transformRotate);
+        ExpectEqual("css/transform/individual-translate-scale-rotate",
+            std::string(buf),
+            "tx=-50 txPct=1 ty=-25 tyPct=1 scale=1.5 rotate=-12\n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><p id=\"copy\"></p></body></html>");
         auto sheet = ParseStylesheet("#copy { font: italic 700 18px/27px \"Times New Roman\", serif; }");
         auto* node = FindElementById(dom.get(), "copy");
@@ -522,6 +539,26 @@ TestResult RunCssTests() {
             actual,
             "search: paddingLeft=12 width=96 height=44 \n"
             "lang: fontSize=10 height=24 \n",
+            result);
+    }
+
+    {
+        auto dom = ParseHtml("<html><body><div id=\"portal\"><form id=\"search\"></form><div id=\"picker\"></div></div></body></html>");
+        auto* search = FindElementById(dom.get(), "search");
+        auto* picker = FindElementById(dom.get(), "picker");
+        auto sheet = ParseStylesheet(
+            "#search { inline-size: calc(100% - 56px); block-size: 44px; "
+            "margin-inline: auto 8px; padding-block: 4px 6px; padding-inline: 12px 20px; }"
+            "#picker { position:absolute; inset-inline-end: 0; inset-block-start: 50%; "
+            "min-inline-size: 120px; max-inline-size: 180px; min-block-size: 24px; max-block-size: 44px; }");
+        std::string actual = "search: ";
+        actual += search ? SerializeComputedStyle(sheet.resolve(search)) : "missing\n";
+        actual += "picker: ";
+        actual += picker ? SerializeComputedStyle(sheet.resolve(picker)) : "missing\n";
+        ExpectEqual("css/cascade/logical-sizing-spacing-and-insets",
+            actual,
+            "search: marginRight=8 marginLeft=-2 paddingTop=4 paddingRight=20 paddingBottom=6 paddingLeft=12 widthCalc=100%+-56 height=44 \n"
+            "picker: maxWidth=180 minWidth=120 minHeight=24 maxHeight=44 position=absolute top=50 right=0 \n",
             result);
     }
 
