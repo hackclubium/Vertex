@@ -539,6 +539,63 @@ static std::string RunRequestResponseConstructorSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunUrlSearchParamsFormDataSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var params = new URLSearchParams({ q: 'hello world', empty: '', plus: 'a+b' });\n"
+        "params.append('q', 'second');\n"
+        "var before = params.get('q') + ':' + params.getAll('q').join('|') + ':' + params.has('empty') + ':' + params.toString();\n"
+        "params.sort();\n"
+        "var sorted = params.toString();\n"
+        "var copied = new URLSearchParams(params);\n"
+        "copied.delete('empty');\n"
+        "var fd = new FormData();\n"
+        "fd.append('title', 'Vertex');\n"
+        "fd.append('title', 'Browser');\n"
+        "fd.set('action', 'edit');\n"
+        "fd.set('title', 'Final');\n"
+        "var fdLog = fd.get('title') + ':' + fd.getAll('title').join('|') + ':' + fd.has('action');\n"
+        "fd.delete('action');\n"
+        "fdLog = fdLog + ':' + fd.has('action');\n"
+        "document.body.setAttribute('data-result', before + '|' + sorted + '|' + copied.toString() + '|' + fdLog);\n",
+        "urlsearchparams-formdata");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunFetchBodyInitAndEventSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><button id=\"btn\"></button></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var fd = new FormData();\n"
+        "fd.append('title', 'Vertex');\n"
+        "fd.append('space value', 'a b');\n"
+        "var req = new Request('/submit', { method: 'post', body: fd });\n"
+        "globalThis.blobText = 'pending';\n"
+        "globalThis.plainText = 'pending';\n"
+        "var res = new Response(fd, { headers: { 'Content-Type': 'text/custom' } });\n"
+        "res.blob().then(function(blob) { globalThis.blobText = blob.size + ':' + blob.type; });\n"
+        "res.text().then(function(text) { globalThis.plainText = text; });\n"
+        "var btn = document.getElementById('btn');\n"
+        "var eventLog = '';\n"
+        "btn.addEventListener('keydown', function(e) { eventLog = e.type + ':' + e.key + ':' + e.code + ':' + e.bubbles + ':' + e.cancelable; });\n"
+        "btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));\n"
+        "globalThis.req = req;\n"
+        "globalThis.eventLog = eventLog;\n"
+        "fetch-body-event");
+    if (!ok) return "script failed\n";
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', globalThis.req.method + ':' + globalThis.req.headers.get('content-type') + ':' + globalThis.req.bodyUsed + '|' + globalThis.eventLog + '|' + globalThis.blobText + '|' + globalThis.plainText);\n",
+        "fetch-body-event-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 static std::string RunPromiseConstructorCombinatorsSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body></body></html>");
@@ -1040,6 +1097,18 @@ TestResult RunJsTests() {
         "js/async/request-response-constructors",
         RunRequestResponseConstructorSnapshot(),
         "https://example.org/api/data:POST:1:false|true:201:Created:text/plain:false:true:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/urlsearchparams-formdata",
+        RunUrlSearchParamsFormDataSnapshot(),
+        "hello world:hello world|second:true:q=hello+world&empty=&plus=a%2Bb&q=second|empty=&plus=a%2Bb&q=hello+world&q=second|plus=a%2Bb&q=hello+world&q=second|Final:Final:true:false\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/fetch-body-init-and-events",
+        RunFetchBodyInitAndEventSnapshot(),
+        "POST:application/x-www-form-urlencoded;charset=UTF-8:false|keydown:Enter:Enter:true:true|28:text/custom|title=Vertex&space+value=a+b\n",
         result);
 
     ExpectEqual(

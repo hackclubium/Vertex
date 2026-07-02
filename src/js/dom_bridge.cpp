@@ -330,6 +330,18 @@ static JsValue makeEventObject(VM& vm, const std::string& ctorName, const std::s
     ev->setProp("timeStamp", JsValue::number((double)std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count() / 1000.0));
     if (ctorName == "CustomEvent") ev->setProp("detail", detail);
+    if (options.isObject()) {
+        auto* opts = options.asObject();
+        static const char* passthrough[] = {
+            "key", "code", "altKey", "ctrlKey", "shiftKey", "metaKey",
+            "clientX", "clientY", "screenX", "screenY", "button", "buttons",
+            "deltaX", "deltaY", "deltaZ", "inputType", "data"
+        };
+        for (const char* prop : passthrough) {
+            JsValue value = opts->getProp(prop);
+            if (!value.isUndefined()) ev->setProp(prop, value);
+        }
+    }
     installEventMethods(vm, ev);
     addNative(vm, ev, "initEvent", [ev](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
         ev->setProp("type", args.empty() ? JsValue::undefined() : args[0]);
@@ -2010,12 +2022,54 @@ static std::string serializeQueryPairs(const QueryPairs& pairs) {
     return out;
 }
 
-static JsValue makeURLSearchParams(VM& vm, const std::string& query, std::function<void(const std::string&)> onChange = {}) {
-    auto pairs = std::make_shared<QueryPairs>(parseQueryPairs(query));
+static void syncFormEncodedBody(VM& vm, JsObject* obj, const QueryPairs& pairs, const std::string& type) {
+    if (!obj) return;
+    obj->setProp("__vertexBodyText", vm.str(serializeQueryPairs(pairs)));
+    obj->setProp("__vertexBodyType", vm.str(type));
+}
+
+static QueryPairs queryPairsFromInit(VM& vm, JsValue init) {
+    if (init.isNullOrUndefined()) return {};
+    if (!init.isObject()) return parseQueryPairs(init.toString());
+    JsObject* obj = init.asObject();
+    JsValue bodyText = obj->getProp("__vertexBodyText");
+    if (!bodyText.isUndefined()) return parseQueryPairs(bodyText.toString());
+    if (obj->kind == ObjKind::Array) {
+        QueryPairs pairs;
+        for (uint32_t i = 0; i < obj->arrayLength(); ++i) {
+            JsValue pairVal = obj->arrayGet(i);
+            if (!pairVal.isObject()) continue;
+            JsObject* pairObj = pairVal.asObject();
+            pairs.push_back({ pairObj->arrayGet(0).toString(), pairObj->arrayGet(1).toString() });
+        }
+        return pairs;
+    }
+    JsValue toStringFn = obj->getProp("toString");
+    if (toStringFn.isCallable() && obj->hasOwn("__vertexUrlSearchParams"))
+        return parseQueryPairs(vm.call(toStringFn, init, {}).toString());
+    QueryPairs pairs;
+    for (const auto& key : obj->ownEnumKeys()) {
+        if (key.rfind("__vertex", 0) == 0) continue;
+        JsValue value = obj->getProp(key);
+        if (!value.isCallable())
+            pairs.push_back({ key, value.isNullOrUndefined() ? "" : value.toString() });
+    }
+    return pairs;
+}
+
+static JsValue makeURLSearchParams(VM& vm, QueryPairs initial, std::function<void(const std::string&)> onChange = {}) {
+    auto pairs = std::make_shared<QueryPairs>(std::move(initial));
     auto notify = [pairs, onChange]() {
         if (onChange) onChange(serializeQueryPairs(*pairs));
     };
     auto* params = vm.gc().newObject(ObjKind::Plain);
+    params->setProp("__vertexUrlSearchParams", JsValue::boolean(true));
+    syncFormEncodedBody(vm, params, *pairs, "application/x-www-form-urlencoded;charset=UTF-8");
+    VM* vmPtr = &vm;
+    auto syncAndNotify = [params, pairs, notify, vmPtr]() {
+        syncFormEncodedBody(*vmPtr, params, *pairs, "application/x-www-form-urlencoded;charset=UTF-8");
+        notify();
+    };
     addNative(vm, params, "get", [pairs](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
         std::string key = args.empty() ? "" : args[0].toString();
         for (const auto& pair : *pairs)
@@ -2040,7 +2094,7 @@ static JsValue makeURLSearchParams(VM& vm, const std::string& query, std::functi
             if (pair.first == key) return JsValue::boolean(true);
         return JsValue::boolean(false);
     });
-    addNative(vm, params, "set", [pairs, notify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+    addNative(vm, params, "set", [pairs, syncAndNotify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
         std::string key = args.empty() ? "" : args[0].toString();
         std::string value = args.size() > 1 ? args[1].toString() : "";
         bool replaced = false;
@@ -2051,25 +2105,123 @@ static JsValue makeURLSearchParams(VM& vm, const std::string& query, std::functi
             } else ++it;
         }
         if (!replaced) pairs->push_back({ key, value });
-        notify();
+        syncAndNotify();
         return JsValue::undefined();
     });
-    addNative(vm, params, "append", [pairs, notify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+    addNative(vm, params, "append", [pairs, syncAndNotify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
         pairs->push_back({ args.empty() ? "" : args[0].toString(), args.size() > 1 ? args[1].toString() : "" });
-        notify();
+        syncAndNotify();
         return JsValue::undefined();
     });
-    addNative(vm, params, "delete", [pairs, notify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+    addNative(vm, params, "delete", [pairs, syncAndNotify](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
         std::string key = args.empty() ? "" : args[0].toString();
         pairs->erase(std::remove_if(pairs->begin(), pairs->end(),
             [&](const auto& pair) { return pair.first == key; }), pairs->end());
-        notify();
+        syncAndNotify();
+        return JsValue::undefined();
+    });
+    addNative(vm, params, "sort", [pairs, syncAndNotify](VM&, JsValue, std::vector<JsValue>) -> JsValue {
+        std::stable_sort(pairs->begin(), pairs->end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+        syncAndNotify();
         return JsValue::undefined();
     });
     addNative(vm, params, "toString", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
         return vm.str(serializeQueryPairs(*pairs));
     });
+    addNative(vm, params, "forEach", [pairs](VM& vm, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+        if (args.empty() || !args[0].isCallable()) return JsValue::undefined();
+        JsValue thisArg = args.size() > 1 ? args[1] : JsValue::undefined();
+        auto snapshot = *pairs;
+        for (const auto& pair : snapshot)
+            vm.call(args[0], thisArg, { vm.str(pair.second), vm.str(pair.first), thisVal });
+        return JsValue::undefined();
+    });
+    addNative(vm, params, "keys", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) arr->arrayPush(vm.str(pair.first));
+        return JsValue::object(arr);
+    });
+    addNative(vm, params, "values", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) arr->arrayPush(vm.str(pair.second));
+        return JsValue::object(arr);
+    });
+    addNative(vm, params, "entries", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) {
+            auto* entry = newArrayWithPrototype(vm);
+            entry->arrayPush(vm.str(pair.first));
+            entry->arrayPush(vm.str(pair.second));
+            arr->arrayPush(JsValue::object(entry));
+        }
+        return JsValue::object(arr);
+    });
     return JsValue::object(params);
+}
+
+static JsValue makeURLSearchParams(VM& vm, const std::string& query, std::function<void(const std::string&)> onChange = {}) {
+    return makeURLSearchParams(vm, parseQueryPairs(query), std::move(onChange));
+}
+
+static JsValue makeFormData(VM& vm, QueryPairs initial = {}) {
+    auto pairs = std::make_shared<QueryPairs>(std::move(initial));
+    auto* form = vm.gc().newObject(ObjKind::Plain);
+    form->setProp("__vertexFormData", JsValue::boolean(true));
+    syncFormEncodedBody(vm, form, *pairs, "application/x-www-form-urlencoded;charset=UTF-8");
+    VM* vmPtr = &vm;
+    auto sync = [form, pairs, vmPtr]() {
+        syncFormEncodedBody(*vmPtr, form, *pairs, "application/x-www-form-urlencoded;charset=UTF-8");
+    };
+    addNative(vm, form, "append", [pairs, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        pairs->push_back({ args.empty() ? "" : args[0].toString(), args.size() > 1 ? args[1].toString() : "" });
+        sync();
+        return JsValue::undefined();
+    });
+    addNative(vm, form, "set", [pairs, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string key = args.empty() ? "" : args[0].toString();
+        std::string value = args.size() > 1 ? args[1].toString() : "";
+        pairs->erase(std::remove_if(pairs->begin(), pairs->end(),
+            [&](const auto& pair) { return pair.first == key; }), pairs->end());
+        pairs->push_back({ key, value });
+        sync();
+        return JsValue::undefined();
+    });
+    addNative(vm, form, "get", [pairs](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string key = args.empty() ? "" : args[0].toString();
+        for (const auto& pair : *pairs)
+            if (pair.first == key) return vm.str(pair.second);
+        return JsValue::null();
+    });
+    addNative(vm, form, "getAll", [pairs](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string key = args.empty() ? "" : args[0].toString();
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs)
+            if (pair.first == key) arr->arrayPush(vm.str(pair.second));
+        return JsValue::object(arr);
+    });
+    addNative(vm, form, "has", [pairs](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string key = args.empty() ? "" : args[0].toString();
+        for (const auto& pair : *pairs)
+            if (pair.first == key) return JsValue::boolean(true);
+        return JsValue::boolean(false);
+    });
+    addNative(vm, form, "delete", [pairs, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string key = args.empty() ? "" : args[0].toString();
+        pairs->erase(std::remove_if(pairs->begin(), pairs->end(),
+            [&](const auto& pair) { return pair.first == key; }), pairs->end());
+        sync();
+        return JsValue::undefined();
+    });
+    addNative(vm, form, "forEach", [pairs](VM& vm, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+        if (args.empty() || !args[0].isCallable()) return JsValue::undefined();
+        JsValue thisArg = args.size() > 1 ? args[1] : JsValue::undefined();
+        auto snapshot = *pairs;
+        for (const auto& pair : snapshot)
+            vm.call(args[0], thisArg, { vm.str(pair.second), vm.str(pair.first), thisVal });
+        return JsValue::undefined();
+    });
+    return JsValue::object(form);
 }
 
 static JsValue makeStorageObject(VM& vm, std::shared_ptr<std::map<std::string, std::string>> storage) {
@@ -2222,6 +2374,26 @@ static HeaderStore headersFromInit(JsValue init) {
         if (!value.isCallable()) headersSet(headers, key, value.toString());
     }
     return headers;
+}
+
+static std::string bodyFromInit(JsValue init, std::string* typeOut = nullptr) {
+    if (typeOut) typeOut->clear();
+    if (init.isNullOrUndefined()) return "";
+    if (init.isObject()) {
+        JsObject* obj = init.asObject();
+        JsValue bodyText = obj->getProp("__vertexBodyText");
+        if (!bodyText.isUndefined()) {
+            JsValue bodyType = obj->getProp("__vertexBodyType");
+            if (typeOut && !bodyType.isUndefined()) *typeOut = bodyType.toString();
+            return bodyText.toString();
+        }
+    }
+    return init.toString();
+}
+
+static std::string headerValue(const HeaderStore& headers, const std::string& name) {
+    auto it = headers.find(normalizeHeaderName(name));
+    return it == headers.end() ? "" : it->second.second;
 }
 
 static void installBodyMethods(VM& vm, JsObject* target, const std::string& body, const std::string& type) {
@@ -2658,8 +2830,13 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
 
     vm.setGlobal("URLSearchParams", JsValue::object(vm.gc().newNativeFunction(
         [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
-            return makeURLSearchParams(vm, args.empty() ? "" : args[0].toString());
+            return makeURLSearchParams(vm, queryPairsFromInit(vm, args.empty() ? JsValue::undefined() : args[0]));
         }, "URLSearchParams")));
+
+    vm.setGlobal("FormData", JsValue::object(vm.gc().newNativeFunction(
+        [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            return makeFormData(vm, queryPairsFromInit(vm, args.empty() ? JsValue::undefined() : args[0]));
+        }, "FormData")));
 
     vm.setGlobal("URL", JsValue::object(vm.gc().newNativeFunction(
         [pageUrl](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
@@ -2812,6 +2989,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             std::string method = "GET";
             HeaderStore headers;
             std::string body;
+            std::string bodyType;
             if (input.isObject()) {
                 JsObject* inputObj = input.asObject();
                 JsValue inputUrl = inputObj->getProp("url");
@@ -2829,10 +3007,13 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 JsValue optHeaders = options->getProp("headers");
                 if (!optHeaders.isUndefined()) headers = headersFromInit(optHeaders);
                 JsValue optBody = options->getProp("body");
-                if (!optBody.isUndefined() && !optBody.isNull()) body = optBody.toString();
+                if (!optBody.isUndefined() && !optBody.isNull())
+                    body = bodyFromInit(optBody, &bodyType);
             }
             std::transform(method.begin(), method.end(), method.begin(),
                 [](unsigned char c) { return (char)std::toupper(c); });
+            if (!body.empty() && !bodyType.empty() && headerValue(headers, "content-type").empty())
+                headersSet(headers, "content-type", bodyType);
             auto* request = vm.gc().newObject(ObjKind::Plain);
             request->setProp("url", vm.str(resolveDomUrl(url, baseUrl)));
             request->setProp("method", vm.str(method.empty() ? "GET" : method));
@@ -2869,6 +3050,8 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.setGlobal("Response", JsValue::object(vm.gc().newNativeFunction(
         NATIVE("Response") {
             std::string body = args.empty() || ARG(0).isNullOrUndefined() ? "" : ARG(0).toString();
+            std::string bodyType;
+            if (!args.empty()) body = bodyFromInit(ARG(0), &bodyType);
             JsObject* options = args.size() > 1 && ARG(1).isObject() ? ARG(1).asObject() : nullptr;
             int status = 200;
             std::string statusText = "OK";
@@ -2881,6 +3064,10 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 JsValue optHeaders = options->getProp("headers");
                 if (!optHeaders.isUndefined()) headers = headersFromInit(optHeaders);
             }
+            std::string responseType = headerValue(headers, "content-type");
+            if (responseType.empty()) responseType = bodyType;
+            if (!body.empty() && !bodyType.empty() && headerValue(headers, "content-type").empty())
+                headersSet(headers, "content-type", bodyType);
             auto* response = vm.gc().newObject(ObjKind::Plain);
             response->setProp("ok", JsValue::boolean(status >= 200 && status < 300));
             response->setProp("status", JsValue::integer(status));
@@ -2889,8 +3076,8 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             response->setProp("type", vm.str("default"));
             response->setProp("redirected", JsValue::boolean(false));
             response->setProp("headers", makeHeadersObject(vm, std::move(headers)));
-            installBodyMethods(vm, response, body, "");
-            addNative(vm, response, "clone", [body, status, statusText](VM& v, JsValue thisVal, std::vector<JsValue>) -> JsValue {
+            installBodyMethods(vm, response, body, responseType);
+            addNative(vm, response, "clone", [body, status, statusText, responseType](VM& v, JsValue thisVal, std::vector<JsValue>) -> JsValue {
                 auto* cloned = v.gc().newObject(ObjKind::Plain);
                 cloned->setProp("ok", JsValue::boolean(status >= 200 && status < 300));
                 cloned->setProp("status", JsValue::integer(status));
@@ -2899,7 +3086,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 cloned->setProp("type", v.str("default"));
                 cloned->setProp("redirected", JsValue::boolean(false));
                 cloned->setProp("headers", thisVal.isObject() ? thisVal.asObject()->getProp("headers") : makeHeadersObject(v));
-                installBodyMethods(v, cloned, body, "");
+                installBodyMethods(v, cloned, body, responseType);
                 return JsValue::object(cloned);
             });
             return JsValue::object(response);
