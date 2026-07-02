@@ -36,6 +36,28 @@ static auto& g_activeTab = g_chrome.state.activeTab;
 static auto& g_js        = g_chrome.state.js;
 static auto& g_formState = g_chrome.state.form;
 static auto& g_updater   = g_chrome.state.updater;
+
+static void SetLinuxWindowIcon(GtkWidget* window, const char* argv0) {
+    std::vector<std::string> candidates;
+    if (argv0 && *argv0) {
+        std::string exe(argv0);
+        size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos)
+            candidates.push_back(exe.substr(0, slash + 1) + "vertex_icon.png");
+    }
+    candidates.push_back("vertex_icon.png");
+    candidates.push_back("src/platform/vertex_icon.png");
+
+    for (const auto& path : candidates) {
+        if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) continue;
+        GError* error = nullptr;
+        if (gtk_window_set_icon_from_file(GTK_WINDOW(window), path.c_str(), &error)) {
+            if (error) g_error_free(error);
+            return;
+        }
+        if (error) g_error_free(error);
+    }
+}
 static Semaphore g_imageFetchGate(6);
 
 static std::unique_ptr<IPlatformRenderer> g_renderer;
@@ -463,6 +485,7 @@ int main(int argc, char* argv[]) {
     // Window
     g_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(g_window), "Vertex");
+    SetLinuxWindowIcon(g_window, argv[0]);
     gtk_window_set_default_size(GTK_WINDOW(g_window), 1280, 800);
     g_signal_connect(g_window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 

@@ -130,9 +130,13 @@ if (WIN32)
         target_link_options(Vertex PRIVATE /STACK:67108864)
     endif()
 elseif (APPLE)
+    set_source_files_properties(src/platform/vertex_icon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
     add_executable(Vertex MACOSX_BUNDLE
         src/platform/main_macos.mm
         src/platform/platform_macos.mm
+        src/platform/vertex_icon.icns
     )
     target_include_directories(Vertex PRIVATE src)
     target_link_libraries(Vertex PRIVATE
@@ -144,6 +148,7 @@ elseif (APPLE)
     set_target_properties(Vertex PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.vertex.browser"
         MACOSX_BUNDLE_BUNDLE_NAME "Vertex"
+        MACOSX_BUNDLE_ICON_FILE "vertex_icon.icns"
     )
 elseif (UNIX)
     find_package(PkgConfig REQUIRED)
@@ -155,6 +160,11 @@ elseif (UNIX)
     target_include_directories(Vertex PRIVATE src ${GTK3_INCLUDE_DIRS})
     target_link_libraries(Vertex PRIVATE vertex_engine ${GTK3_LIBRARIES})
     target_compile_options(Vertex PRIVATE ${GTK3_CFLAGS_OTHER})
+    add_custom_command(TARGET Vertex POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png
+            $<TARGET_FILE_DIR:Vertex>/vertex_icon.png
+    )
 endif()
 
 add_executable(vertex-tests

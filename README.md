@@ -1,81 +1,137 @@
 # Vertex
 
-![Vertex homepage](/src/screenshot.png)
+<p align="center">
+  <img src="src/screenshot.png" alt="Vertex browser screenshot" width="860">
+</p>
 
-![Release](https://img.shields.io/github/v/release/hackclubium/Vertex?style=flat-square)
-![Build](https://img.shields.io/github/actions/workflow/status/hackclubium/Vertex/release.yml?style=flat-square)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)
-![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white)
-![Engine](https://img.shields.io/badge/engine-from%20scratch-ff69b4?style=flat-square)
-![Stars](https://img.shields.io/github/stars/hackclubium/Vertex?style=flat-square)
+<p align="center">
+  <a href="https://github.com/hackclubium/Vertex/releases"><img alt="Release" src="https://img.shields.io/github/v/release/hackclubium/Vertex?style=for-the-badge"></a>
+  <a href="https://github.com/hackclubium/Vertex/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/hackclubium/Vertex/release.yml?style=for-the-badge"></a>
+  <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-1f6feb?style=for-the-badge&logo=cplusplus&logoColor=white">
+  <img alt="Engine" src="https://img.shields.io/badge/engine-from%20scratch-111827?style=for-the-badge">
+</p>
 
-**Vertex** is a web browser written from scratch in C++17, with its own HTML parser, DOM,
-CSS engine, JavaScript engine, layout engine, and renderer. No Chromium, no WebView2,
-no CEF, no QtWebEngine. Everything that makes it a browser is hand-built.
+<p align="center">
+  <strong>A tiny browser with a real engine inside it.</strong><br>
+  HTML, CSS, JavaScript, layout, SVG, painting, navigation, tabs, and native shells,
+  built in C++ without Chromium, WebView, CEF, QtWebEngine, or a borrowed browser core.
+</p>
 
-It runs on **Windows, macOS, and Linux** from a single shared engine, with a thin
-native shell on each platform.
+---
 
-## What's built from scratch
+Vertex is a from-scratch web browser project for people who want to see the browser
+as a thing you can open, inspect, change, break, fix, and understand.
 
-- **HTML**: tokenizer with 170+ named entities, tree-construction parser with implicit
-  element creation, auto-close rules, foster parenting, scope-aware end tags, and
-  formatting element adoption (864 lines)
-- **CSS**: 90+ properties, cascade with combinators, attribute selectors,
-  `:is()`/`:where()`, `@supports`, custom properties (`var()`), media queries,
-  `calc()`/`clamp()`/`min()`/`max()`, viewport
-  units, `box-sizing`, `object-fit`, flexbox (wrap/shrink/basis/align-self), grid,
-  tables, floats, positioning with percentage offsets, `text-align` (incl. justify),
-  `text-indent`, `text-decoration`, `vertical-align`, `linear-gradient()`,
-  `box-shadow`, `transform` (translate/scale/rotate), `overflow: auto/scroll`,
-  `:hover`/`:focus`/`:checked`/`:disabled`/`:enabled`, `:nth-child()`, `:not()`,
-  and `~` selectors, and more
-- **JavaScript**: lexer, parser, bytecode compiler, VM with 260+ native functions.
-  Supports classes, destructuring, template literals, `async`/`await`, optional
-  chaining (`?.`), nullish coalescing (`??`), `for...of`, real RegExp via `<regex>`,
-  `fetch()`, `getComputedStyle()`, DOM geometry APIs, observer APIs, `addEventListener`
-  with event bubbling, and external `<script src>` loading
-- **SVG**: rasterizer for inline and external SVG images. Supports rect/circle/ellipse,
-  line/polyline/polygon, path commands (`M/L/H/V/C/S/Q/T/A/Z`), text/tspan, nested
-  `<svg>`, `<g>`, defs/`<use>`/symbol reuse, linear/radial gradients, viewBox and
-  `preserveAspectRatio`, transforms, CSS class/style rules, opacity, stroke dash arrays,
-  line caps/joins, fill rules, and all CSS named colors
-- **Layout**: block, inline (with line breaking), float, table (auto column sizing),
-  flex (row/column, wrap, shrink, basis, align-self, justify-content, gap), grid
-  (column tracks), positioned (static/relative/absolute/fixed with % offsets)
-- **Rendering**: per-platform painter, DPI-aware, HiDPI scaling
-- **Forms**: interactive `<input>`/`<textarea>` with typing, cursor, and GET submission
-- **Auto-updater**: checks GitHub releases on startup, downloads in background,
-  one-click F12 to apply and restart
-- Tabs, per-tab history, zoom, find-in-page, async image loading (6 concurrent)
+It is not a Chromium wrapper wearing a custom toolbar. The interesting parts live in
+this repository: the parser, DOM, stylesheet engine, JavaScript runtime, box tree,
+layout algorithms, SVG renderer, painting path, resource cache, forms, event bridge,
+history, updater, and native application chrome.
 
-## Dependencies
+The goal is not to pretend the modern web is small. The goal is to make a browser
+engine that grows visibly, one compatibility pass at a time.
 
-Only three things are not hand-written:
+## What It Feels Like
 
-- **libcurl**: HTTP/HTTPS and TLS (you don't hand-roll TLS)
-- **stb_image**: JPEG/PNG/etc. decoding (vendored single header)
-- **OS drawing APIs**: Direct2D + DirectWrite (Windows), Core Graphics + Core Text
-  (macOS), GTK3 + Cairo + Pango (Linux). These only plot pixels, glyphs, and bitmaps;
-  all layout and paint logic is Vertex's own.
+Vertex is already a usable experimental browser shell:
+
+| Area | Status |
+|---|---|
+| Platforms | Windows, macOS, and Linux native shells over one shared engine |
+| Pages | Loads real HTTP/HTTPS pages, images, CSS, scripts, SVGs, and local `vertex://` pages |
+| UI | Tabs, address bar, history, reload/stop/home, zoom, find-in-page, status text |
+| Updates | GitHub release checking and background download, applied with `F12` |
+| Testing | Dedicated HTML, CSS, layout, paint, JS, network, and layout-engine suites |
+
+It is still young. Some sites will look strange, some JavaScript will hit missing
+APIs, and layout is still being expanded. That is the point: each weird page becomes
+a new piece of engine work.
+
+## The Engine
+
+Vertex is split into a portable browser engine plus thin native shells:
+
+```text
+          native shell
+   Windows / macOS / Linux
+              |
+              v
+        BrowserChrome
+ tabs, navigation, URL state, updater
+              |
+              v
+   HTML -> DOM -> CSS cascade -> layout tree -> paint
+              |
+              v
+       JS runtime + DOM bridge
+```
+
+The platform layer opens windows, receives input, and draws pixels. The engine decides
+what the page means, where boxes go, what scripts can touch, and what gets painted.
+
+### Built In This Repo
+
+- HTML tokenizer and parser with entity handling, autoclose behavior, rawtext, and
+  browser-style recovery paths.
+- CSS cascade with combinators, attributes, pseudo-classes, media/support queries,
+  custom properties, logical properties, transforms, gradients, flex, grid, tables,
+  floats, positioning, form styling, and viewport/math functions.
+- JavaScript lexer, parser, compiler, VM, native DOM bindings, timers, events,
+  promises, fetch surface, storage, selectors, geometry APIs, and observers.
+- Layout engine for block, inline, line boxes, floats, tables, flex, grid, replaced
+  elements, positioned boxes, scrolling, and dirty-layout invalidation.
+- SVG renderer for inline and external SVGs, paths, gradients, transforms, text,
+  symbols, `use`, class/style rules, stroke/fill behavior, and raster fallback.
+- Paint and hit testing for text, boxes, links, images, controls, SVG, hover, focus,
+  dirty regions, and cached rendering paths.
+
+### Not Built From Scratch
+
+Vertex intentionally uses a few low-level dependencies:
+
+| Dependency | Why |
+|---|---|
+| libcurl | HTTP/HTTPS and TLS |
+| stb_image | PNG/JPEG/etc. image decoding |
+| Direct2D / DirectWrite | Windows pixels and glyphs |
+| Core Graphics / Core Text | macOS pixels and glyphs |
+| GTK3 / Cairo / Pango | Linux windowing, pixels, and glyphs |
+
+Those libraries do not supply a browser engine. They do transport, decoding, windows,
+text shaping, and drawing. The browser behavior is Vertex.
+
+## Download
+
+Prebuilt releases are published here:
+
+[github.com/hackclubium/Vertex/releases](https://github.com/hackclubium/Vertex/releases)
+
+Release assets are produced by GitHub Actions whenever a tag is pushed:
+
+| Platform | Asset |
+|---|---|
+| Windows | `Vertex-windows.exe` |
+| macOS | `Vertex-macos.zip` |
+| Linux | `Vertex-linux` |
+
+Vertex also checks for newer GitHub releases on startup. When an update is ready,
+press `F12` to apply it.
 
 ## Build
 
-Requires **CMake 3.20+** and a C++17 compiler. The version is derived automatically
-from the latest git tag. libcurl is downloaded via CMake if a system copy isn't found.
+Vertex uses CMake and C++17. The app version is derived from the latest git tag.
 
 ### Windows
-Visual Studio build tools with the x64 C++ toolchain.
+
+Requires Visual Studio Build Tools with the x64 C++ toolchain.
 
 ```bat
 build.bat
-```
-```bat
 build\Release\Vertex.exe
 ```
 
 ### macOS
-Xcode command line tools.
+
+Requires Xcode command line tools.
 
 ```sh
 cmake -B build
@@ -84,7 +140,8 @@ open build/Vertex.app
 ```
 
 ### Linux
-GTK3 development headers (and ideally system libcurl):
+
+Requires GTK3 development headers.
 
 ```sh
 sudo apt-get install -y build-essential cmake libgtk-3-dev libcurl4-openssl-dev pkg-config
@@ -93,28 +150,23 @@ cmake --build build
 ./build/Vertex
 ```
 
-## Releases
-
-Prebuilt binaries for all three platforms are published on the
-[Releases page](https://github.com/hackclubium/Vertex/releases), built by CI on
-every tag. Vertex auto-updates: on startup it checks for a newer release and
-downloads it in the background. Press **F12** when the status bar shows an
-update is ready to apply it instantly.
-
-## Keyboard shortcuts
+## Controls
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+L | Focus address bar |
-| Ctrl+T / Ctrl+W | New / close tab |
-| Ctrl+R / F5 | Reload |
-| Ctrl+F | Find in page |
-| Ctrl+G / Ctrl+Shift+G | Find next / previous |
-| Ctrl++/- | Zoom in/out |
-| Alt+Left/Right | Back / forward |
-| F12 | Apply pending update |
+| `Ctrl+L` | Focus the address bar |
+| `Ctrl+T` / `Ctrl+W` | New tab / close tab |
+| `Ctrl+R` or `F5` | Reload |
+| `Ctrl+F` | Find in page |
+| `Ctrl+G` / `Ctrl+Shift+G` | Next / previous match |
+| `Ctrl++` / `Ctrl+-` | Zoom in / out |
+| `Alt+Left` / `Alt+Right` | Back / forward |
+| `F12` | Apply a downloaded update |
 
-## Running engine tests
+## Test The Engine
+
+The test runner is intentionally split by subsystem so compatibility work can stay
+small and measurable.
 
 ```bat
 build\Release\vertex-tests.exe html
@@ -123,17 +175,58 @@ build\Release\vertex-tests.exe layout
 build\Release\vertex-tests.exe paint
 build\Release\vertex-tests.exe js
 build\Release\vertex-tests.exe network
+build\Release\vertex-layout-engine-tests.exe
 ```
 
-Fixtures live under `tests/fixtures`. Each has an input file and an expected text
-snapshot. When engine behavior changes intentionally, change the implementation first,
-inspect the failing output, then update the snapshot only once the new behavior is correct.
-
-## Diagnostics
-
-Two offline tools render without the GUI, useful for debugging:
+For offline debugging:
 
 ```sh
-build/dump_layout page.html [viewportWidth]   # prints the box tree + geometry
-build/dump_js script.js                       # runs the JS engine
+build/dump_layout page.html [viewportWidth]
+build/dump_js script.js
 ```
+
+`dump_layout` is especially useful when a real site looks broken. It prints the box
+tree and geometry so layout bugs can be reduced into focused tests instead of guessed
+from screenshots.
+
+## Compatibility Philosophy
+
+Vertex improves by taking real web failures and turning them into small engine facts:
+
+1. Save or distill the page.
+2. Identify whether the failure is HTML, CSS, JS, layout, paint, network, or platform.
+3. Add the smallest regression that captures the behavior.
+4. Fix the engine.
+5. Keep the test forever.
+
+Wikipedia has been the main stress test because it exercises the sort of ordinary
+modern-web machinery that small browsers usually miss: ResourceLoader scripts, dense
+CSS, logical properties, SVG sprites, form controls, floats, positioned elements,
+selectors, events, history, scrolling, and lots of reused resources.
+
+## Project Shape
+
+```text
+src/
+  css/          stylesheet parsing, cascade, computed style
+  html/         tokenizer, parser, embedded resources
+  js/           lexer, compiler, VM, runtime, DOM bridge
+  layout/       box tree and layout engine
+  network/      fetcher, URL handling, cache, text decoding
+  paint/        display-list pieces
+  platform/     native shells and shared browser chrome
+  render/       painting, SVG, images, fonts
+  test/         subsystem and regression tests
+tools/
+  dump_layout   offline layout inspection
+  dump_js       offline JS execution
+```
+
+## Why Vertex Exists
+
+Browsers are usually treated like impossible magic: too large to touch, too tangled
+to learn, too industrial to build for fun.
+
+Vertex is the opposite bet. It says a browser can start small, stay readable, and
+still become real by accumulating correct behavior in public. Every feature is an
+invitation to understand one more piece of the web.
