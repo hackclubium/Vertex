@@ -114,6 +114,8 @@ struct ComputedStyle {
     float    widthCalcOffset  = 0;
     float    height       = -1;
     float    heightPercent = -1;
+    float    heightCalcPercent = -1;
+    float    heightCalcOffset  = 0;
     float    maxWidth     = -1;
     float    maxWidthPercent = -1;
     float    minWidth     = -1;
@@ -306,8 +308,9 @@ struct ComputedStyle {
         if (child.width        >= 0) { out.width = child.width; out.widthPercent = -1; out.widthCalcPercent = -1; out.widthCalcOffset = 0; }
         if (child.widthPercent >= 0) { out.widthPercent = child.widthPercent; out.width = -1; out.widthCalcPercent = -1; out.widthCalcOffset = 0; }
         if (child.widthCalcPercent >= 0) { out.widthCalcPercent = child.widthCalcPercent; out.widthCalcOffset = child.widthCalcOffset; out.width = -1; out.widthPercent = -1; }
-        if (child.height       >= 0) out.height    = child.height;
-        if (child.heightPercent >= 0) out.heightPercent = child.heightPercent;
+        if (child.height       >= 0) { out.height = child.height; out.heightPercent = -1; out.heightCalcPercent = -1; out.heightCalcOffset = 0; }
+        if (child.heightPercent >= 0) { out.heightPercent = child.heightPercent; out.height = -1; out.heightCalcPercent = -1; out.heightCalcOffset = 0; }
+        if (child.heightCalcPercent >= 0) { out.heightCalcPercent = child.heightCalcPercent; out.heightCalcOffset = child.heightCalcOffset; out.height = -1; out.heightPercent = -1; }
         if (child.maxWidth     >= 0) out.maxWidth  = child.maxWidth;
         if (child.maxWidthPercent >= 0) out.maxWidthPercent = child.maxWidthPercent;
         if (child.minWidth     >= 0) out.minWidth  = child.minWidth;

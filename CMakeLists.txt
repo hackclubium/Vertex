@@ -117,6 +117,7 @@ endif()
 if (WIN32)
     add_executable(Vertex WIN32
         src/main.cpp
+        src/platform/vertex.rc
         src/render/renderer.cpp
         src/render/box_paint.cpp
         src/platform/platform_win32.cpp

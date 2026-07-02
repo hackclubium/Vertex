@@ -11,6 +11,7 @@
 #include "layout/scroll.h"
 #include "render/renderer.h"
 #include "platform/form_state.h"
+#include "platform/resource.h"
 #include "platform/updater.h"
 #include "platform/chrome.h"
 #include "platform/chrome_theme.h"
@@ -1456,7 +1457,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     g_windowBrush = CreateSolidBrush(kChromePanel);
     wc.hbrBackground = g_windowBrush;
-    wc.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon         = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_VERTEX_APP));
+    wc.hIconSm       = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_VERTEX_APP),
+                                         IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
     RegisterClassExW(&wc);
 
     g_hwnd = CreateWindowExW(0,

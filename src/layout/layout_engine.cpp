@@ -697,6 +697,8 @@ struct Engine {
     }
     float usedHeight(const ComputedStyle& s, float cbH) {
         if (s.height >= 0) return px(s.height);
+        if (s.heightCalcPercent >= 0 && cbH >= 0)
+            return std::max(0.f, cbH * (s.heightCalcPercent / 100.f) + px(s.heightCalcOffset));
         if (s.heightPercent >= 0 && cbH >= 0) return cbH * (s.heightPercent / 100.f);
         return -1;  // auto
     }
@@ -954,6 +956,7 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
         for (auto* p : positioned) positionedOut.push_back(p);
         if (explicitH >= 0) box.contentH = explicitH;
     } else if (box.establishesInline) {
+        if (explicitH >= 0) box.contentH = explicitH;
         FloatCtx local;
         local.cbLeft = box.contentX();
         local.cbRight = box.contentX() + box.contentW;
@@ -1649,7 +1652,8 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
         // (otherwise shrink-to-fit with a huge available width).
         float cbW = (box->style.widthPercent >= 0 || box->style.widthCalcPercent >= 0 || box->style.maxWidthPercent >= 0)
                   ? parentW : 1e6f;
-        float cbH = (box->style.heightPercent >= 0 || box->style.minHeightPercent >= 0 || box->style.maxHeightPercent >= 0)
+        float cbH = (box->style.heightPercent >= 0 || box->style.heightCalcPercent >= 0
+                  || box->style.minHeightPercent >= 0 || box->style.maxHeightPercent >= 0)
                   ? parentH : -1.f;
         std::vector<LayoutBox*> pos;
         E.layoutBox(*box, 0, cbW, cbH, pos, nullptr);
@@ -1669,7 +1673,7 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
 float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
     DepthScope _d; if (g_depth > kMaxDepth) return 0;
     std::vector<InlineItem> items;
-    float inlineCbH = usedHeight(box.style, -1.f);
+    float inlineCbH = usedHeight(box.style, box.contentH >= 0 ? box.contentH : -1.f);
     if (inlineCbH >= 0 && box.style.boxSizing == 1) {
         const float vbp = box.borderTop + box.padTop + box.borderBottom + box.padBottom;
         inlineCbH = std::max(0.f, inlineCbH - vbp);
@@ -1920,9 +1924,10 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
             // Lay out the subtree (block or inline) to learn height.
             std::vector<LayoutBox*> dummy;
             if (b->establishesInline) {
+                float eh = contentBoxHeight(usedHeight(s, cbH));
+                if (eh >= 0) b->contentH = eh;
                 FloatCtx local; local.cbLeft = b->contentX(); local.cbRight = b->contentX() + b->contentW;
                 float h = layoutInline(*b, &local);
-                float eh = contentBoxHeight(usedHeight(s, cbH));
                 b->contentH = eh >= 0 ? eh : h;
             } else {
                 layoutBlockChildren(*b, dummy);

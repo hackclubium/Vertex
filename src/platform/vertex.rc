@@ -1,0 +1,3 @@
+#include "resource.h"
+
+IDI_VERTEX_APP ICON "vertex_icon.ico"

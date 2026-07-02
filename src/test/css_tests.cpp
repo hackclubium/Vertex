@@ -548,17 +548,19 @@ TestResult RunCssTests() {
         auto* picker = FindElementById(dom.get(), "picker");
         auto sheet = ParseStylesheet(
             "#search { inline-size: calc(100% - 56px); block-size: 44px; "
-            "margin-inline: auto 8px; padding-block: 4px 6px; padding-inline: 12px 20px; }"
+            "margin-inline: auto 8px; padding-block: 4px 6px; padding-inline: calc(1rem + 2px) 20px; "
+            "border-inline-width: 1px 2px; border-block-width: 3px 4px; }"
             "#picker { position:absolute; inset-inline-end: 0; inset-block-start: 50%; "
-            "min-inline-size: 120px; max-inline-size: 180px; min-block-size: 24px; max-block-size: 44px; }");
+            "min-inline-size: 120px; max-inline-size: 180px; min-block-size: 24px; max-block-size: 44px; "
+            "block-size: calc(100% - 10px); }");
         std::string actual = "search: ";
         actual += search ? SerializeComputedStyle(sheet.resolve(search)) : "missing\n";
         actual += "picker: ";
         actual += picker ? SerializeComputedStyle(sheet.resolve(picker)) : "missing\n";
         ExpectEqual("css/cascade/logical-sizing-spacing-and-insets",
             actual,
-            "search: marginRight=8 marginLeft=-2 paddingTop=4 paddingRight=20 paddingBottom=6 paddingLeft=12 widthCalc=100%+-56 height=44 \n"
-            "picker: maxWidth=180 minWidth=120 minHeight=24 maxHeight=44 position=absolute top=50 right=0 \n",
+            "search: marginRight=8 marginLeft=-2 paddingTop=4 paddingRight=20 paddingBottom=6 paddingLeft=18 borderTopWidth=3 borderRightWidth=2 borderBottomWidth=4 borderLeftWidth=1 widthCalc=100%+-56 height=44 \n"
+            "picker: heightCalc=100%+-10 maxWidth=180 minWidth=120 minHeight=24 maxHeight=44 position=absolute top=50 right=0 \n",
             result);
     }
 

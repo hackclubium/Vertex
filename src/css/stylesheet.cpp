@@ -252,9 +252,35 @@ static bool IsIgnoredCssKeyword(const std::string& raw) {
 
 static std::vector<std::string> SplitCssWhitespace(const std::string& raw) {
     std::vector<std::string> out;
-    std::istringstream ss(raw);
     std::string tok;
-    while (ss >> tok) out.push_back(tok);
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    char quote = 0;
+    for (char c : raw) {
+        if (quote) {
+            tok += c;
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+            tok += c;
+            continue;
+        }
+        if (c == '(') ++parenDepth;
+        else if (c == ')' && parenDepth > 0) --parenDepth;
+        else if (c == '[') ++bracketDepth;
+        else if (c == ']' && bracketDepth > 0) --bracketDepth;
+        if (std::isspace((unsigned char)c) && parenDepth == 0 && bracketDepth == 0) {
+            if (!tok.empty()) {
+                out.push_back(tok);
+                tok.clear();
+            }
+        } else {
+            tok += c;
+        }
+    }
+    if (!tok.empty()) out.push_back(tok);
     return out;
 }
 
@@ -382,6 +408,48 @@ static bool ApplyLogicalDeclaration(const std::string& prop,
     if (prop == "padding-inline-end") { ApplyPaddingToken(out.paddingRight, val); return true; }
     if (prop == "padding-block-start") { ApplyPaddingToken(out.paddingTop, val); return true; }
     if (prop == "padding-block-end") { ApplyPaddingToken(out.paddingBottom, val); return true; }
+
+    if (prop == "border-inline-width") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyDeclaration("border-left-width", vals[0], out);
+            ApplyDeclaration("border-right-width", vals.size() > 1 ? vals[1] : vals[0], out);
+        }
+        return true;
+    }
+    if (prop == "border-block-width") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyDeclaration("border-top-width", vals[0], out);
+            ApplyDeclaration("border-bottom-width", vals.size() > 1 ? vals[1] : vals[0], out);
+        }
+        return true;
+    }
+    if (prop == "border-inline-start-width") { ApplyDeclaration("border-left-width", val, out); return true; }
+    if (prop == "border-inline-end-width") { ApplyDeclaration("border-right-width", val, out); return true; }
+    if (prop == "border-block-start-width") { ApplyDeclaration("border-top-width", val, out); return true; }
+    if (prop == "border-block-end-width") { ApplyDeclaration("border-bottom-width", val, out); return true; }
+
+    if (prop == "border-inline-color") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyDeclaration("border-left-color", vals[0], out);
+            ApplyDeclaration("border-right-color", vals.size() > 1 ? vals[1] : vals[0], out);
+        }
+        return true;
+    }
+    if (prop == "border-block-color") {
+        auto vals = SplitCssWhitespace(val);
+        if (!vals.empty()) {
+            ApplyDeclaration("border-top-color", vals[0], out);
+            ApplyDeclaration("border-bottom-color", vals.size() > 1 ? vals[1] : vals[0], out);
+        }
+        return true;
+    }
+    if (prop == "border-inline-start-color") { ApplyDeclaration("border-left-color", val, out); return true; }
+    if (prop == "border-inline-end-color") { ApplyDeclaration("border-right-color", val, out); return true; }
+    if (prop == "border-block-start-color") { ApplyDeclaration("border-top-color", val, out); return true; }
+    if (prop == "border-block-end-color") { ApplyDeclaration("border-bottom-color", val, out); return true; }
 
     if (prop == "inset") {
         auto vals = SplitCssWhitespace(val);
@@ -1488,9 +1556,27 @@ static void ApplyDeclaration(const std::string& prop,
         else if (v == "max-content") out.heightKeyword = 2;
         else if (v == "fit-content") out.heightKeyword = 3;
         else {
+            float calcPct = -1.f, calcOffset = 0.f;
             float pct = ParsePercentage(val);
-            if (pct >= 0) out.heightPercent = pct;
-            else { float f = ParseLength(val); if (f >= 0) out.height = f; }
+            if (ParseCalcPercentOffset(val, calcPct, calcOffset)) {
+                out.heightCalcPercent = calcPct;
+                out.heightCalcOffset = calcOffset;
+                out.height = -1;
+                out.heightPercent = -1;
+            } else if (pct >= 0) {
+                out.heightPercent = pct;
+                out.height = -1;
+                out.heightCalcPercent = -1;
+                out.heightCalcOffset = 0;
+            } else {
+                float f = ParseLength(val);
+                if (f >= 0) {
+                    out.height = f;
+                    out.heightPercent = -1;
+                    out.heightCalcPercent = -1;
+                    out.heightCalcOffset = 0;
+                }
+            }
         }
     } else if (prop == "max-width") {
         float pct = ParsePercentage(val);
@@ -2897,6 +2983,7 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.widthPercent >= 0) out << "widthPercent=" << style.widthPercent << " ";
     if (style.widthCalcPercent >= 0) out << "widthCalc=" << style.widthCalcPercent << "%+" << style.widthCalcOffset << " ";
     if (style.height       >= 0) out << "height="       << style.height       << " ";
+    if (style.heightCalcPercent >= 0) out << "heightCalc=" << style.heightCalcPercent << "%+" << style.heightCalcOffset << " ";
     if (style.maxWidth     >= 0) out << "maxWidth="     << style.maxWidth     << " ";
     if (style.minWidth     >= 0) out << "minWidth="     << style.minWidth     << " ";
     if (style.minHeight    >= 0) out << "minHeight="    << style.minHeight    << " ";

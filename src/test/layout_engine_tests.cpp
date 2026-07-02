@@ -659,9 +659,9 @@ TestResult RunLayoutEngineTests() {
         auto lsheet = ParseStylesheet(
             "#search { inline-size:360px; margin:0; }"
             "#search-input { display:inline-block; position:relative; inline-size:calc(100% - 64px); block-size:44px; vertical-align:top; }"
-            "#q { inline-size:100%; block-size:100%; }"
-            "#picker { position:absolute; inset-inline-end:0; inset-block-start:0; inline-size:120px; block-size:44px; }"
-            "#lang { inline-size:100%; block-size:100%; }"
+            "#q { inline-size:100%; block-size:calc(100% - 0px); }"
+            "#picker { position:absolute; inset-inline-end:0; inset-block-start:0; inline-size:120px; block-size:calc(100% - 0px); }"
+            "#lang { inline-size:100%; block-size:calc(100% - 0px); }"
             "#go { display:inline-block; inline-size:64px; min-block-size:44px; padding:0; vertical-align:top; }");
         FixedMeasure lmeasure;
         LayoutInput lin; lin.document = ldom.get(); lin.sheet = &lsheet;
