@@ -69,6 +69,8 @@ if (MSVC)
     # Read source files as UTF-8 so literal chars (×, •, …) in L"" literals aren't
     # mangled to mojibake (e.g. "Ã—") under the system codepage.
     add_compile_options(/utf-8)
+    # Serialize PDB writes so parallel MSVC builds don't race on vc*.pdb.
+    add_compile_options(/FS)
 endif()
 
 add_library(vertex_engine STATIC
