@@ -234,6 +234,9 @@ void Renderer::InvalidateLayout() {
     m_cachedSheet = Stylesheet{};
     m_cachedPageBg = CssColor{};
     m_cachedUsesHoverStyles = false;
+    m_cachedHoverAffectsLayout = false;
+    m_cachedHoverRestylesSubtree = false;
+    m_layoutBoxesByNode.clear();
 }
 
 void Renderer::SetZoom(float z) {
@@ -435,6 +438,9 @@ static bool SelectorPartUsesHover(const CssSelectorPart& part) {
     for (const auto& list : part.matchSelectorLists)
         for (const auto& selector : list)
             if (selector.find(":hover") != std::string::npos) return true;
+    for (const auto& list : part.hasSelectorLists)
+        for (const auto& selector : list)
+            if (selector.find(":hover") != std::string::npos) return true;
     return false;
 }
 
@@ -482,6 +488,16 @@ static bool StylesheetHoverAffectsLayout(const Stylesheet& sheet) {
     return false;
 }
 
+static bool StylesheetHoverRestylesSubtree(const Stylesheet& sheet) {
+    for (const auto& rule : sheet.rules) {
+        for (size_t i = 0; i < rule.selector.size(); ++i) {
+            if (SelectorPartUsesHover(rule.selector[i]) && i + 1 < rule.selector.size())
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Renderer::UsesHoverStyles() const {
     return m_cachedUsesHoverStyles;
 }
@@ -525,8 +541,10 @@ Stylesheet Renderer::CollectStylesheet(const Node* root) {
     return sheet;
 }
 
-void Renderer::CaptureLayoutBaseStyles(const LayoutBox& box) {
+void Renderer::CaptureLayoutBaseStyles(LayoutBox& box) {
     m_layoutBaseStyles[&box] = box.style;
+    if (box.node)
+        m_layoutBoxesByNode[box.node].push_back(&box);
     for (const auto& child : box.kids)
         CaptureLayoutBaseStyles(*child);
 }
@@ -545,6 +563,34 @@ void Renderer::ApplyPaintOnlyHoverStyles(LayoutBox& box, const Stylesheet& sheet
 
     for (auto& child : box.kids)
         ApplyPaintOnlyHoverStyles(*child, sheet);
+}
+
+void Renderer::ApplyPaintOnlyHoverStylesToChangedChain(const Stylesheet& sheet,
+                                                       const Node* oldHover,
+                                                       const Node* newHover) {
+    std::set<LayoutBox*> touched;
+    auto applyBox = [&](LayoutBox* box) {
+        if (!box || !touched.insert(box).second) return;
+        auto base = m_layoutBaseStyles.find(box);
+        if (base != m_layoutBaseStyles.end())
+            box->style = base->second;
+        if (box->node && box->node->type == NodeType::Element) {
+            ComputedStyle resolved = sheet.resolve(box->node);
+            ComputedStyle styled = box->style.inherit(resolved);
+            ResolveStyleVariables(styled);
+            box->style = styled;
+        }
+    };
+    auto applyChain = [&](const Node* hover) {
+        for (const Node* cur = hover; cur; cur = cur->parent) {
+            auto it = m_layoutBoxesByNode.find(cur);
+            if (it == m_layoutBoxesByNode.end()) continue;
+            for (LayoutBox* box : it->second)
+                applyBox(box);
+        }
+    };
+    applyChain(oldHover);
+    applyChain(newHover);
 }
 
 bool Renderer::ImageDecodeAffectsLayout(const std::string& url) const {
@@ -619,6 +665,7 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
             m_cachedPageBg = FindBodyBgColor(doc.get(), m_cachedSheet);
             m_cachedUsesHoverStyles = StylesheetUsesHover(m_cachedSheet);
             m_cachedHoverAffectsLayout = StylesheetHoverAffectsLayout(m_cachedSheet);
+            m_cachedHoverRestylesSubtree = StylesheetHoverRestylesSubtree(m_cachedSheet);
             m_styleDocKey = doc.get();
             m_styleBaseUrlKey = baseUrl;
             if (!m_cachedSheet.fontFaces.empty())
@@ -689,7 +736,10 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
             SetCssHoverNode(g_hoverNode);
             if (hoverChanged && sheet && m_cachedUsesHoverStyles
                 && !m_cachedHoverAffectsLayout && m_layoutRoot) {
-                ApplyPaintOnlyHoverStyles(*m_layoutRoot, *sheet);
+                if (!m_cachedHoverRestylesSubtree)
+                    ApplyPaintOnlyHoverStylesToChangedChain(*sheet, prevHover, g_hoverNode);
+                else
+                    ApplyPaintOnlyHoverStyles(*m_layoutRoot, *sheet);
             }
             bool reuse = m_layoutRoot
                       && m_layoutDocKey  == doc.get()
@@ -718,6 +768,7 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                 m_anchorY.clear();
                 if (m_layoutRoot) CollectAnchors(*m_layoutRoot);
                 m_layoutBaseStyles.clear();
+                m_layoutBoxesByNode.clear();
                 if (m_layoutRoot) CaptureLayoutBaseStyles(*m_layoutRoot);
                 auto layoutEnd = std::chrono::steady_clock::now();
                 m_lastTimings.layoutMs =

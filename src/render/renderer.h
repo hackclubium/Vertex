@@ -146,8 +146,11 @@ private:
     void PaintLines(const LayoutBox& box, float scrollY, float topInset, bool underFixed);
     void PaintBoxDecorations(const LayoutBox& box, float scrollY, float topInset);
     void CollectAnchors(const LayoutBox& box);
-    void CaptureLayoutBaseStyles(const LayoutBox& box);
+    void CaptureLayoutBaseStyles(LayoutBox& box);
     void ApplyPaintOnlyHoverStyles(LayoutBox& box, const Stylesheet& sheet);
+    void ApplyPaintOnlyHoverStylesToChangedChain(const Stylesheet& sheet,
+                                                 const Node* oldHover,
+                                                 const Node* newHover);
     bool ImageDecodeAffectsLayout(const std::string& url) const;
     IDWriteTextFormat* FormatForKey(const FontKey& f);
     std::map<std::string, IDWriteTextFormat*> m_fmtCache;
@@ -161,9 +164,11 @@ private:
     std::string m_styleBaseUrlKey;
     bool        m_cachedUsesHoverStyles = false;
     bool        m_cachedHoverAffectsLayout = false;
+    bool        m_cachedHoverRestylesSubtree = false;
 
     std::unique_ptr<LayoutBox> m_layoutRoot;
     std::map<const LayoutBox*, ComputedStyle> m_layoutBaseStyles;
+    std::map<const Node*, std::vector<LayoutBox*>> m_layoutBoxesByNode;
     const Node* m_layoutDocKey  = nullptr;
     UINT  m_layoutWKey = 0, m_layoutHKey = 0;
     float m_layoutZoomKey = 0.f;

@@ -428,6 +428,38 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        const size_t lookupPos = mainWin.find("const Node* hover = g_renderer.HoverNodeAt(");
+        const size_t changePos = mainWin.find("if (hover != g_hoverNode)", lookupPos);
+        const size_t tickPos = mainWin.find("lastHoverTick = now", lookupPos);
+        const bool hoverThrottleAlwaysTicks =
+            lookupPos != std::string::npos
+            && changePos != std::string::npos
+            && tickPos != std::string::npos
+            && tickPos < changePos;
+        ExpectEqual("paint/hover-throttle-updates-after-every-lookup",
+            hoverThrottleAlwaysTicks ? "throttled\n" : "same-node-chatty\n",
+            "throttled\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
+        const bool selectiveHoverRestyle =
+            rendererH.find("m_cachedHoverRestylesSubtree") != std::string::npos
+            && renderer.find("StylesheetHoverRestylesSubtree") != std::string::npos
+            && renderer.find("ApplyPaintOnlyHoverStylesToChangedChain") != std::string::npos
+            && renderer.find("!m_cachedHoverRestylesSubtree") != std::string::npos;
+        ExpectEqual("paint/paint-only-hover-restyles-changed-chain",
+            selectiveHoverRestyle ? "selective\n" : "whole-tree\n",
+            "selective\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
         std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
         const bool brushCache =

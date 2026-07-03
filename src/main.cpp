@@ -1311,11 +1311,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     bool hadOldHoverRegion = g_renderer.LastHoverRegion(oldHoverRegion);
                     const Node* hover = g_renderer.HoverNodeAt(
                         (float)px, (float)py, CurTab().scrollY, (float)TOP_INSET);
+                    lastHoverTick = now;
                     if (hover != g_hoverNode) {
                         HitRegion newHoverRegion{};
                         bool hasNewHoverRegion = g_renderer.LastHoverRegion(newHoverRegion);
                         g_hoverNode = hover;
-                        lastHoverTick = now;
                         // Only invalidate paint, not layout — hover mostly affects
                         // colors/opacity, not geometry. Full layout rebuild is expensive.
                         InvalidateHoverRegions(
