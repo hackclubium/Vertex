@@ -1,0 +1,13 @@
+<!doctype html>
+<style>
+  body { margin: 0; }
+  #stage { position: relative; width: 200px; height: 120px; }
+  #normal { width: 100px; height: 30px; background: #ccc; }
+  #back { position: absolute; left: 0; top: 0; width: 80px; height: 30px; z-index: -1; }
+  #front { position: absolute; left: 0; top: 10px; width: 80px; height: 30px; z-index: 2; }
+</style>
+<div id="stage">
+  <div id="normal">normal</div>
+  <div id="back">back</div>
+  <div id="front">front</div>
+</div>

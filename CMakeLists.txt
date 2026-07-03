@@ -196,6 +196,10 @@ add_executable(dump_layout tools/dump_layout.cpp)
 target_include_directories(dump_layout PRIVATE src)
 target_link_libraries(dump_layout PRIVATE vertex_engine)
 
+add_executable(render_probe tools/render_probe.cpp)
+target_include_directories(render_probe PRIVATE src)
+target_link_libraries(render_probe PRIVATE vertex_engine)
+
 add_executable(dump_js tools/dump_js.cpp)
 target_include_directories(dump_js PRIVATE src)
 target_link_libraries(dump_js PRIVATE vertex_engine)
@@ -207,6 +211,6 @@ if (MSVC)
     target_link_options(dump_js PRIVATE /DYNAMICBASE:NO /MAP)
 endif()
 
-set_target_properties(Vertex vertex-tests vertex-layout-engine-tests dump_layout dump_js PROPERTIES
+set_target_properties(Vertex vertex-tests vertex-layout-engine-tests dump_layout render_probe dump_js PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
 )

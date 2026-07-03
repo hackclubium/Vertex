@@ -267,6 +267,35 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string cmake = ReadTextFile(root / "CMakeLists.txt");
+        std::string probe = ReadTextFile(root / "tools/render_probe.cpp");
+        const bool renderProbe =
+            cmake.find("add_executable(render_probe tools/render_probe.cpp)") != std::string::npos
+            && probe.find("PaintOrder") != std::string::npos
+            && probe.find("metrics boxes=") != std::string::npos
+            && probe.find("paint-order") != std::string::npos;
+        ExpectEqual("paint/render-probe-tool-is-wired",
+            renderProbe ? "wired\n" : "missing\n",
+            "wired\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool sharedStacking =
+            sharedPainter.find("std::vector<const LayoutBox*> negZ, inflow, floats, posZ;") != std::string::npos
+            && sharedPainter.find("std::stable_sort(negZ.begin(), negZ.end(), byZ);") != std::string::npos
+            && sharedPainter.find("for (auto* k : negZ)   PaintBoxTree(ps, *k);") != std::string::npos
+            && sharedPainter.find("for (auto* k : posZ)   PaintBoxTree(ps, *k);") != std::string::npos;
+        ExpectEqual("paint/shared-painter-uses-z-index-stacking-buckets",
+            sharedStacking ? "bucketed\n" : "flat\n",
+            "bucketed\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
         const bool hoverTrackingIsConditional =

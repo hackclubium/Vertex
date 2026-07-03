@@ -1,0 +1,21 @@
+metrics boxes=10 positioned=3 floats=0 links=0 lineBoxes=1 maxDepth=5
+layout block (anonymous) x=0 y=0 w=800 h=120 pos=0 z=auto
+  layout block html x=0 y=0 w=800 h=120 pos=0 z=auto
+    layout block body x=0 y=0 w=800 h=120 pos=0 z=auto
+      layout block div#stage x=0 y=0 w=200 h=120 pos=1 z=auto
+        layout block div#normal x=0 y=0 w=100 h=30 pos=0 z=auto
+          layout text #text x=0 y=0 w=0 h=0 pos=0 z=auto
+        layout block div#back x=0 y=0 w=80 h=30 pos=2 z=-1
+          layout text #text x=0 y=0 w=80 h=30 pos=0 z=auto
+        layout block div#front x=0 y=10 w=80 h=30 pos=2 z=2
+          layout text #text x=0 y=20 w=80 h=30 pos=0 z=auto
+paint-order 0 block (anonymous) z=auto
+paint-order 1 block html z=auto
+paint-order 2 block body z=auto
+paint-order 3 block div#stage z=auto
+paint-order 4 block div#back z=-1
+paint-order 5 text #text z=auto
+paint-order 6 block div#normal z=auto
+paint-order 7 text #text z=auto
+paint-order 8 block div#front z=2
+paint-order 9 text #text z=auto

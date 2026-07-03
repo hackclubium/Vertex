@@ -458,19 +458,36 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         return;
     }
 
+    std::vector<const LayoutBox*> negZ, inflow, floats, posZ;
+    for (auto& kptr : box.kids) {
+        const LayoutBox* k = kptr.get();
+        if (k->isOutOfFlow()) {
+            if (k->style.zIndexSet && k->style.zIndex < 0) negZ.push_back(k);
+            else posZ.push_back(k);
+        } else if (k->isFloat()) {
+            floats.push_back(k);
+        } else if (k->style.positionMode == 1) {
+            posZ.push_back(k);
+        } else {
+            inflow.push_back(k);
+        }
+    }
+    auto byZ = [](const LayoutBox* a, const LayoutBox* b) {
+        int za = a->style.zIndexSet ? a->style.zIndex : 0;
+        int zb = b->style.zIndexSet ? b->style.zIndex : 0;
+        return za < zb;
+    };
+    std::stable_sort(negZ.begin(), negZ.end(), byZ);
+    std::stable_sort(posZ.begin(), posZ.end(), byZ);
+
+    for (auto* k : negZ)   PaintBoxTree(ps, *k);
     if (box.establishesInline) {
         if (!hidden) PaintLines(ps, box);
     } else {
-        for (auto& k : box.kids) {
-            if (!k->isOutOfFlow() && !k->isFloat()) PaintBoxTree(ps, *k);
-        }
+        for (auto* k : inflow) PaintBoxTree(ps, *k);
     }
-    for (auto& k : box.kids) {
-        if (k->isFloat()) PaintBoxTree(ps, *k);
-    }
-    for (auto& k : box.kids) {
-        if (k->isOutOfFlow() || k->style.positionMode == 1) PaintBoxTree(ps, *k);
-    }
+    for (auto* k : floats) PaintBoxTree(ps, *k);
+    for (auto* k : posZ)   PaintBoxTree(ps, *k);
 
     if (clipped) {
         ps.r->PopClip();
