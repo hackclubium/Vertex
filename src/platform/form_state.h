@@ -1,9 +1,11 @@
 #pragma once
 #include "html/dom.h"
 #include "layout/box.h"
+#include <algorithm>
 #include <string>
 #include <map>
 #include <functional>
+#include <vector>
 
 // Tracks form control state (text values, focused input) across the browser.
 // Shared between the platform shell (keyboard input) and the box painter
@@ -120,18 +122,50 @@ struct FormState {
     static const Node* hitTestNode(const LayoutBox& root, float x, float y, float scrollY, float topInset) {
         float docY = y + scrollY - topInset;
         const Node* found = nullptr;
+        auto paintOrderedChildren = [](const LayoutBox& box) {
+            std::vector<const LayoutBox*> ordered;
+            std::vector<const LayoutBox*> negZ, inflow, floats, posZ;
+            for (const auto& kptr : box.kids) {
+                const LayoutBox* k = kptr.get();
+                if (k->isOutOfFlow()) {
+                    if (k->style.zIndexSet && k->style.zIndex < 0) negZ.push_back(k);
+                    else posZ.push_back(k);
+                } else if (k->isFloat()) {
+                    floats.push_back(k);
+                } else if (k->style.positionMode == 1) {
+                    posZ.push_back(k);
+                } else {
+                    inflow.push_back(k);
+                }
+            }
+            auto byZ = [](const LayoutBox* a, const LayoutBox* b) {
+                int za = a->style.zIndexSet ? a->style.zIndex : 0;
+                int zb = b->style.zIndexSet ? b->style.zIndex : 0;
+                return za < zb;
+            };
+            std::stable_sort(negZ.begin(), negZ.end(), byZ);
+            std::stable_sort(posZ.begin(), posZ.end(), byZ);
+            ordered.insert(ordered.end(), negZ.begin(), negZ.end());
+            ordered.insert(ordered.end(), inflow.begin(), inflow.end());
+            ordered.insert(ordered.end(), floats.begin(), floats.end());
+            ordered.insert(ordered.end(), posZ.begin(), posZ.end());
+            return ordered;
+        };
         std::function<void(const LayoutBox&)> walk = [&](const LayoutBox& box) {
             float bx = box.x, by = box.y;
             float bw = box.borderBoxW(), bh = box.borderBoxH();
             bool inside = x >= bx && x <= bx + bw && docY >= by && docY <= by + bh;
+            if (&box != &root && box.style.overflowHidden && !inside)
+                return;
             if (box.node && box.node->type == NodeType::Element) {
                 if (inside)
                     found = box.node;  // deeper nodes override shallower ones
             }
+            auto ordered = paintOrderedChildren(box);
             if (inside || &box == &root) {
-                for (auto& k : box.kids) walk(*k);
+                for (const LayoutBox* k : ordered) walk(*k);
             } else if (!box.style.overflowHidden) {
-                for (auto& k : box.kids) {
+                for (const LayoutBox* k : ordered) {
                     if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1)
                         walk(*k);
                 }
@@ -145,15 +179,55 @@ struct FormState {
         // Adjust y from screen to document coords.
         float docY = y + scrollY - topInset;
         Node* found = nullptr;
+        auto paintOrderedChildren = [](const LayoutBox& box) {
+            std::vector<const LayoutBox*> ordered;
+            std::vector<const LayoutBox*> negZ, inflow, floats, posZ;
+            for (const auto& kptr : box.kids) {
+                const LayoutBox* k = kptr.get();
+                if (k->isOutOfFlow()) {
+                    if (k->style.zIndexSet && k->style.zIndex < 0) negZ.push_back(k);
+                    else posZ.push_back(k);
+                } else if (k->isFloat()) {
+                    floats.push_back(k);
+                } else if (k->style.positionMode == 1) {
+                    posZ.push_back(k);
+                } else {
+                    inflow.push_back(k);
+                }
+            }
+            auto byZ = [](const LayoutBox* a, const LayoutBox* b) {
+                int za = a->style.zIndexSet ? a->style.zIndex : 0;
+                int zb = b->style.zIndexSet ? b->style.zIndex : 0;
+                return za < zb;
+            };
+            std::stable_sort(negZ.begin(), negZ.end(), byZ);
+            std::stable_sort(posZ.begin(), posZ.end(), byZ);
+            ordered.insert(ordered.end(), negZ.begin(), negZ.end());
+            ordered.insert(ordered.end(), inflow.begin(), inflow.end());
+            ordered.insert(ordered.end(), floats.begin(), floats.end());
+            ordered.insert(ordered.end(), posZ.begin(), posZ.end());
+            return ordered;
+        };
         std::function<void(const LayoutBox&)> walk = [&](const LayoutBox& box) {
+            float bx = box.x, by = box.y;
+            float bw = box.borderBoxW(), bh = box.borderBoxH();
+            bool inside = x >= bx && x <= bx + bw && docY >= by && docY <= by + bh;
+            if (&box != &root && box.style.overflowHidden && !inside)
+                return;
             if (box.kind == BoxKind::Replaced && box.node
                 && (box.node->tagName == "input" || box.node->tagName == "textarea")) {
-                float bx = box.x, by = box.y;
-                float bw = box.borderBoxW(), bh = box.borderBoxH();
-                if (x >= bx && x <= bx + bw && docY >= by && docY <= by + bh)
+                if (inside)
                     found = const_cast<Node*>(box.node);
             }
-            for (auto& k : box.kids) walk(*k);
+            auto ordered = paintOrderedChildren(box);
+            if (inside || &box == &root) {
+                for (const LayoutBox* k : ordered) walk(*k);
+            } else if (!box.style.overflowHidden) {
+                for (const LayoutBox* k : ordered) {
+                    if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1)
+                        walk(*k);
+                }
+            }
         };
         walk(root);
         return found;

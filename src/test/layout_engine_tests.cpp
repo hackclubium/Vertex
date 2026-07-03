@@ -4,6 +4,7 @@
 #include "html/parser.h"
 #include "layout/layout_engine.h"
 #include "platform/browser_core.h"
+#include "platform/form_state.h"
 
 #include <sstream>
 
@@ -851,6 +852,143 @@ TestResult RunLayoutEngineTests() {
         ExpectEqual("layout-engine/floats-honor-clear-left",
             cleared ? "cleared\n" : "beside\n",
             "cleared\n",
+            result);
+    }
+
+    // Absolutely positioned boxes with left/right set and auto horizontal
+    // margins center in their containing block instead of sticking to left:0.
+    {
+        auto adom = ParseHtml(
+            "<html><body><div id=\"host\"><div id=\"abs\"></div></div></body></html>");
+        auto asheet = ParseStylesheet(
+            "body{margin:0;} #host{position:relative;width:400px;height:120px;}"
+            "#abs{position:absolute;left:0;right:0;top:0;width:200px;height:20px;margin-left:auto;margin-right:auto;}");
+        LayoutInput ain; ain.document = adom.get(); ain.sheet = &asheet;
+        ain.measure = &measure; ain.viewportW = 800.f; ain.viewportH = 400.f;
+        auto al = LayoutDocument(ain);
+        auto* abs = FindEngineBoxById(al.get(), "abs");
+        bool centered = abs && std::abs(abs->x - 100.f) < 0.5f;
+        ExpectEqual("layout-engine/absolute-left-right-auto-margins-center",
+            centered ? "centered\n" : "left\n",
+            "centered\n",
+            result);
+    }
+
+    // Inline-blocks use their last inline line baseline, not their bottom edge,
+    // when aligning beside normal text.
+    {
+        auto idom = ParseHtml(
+            "<html><body><p id=\"p\"><span id=\"ib\">box</span><span id=\"tail\">text</span></p></body></html>");
+        auto isheet = ParseStylesheet(
+            "body,p{margin:0;} #ib{display:inline-block;} #tail{display:inline;}");
+        LayoutInput iin; iin.document = idom.get(); iin.sheet = &isheet;
+        iin.measure = &measure; iin.viewportW = 400.f; iin.viewportH = 200.f;
+        auto il = LayoutDocument(iin);
+        auto* p = FindEngineBoxById(il.get(), "p");
+        float tailY = -1.f;
+        if (p && !p->lines.empty()) {
+            for (const auto& frag : p->lines.front().frags) {
+                if (!frag.text.empty() && frag.text.find(L"text") != std::wstring::npos)
+                    tailY = frag.y;
+            }
+        }
+        bool baseline = tailY >= 0.f && std::abs(tailY - p->contentY()) < 1.f;
+        ExpectEqual("layout-engine/inline-block-baseline-uses-child-line-baseline",
+            baseline ? "baseline\n" : "bottom\n",
+            "baseline\n",
+            result);
+    }
+
+    // Captions sit above table rows, and col/colgroup width hints influence
+    // the shared column grid.
+    {
+        auto tdom = ParseHtml(
+            "<html><body><table id=\"table\"><caption id=\"cap\">Caption</caption>"
+            "<colgroup><col style=\"width:120px\"><col></colgroup>"
+            "<tr><td id=\"a\">A</td><td id=\"b\">B</td></tr></table></body></html>");
+        auto tsheet = ParseStylesheet("body{margin:0;} table{border-spacing:0;} caption,td{padding:0;margin:0;}");
+        LayoutInput tin; tin.document = tdom.get(); tin.sheet = &tsheet;
+        tin.measure = &measure; tin.viewportW = 500.f; tin.viewportH = 300.f;
+        auto tl = LayoutDocument(tin);
+        auto* cap = FindEngineBoxById(tl.get(), "cap");
+        auto* a = FindEngineBoxById(tl.get(), "a");
+        auto* b = FindEngineBoxById(tl.get(), "b");
+        bool ok = cap && a && b
+            && cap->y < a->y
+            && std::abs(a->contentW - 120.f) < 1.f
+            && b->x >= a->x + a->borderBoxW() - 0.5f;
+        ExpectEqual("layout-engine/table-caption-and-col-widths",
+            ok ? "structured\n" : "cellified\n",
+            "structured\n",
+            result);
+    }
+
+    // justify-content affects flex row item positions when no flex-grow consumes
+    // the free space.
+    {
+        auto fdom = ParseHtml(
+            "<html><body><div id=\"f\"><div id=\"a\"></div><div id=\"b\"></div></div></body></html>");
+        auto fsheet = ParseStylesheet(
+            "body{margin:0;} #f{display:flex;width:300px;justify-content:space-between;}"
+            "#a,#b{width:50px;height:20px;}");
+        LayoutInput fin; fin.document = fdom.get(); fin.sheet = &fsheet;
+        fin.measure = &measure; fin.viewportW = 500.f; fin.viewportH = 200.f;
+        auto fl = LayoutDocument(fin);
+        auto* a = FindEngineBoxById(fl.get(), "a");
+        auto* b = FindEngineBoxById(fl.get(), "b");
+        bool spaced = a && b && std::abs((b->x - a->x) - 250.f) < 0.5f;
+        ExpectEqual("layout-engine/flex-justify-content-space-between",
+            spaced ? "spaced\n" : "packed\n",
+            "spaced\n",
+            result);
+    }
+
+    // Grid items spanning multiple rows reserve enough row height for the
+    // spanned area and push later auto-placed rows below it.
+    {
+        auto gdom = ParseHtml(
+            "<html><body><div id=\"grid\"><div id=\"span\"></div><div id=\"one\"></div><div id=\"two\"></div></div></body></html>");
+        auto gsheet = ParseStylesheet(
+            "body{margin:0;} #grid{display:grid;width:120px;grid-template-columns:60px 60px;gap:0;}"
+            "#span{grid-row:1 / 3;grid-column:1;width:60px;height:80px;}"
+            "#one,#two{width:60px;height:20px;}");
+        LayoutInput gin; gin.document = gdom.get(); gin.sheet = &gsheet;
+        gin.measure = &measure; gin.viewportW = 400.f; gin.viewportH = 300.f;
+        auto gl = LayoutDocument(gin);
+        auto* span = FindEngineBoxById(gl.get(), "span");
+        auto* one = FindEngineBoxById(gl.get(), "one");
+        auto* two = FindEngineBoxById(gl.get(), "two");
+        bool rows = span && one && two
+            && std::abs(one->y - span->y) < 0.5f
+            && two->y >= span->y + 40.f - 0.5f;
+        ExpectEqual("layout-engine/grid-row-span-distributes-height",
+            rows ? "spanned\n" : "collapsed\n",
+            "spanned\n",
+            result);
+    }
+
+    // Hit testing should agree with paint order and clipping: the topmost
+    // overlapping link wins, and clipped-away descendants are ignored.
+    {
+        auto hdom = ParseHtml(
+            "<html><body><div id=\"clip\"><a id=\"outside\" href=\"/outside\">outside</a></div>"
+            "<div id=\"stack\"><a id=\"front\" href=\"/front\">front</a><a id=\"back\" href=\"/back\">back</a></div></body></html>");
+        auto hsheet = ParseStylesheet(
+            "body{margin:0;} #clip{position:relative;overflow:hidden;width:100px;height:40px;}"
+            "#outside{position:absolute;left:140px;top:0;width:50px;height:20px;display:block;}"
+            "#stack{position:relative;width:100px;height:60px;}"
+            "#front,#back{position:absolute;left:0;top:0;width:80px;height:40px;display:block;}"
+            "#front{z-index:2;} #back{z-index:1;}");
+        LayoutInput hin; hin.document = hdom.get(); hin.sheet = &hsheet;
+        hin.measure = &measure; hin.viewportW = 400.f; hin.viewportH = 300.f;
+        auto hl = LayoutDocument(hin);
+        const Node* outside = FormState::hitTestNode(*hl, 150.f, 10.f, 0.f, 0.f);
+        const Node* top = FormState::hitTestNode(*hl, 10.f, 50.f, 0.f, 0.f);
+        bool ok = (!outside || outside->attr("id") != "outside")
+            && top && top->attr("id") == "front";
+        ExpectEqual("layout-engine/hit-test-honors-clipping-and-z-order",
+            ok ? "paint-order\n" : "dom-order\n",
+            "paint-order\n",
             result);
     }
     return result;

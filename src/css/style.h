@@ -46,7 +46,7 @@ struct ComputedStyle {
     bool     lineThrough  = false;   // text-decoration: line-through
     bool     noUnderline  = false;   // text-decoration: none (overrides link underline)
     // Display: 0=unset, 1=block, 2=inline, 3=none, 4=flex, 5=table, 6=table-cell,
-    // 11=grid, 12=flow-root, 13=contents
+    // 11=grid, 12=flow-root, 13=contents, 14=table-caption
     int      display      = 0;
     // Box model (kCssNotSet = not set, kCssAuto = auto for margins)
     float    marginTop    = kCssNotSet;
@@ -233,6 +233,7 @@ struct ComputedStyle {
     bool isDisplayTableRowGroup() const { return display == 10; }
     bool isDisplayFlowRoot()    const { return display == 12; }
     bool isDisplayContents()    const { return display == 13; }
+    bool isDisplayTableCaption() const { return display == 14; }
     bool marginTopSet()       const { return marginTop    > kCssNotSet + 1.f; }
     bool marginRightSet()     const { return marginRight  > kCssNotSet + 1.f; }
     bool marginBottomSet()    const { return marginBottom > kCssNotSet + 1.f; }

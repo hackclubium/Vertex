@@ -100,7 +100,7 @@ std::string LowerAscii(std::string value) {
 
 // UA default display for an element tag (used when CSS doesn't set display).
 // Returns one of the ComputedStyle display codes (1=block,2=inline,7=inline-block,
-// 8=list-item,5=table,9=table-row,6=table-cell,10=row-group).
+// 8=list-item,5=table,9=table-row,6=table-cell,10=row-group,14=caption).
 int UaDisplay(const std::string& tag) {
     // Block-level
     static const char* blocks[] = {
@@ -112,6 +112,7 @@ int UaDisplay(const std::string& tag) {
     for (auto* b : blocks) if (tag == b) return 1;
     if (tag == "li") return 8;
     if (tag == "table") return 5;
+    if (tag == "caption") return 14;
     if (tag == "tr") return 9;
     if (tag == "td" || tag == "th") return 6;
     if (tag == "thead" || tag == "tbody" || tag == "tfoot") return 10;
@@ -294,6 +295,7 @@ BoxKind KindFromDisplay(int disp, bool replaced) {
         case 9:  return BoxKind::TableRow;
         case 6:  return BoxKind::TableCell;
         case 10: return BoxKind::Block;  // row group → block
+        case 14: return BoxKind::Block;  // caption → block above/below table grid
         default: return BoxKind::Block;
     }
 }
@@ -1244,7 +1246,18 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
         }
 
         float slack = box.contentW - used;  // positive = free space, negative = overflow
-        float cursorX = box.contentX();
+        float justifyOffset = 0.f;
+        float lineGap = gap;
+        if (slack > 0 && growTotal <= 0) {
+            if (box.style.justifyContent == 1) {
+                justifyOffset = slack / 2.f;
+            } else if (box.style.justifyContent == 2) {
+                justifyOffset = slack;
+            } else if (box.style.justifyContent == 3 && line.indices.size() > 1) {
+                lineGap += slack / static_cast<float>(line.indices.size() - 1);
+            }
+        }
+        float cursorX = box.contentX() + justifyOffset;
 
         for (size_t idx : line.indices) {
             FlexItem& fi = allItems[idx];
@@ -1275,7 +1288,7 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
             child.style.widthPercent = oldPercent;
             child.style.widthCalcPercent = oldCalcPercent;
             child.style.widthCalcOffset = oldCalcOffset;
-            cursorX += child.marginBoxW() + gap;
+            cursorX += child.marginBoxW() + lineGap;
             line.maxH = std::max(line.maxH, child.marginBoxH());
         }
 
@@ -1484,14 +1497,46 @@ void Engine::layoutTable(LayoutBox& box) {
         if (c->node) { try { n = std::max(1, std::stoi(c->node->attr("rowspan"))); } catch (...) {} }
         return n;
     };
+    auto parseCssWidthHint = [](std::string value) {
+        auto trim = [](std::string s) {
+            size_t a = s.find_first_not_of(" \t\r\n");
+            size_t b = s.find_last_not_of(" \t\r\n");
+            if (a == std::string::npos) return std::string{};
+            return s.substr(a, b - a + 1);
+        };
+        value = trim(value);
+        if (value.empty()) return -1.f;
+        if (!value.empty() && value.back() == '%') return -1.f;
+        try { return std::max(0.f, std::stof(value)); } catch (...) { return -1.f; }
+    };
+    auto parseColWidthHint = [&](const Node* col) {
+        if (!col) return -1.f;
+        float attr = parseCssWidthHint(col->attr("width"));
+        if (attr >= 0) return attr;
+        std::string style = col->attr("style");
+        std::string low = LowerAscii(style);
+        size_t widthPos = low.find("width");
+        if (widthPos == std::string::npos) return -1.f;
+        size_t colon = low.find(':', widthPos);
+        if (colon == std::string::npos) return -1.f;
+        size_t semi = low.find(';', colon + 1);
+        return parseCssWidthHint(style.substr(colon + 1, semi == std::string::npos ? std::string::npos : semi - colon - 1));
+    };
 
     // Group children into rows (explicit <tr>/row-group, or one implicit row).
     std::vector<std::vector<LayoutBox*>> rows;
     std::vector<LayoutBox*> implicit;
     std::vector<LayoutBox*> rowBoxes;  // parallel to `rows`; nullptr for implicit
+    std::vector<LayoutBox*> captions;
     for (auto& k : box.kids) {
         if (k->isOutOfFlow()) continue;
         std::string tag = k->node ? k->node->tagName : "";
+        bool isCaption = k->style.isDisplayTableCaption() || tag == "caption";
+        if (isCaption) {
+            if (!implicit.empty()) { rows.push_back(implicit); rowBoxes.push_back(nullptr); implicit.clear(); }
+            captions.push_back(k.get());
+            continue;
+        }
         bool isRowGroup = k->style.isDisplayTableRowGroup()
             || tag == "thead" || tag == "tbody" || tag == "tfoot";
         bool isRow = k->kind == BoxKind::TableRow || k->style.isDisplayTableRow();
@@ -1553,6 +1598,26 @@ void Engine::layoutTable(LayoutBox& box) {
     // Per-column max-content. Single-column cells set their column directly;
     // spanning cells add a constraint that the spanned columns sum wide enough.
     std::vector<float> colW(cols, 0.f);
+    if (box.node) {
+        size_t hintIndex = 0;
+        std::function<void(const Node*)> collectColHints = [&](const Node* n) {
+            if (!n || hintIndex >= cols) return;
+            if (n->type == NodeType::Element && n->tagName == "col") {
+                float hint = parseColWidthHint(n);
+                if (hint >= 0 && hintIndex < colW.size())
+                    colW[hintIndex] = std::max(colW[hintIndex], px(hint));
+                ++hintIndex;
+                return;
+            }
+            if (n->type == NodeType::Element && n->tagName != "table"
+                && n->tagName != "colgroup") {
+                return;
+            }
+            for (const auto& child : n->children)
+                collectColHints(child.get());
+        };
+        collectColHints(box.node);
+    }
     for (const auto& pc : placed) {
         int span = pc.colSpan;
         size_t ci = pc.col;
@@ -1589,13 +1654,22 @@ void Engine::layoutTable(LayoutBox& box) {
     std::vector<float> colX(cols, 0.f);
     { float x = x0 + spacing; for (size_t i = 0; i < cols; ++i) { colX[i] = x; x += colW[i] + spacing; } }
 
+    float rowBaseY = y0;
+    for (LayoutBox* caption : captions) {
+        caption->y = rowBaseY;
+        std::vector<LayoutBox*> pos;
+        layoutBox(*caption, x0, targetW, -1.f, pos, nullptr);
+        rowBaseY += caption->marginBoxH();
+    }
+    float captionH = rowBaseY - y0;
+
     std::vector<float> rowH(rowCount, 0.f);
     for (const auto& pc : placed) {
         float cw = 0;
         for (int s = 0; s < pc.colSpan && pc.col + static_cast<size_t>(s) < cols; ++s)
             cw += colW[pc.col + static_cast<size_t>(s)] + (s > 0 ? spacing : 0);
         float cx = pc.col < cols ? colX[pc.col] : x0 + spacing;
-        pc.cell->y = y0 + spacing;
+        pc.cell->y = rowBaseY + spacing;
         // Pin the cell to its shared column width (override auto) so columns align.
         float savedW = pc.cell->style.width;
         float savedPct = pc.cell->style.widthPercent;
@@ -1630,8 +1704,8 @@ void Engine::layoutTable(LayoutBox& box) {
         }
     }
 
-    std::vector<float> rowTop(rowCount, y0 + spacing);
-    float y = y0 + spacing;
+    std::vector<float> rowTop(rowCount, rowBaseY + spacing);
+    float y = rowBaseY + spacing;
     for (size_t r = 0; r < rowCount; ++r) {
         rowTop[r] = y;
         y += rowH[r] + spacing;
@@ -1652,14 +1726,14 @@ void Engine::layoutTable(LayoutBox& box) {
     for (size_t r = 0; r < rows.size() && r < rowBoxes.size(); ++r) {
         if (rowBoxes[r]) {
             rowBoxes[r]->x = x0;
-            rowBoxes[r]->y = (r < rowTop.size() ? rowTop[r] : y0 + spacing) - spacing;
+            rowBoxes[r]->y = (r < rowTop.size() ? rowTop[r] : rowBaseY + spacing) - spacing;
             rowBoxes[r]->contentW = targetW;
             rowBoxes[r]->contentH = r < rowH.size() ? rowH[r] : 0.f;
         }
     }
 
     box.contentW = std::max(0.f, targetW);
-    box.contentH = std::max(0.f, y - y0);
+    box.contentH = std::max(0.f, captionH + (y - rowBaseY));
 }
 
 // ─── inline layout ───────────────────────────────────────────────────────────
@@ -1731,7 +1805,12 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
         it.width = box->marginBoxW();
         FontKey f = E.fontFor(box->style);
         it.font = f; it.lineH = box->marginBoxH();
-        it.ascent = box->marginBoxH();  // baseline at bottom for replaced
+        it.ascent = box->marginBoxH();  // fallback: baseline at bottom for replaced
+        if (box->kind == BoxKind::InlineBlock && !box->lines.empty()) {
+            const LineBox& last = box->lines.back();
+            it.ascent = box->marginTop + (last.y - box->y) + last.baseline;
+            it.ascent = std::clamp(it.ascent, 0.f, box->marginBoxH());
+        }
         it.vAlign = va;
         items.push_back(it);
         return;
@@ -1864,7 +1943,7 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
             if (atomic) {
                 // bottom-align to baseline: top so that bottom sits on baseline.
                 frag.h = it.box->marginBoxH();
-                frag.baseline = frag.h;
+                frag.baseline = it.ascent;
                 frag.y = y + lineAsc - frag.baseline;
             } else {
                 frag.text = it.text;
@@ -1946,10 +2025,12 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
         }
 
         resolveEdges(*b);
+        const bool mlAuto = s.isMarginAuto(s.marginLeft);
+        const bool mrAuto = s.isMarginAuto(s.marginRight);
         b->marginTop    = s.marginTopSet()    && !s.isMarginAuto(s.marginTop)    ? px(s.marginTop)    : 0;
         b->marginBottom = s.marginBottomSet() && !s.isMarginAuto(s.marginBottom) ? px(s.marginBottom) : 0;
-        b->marginLeft   = s.marginLeftSet()   && !s.isMarginAuto(s.marginLeft)   ? px(s.marginLeft)   : 0;
-        b->marginRight  = s.marginRightSet()  && !s.isMarginAuto(s.marginRight)  ? px(s.marginRight)  : 0;
+        b->marginLeft   = s.marginLeftSet()   && !mlAuto ? px(s.marginLeft)   : 0;
+        b->marginRight  = s.marginRightSet()  && !mrAuto ? px(s.marginRight)  : 0;
 
         float bpX = b->borderLeft + b->padLeft + b->borderRight + b->padRight;
         float bpY = b->borderTop + b->padTop + b->borderBottom + b->padBottom;
@@ -1974,6 +2055,22 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
         { float mw = usedMaxWidth(s, cbW); if (mw >= 0) { if (borderBox) mw = std::max(0.f, mw - bpX); w = std::min(w, mw); } }
         { float nw = usedMinWidth(s, cbW); if (nw >= 0) { if (borderBox) nw = std::max(0.f, nw - bpX); w = std::max(w, nw); } }
         b->contentW = w;
+
+        auto resolveH = [&](float v, bool isPct) { return isPct ? cbW * (v / 100.f) : px(v); };
+        auto resolveV = [&](float v, bool isPct) { return isPct ? cbH * (v / 100.f) : px(v); };
+        if (s.leftSet && s.rightSet && (mlAuto || mrAuto)) {
+            float l = resolveH(s.left, s.leftPercent);
+            float r = resolveH(s.right, s.rightPercent);
+            float free = cbW - l - r - b->borderBoxW() - b->marginLeft - b->marginRight;
+            if (free < 0) free = 0;
+            if (mlAuto && mrAuto) {
+                b->marginLeft = b->marginRight = free / 2.f;
+            } else if (mlAuto) {
+                b->marginLeft = free;
+            } else if (mrAuto) {
+                b->marginRight = free;
+            }
+        }
 
         b->x = 0; b->y = 0;  // children laid out relative to origin; translated below
         if (b->kind == BoxKind::Replaced) {
@@ -2009,8 +2106,6 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
         }
 
         // Final border-box position. Percentages resolve against the CB dimensions.
-        auto resolveH = [&](float v, bool isPct) { return isPct ? cbW * (v / 100.f) : px(v); };
-        auto resolveV = [&](float v, bool isPct) { return isPct ? cbH * (v / 100.f) : px(v); };
         float bx, by;
         if (s.leftSet)       bx = cbX + resolveH(s.left, s.leftPercent) + b->marginLeft;
         else if (s.rightSet) bx = cbX + cbW - resolveH(s.right, s.rightPercent) - b->borderBoxW() - b->marginRight;

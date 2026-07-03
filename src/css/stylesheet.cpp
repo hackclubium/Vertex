@@ -1106,6 +1106,7 @@ static void ApplyDeclaration(const std::string& prop,
         else if (v == "table-row")                                     out.display = 9;
         else if (v == "table-row-group" || v == "table-header-group"
               || v == "table-footer-group")                            out.display = 10;
+        else if (v == "table-caption")                                  out.display = 14;
         else if (v == "flow-root")                                     out.display = 12;
         else if (v == "contents")                                      out.display = 13;
     } else if (prop == "flex-direction") {
@@ -2724,7 +2725,8 @@ static bool IsKnownDisplayValue(const std::string& value) {
         || value == "table-cell" || value == "inline-block"
         || value == "list-item" || value == "table-row"
         || value == "table-row-group" || value == "table-header-group"
-        || value == "table-footer-group" || value == "flow-root"
+        || value == "table-footer-group" || value == "table-caption"
+        || value == "flow-root"
         || value == "contents";
 }
 
