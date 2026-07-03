@@ -63,12 +63,19 @@ TestResult RunCssTests() {
         const Node* wrap = FindElementByClass(dom.get(), "w");
         const Node* mark = FindElementByClass(dom.get(), "mark");
         const Node* links = FindElementByClass(dom.get(), "links");
+        const Node* body = FindFirstElement(dom.get(), "body");
         const Node* firstLink = FindFirstElement(links, "a");
+        ComputedStyle bodyStyle = body ? sheet.resolve(body) : ComputedStyle{};
         ComputedStyle wrapStyle = wrap ? sheet.resolve(wrap) : ComputedStyle{};
         ComputedStyle markStyle = mark ? sheet.resolve(mark) : ComputedStyle{};
         ComputedStyle linkStyle = firstLink ? sheet.resolve(firstLink) : ComputedStyle{};
         std::string actual =
             std::string("rules=") + std::to_string(sheet.rules.size())
+            + " bodyBg=" + (bodyStyle.bgColorSet
+                ? std::to_string((int)(bodyStyle.bgColor.r * 255.f + 0.5f)) + ","
+                    + std::to_string((int)(bodyStyle.bgColor.g * 255.f + 0.5f)) + ","
+                    + std::to_string((int)(bodyStyle.bgColor.b * 255.f + 0.5f))
+                : "none")
             + " wrap=" + (wrapStyle.width >= 0 ? std::to_string((int)wrapStyle.width) : "auto")
             + " markDisplay=" + std::to_string((int)markStyle.display)
             + " markBg=" + (markStyle.bgColorSet ? "yes" : "no")
@@ -77,7 +84,7 @@ TestResult RunCssTests() {
             + "\n";
         ExpectEqual("css/homepage-stylesheet-applies",
             actual,
-            "rules=15 wrap=720 markDisplay=1 markBg=yes linkDisplay=1 linkBorder=yes\n",
+            "rules=18 bodyBg=242,232,214 wrap=720 markDisplay=1 markBg=yes linkDisplay=1 linkBorder=yes\n",
             result);
     }
 

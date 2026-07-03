@@ -139,46 +139,55 @@ inline const std::string& HomePageHtml() {
 <style>
 body {
     font-family: 'Segoe UI', system-ui, sans-serif;
-    background: #f5f6f8;
-    color: #17191f;
+    background: #f2e8d6;
+    color: #211c16;
     margin: 0;
-    padding: 28px 0 48px;
+    padding: 36px 0 52px;
 }
 .w { width: 720px; margin-left: auto; margin-right: auto; }
-.brand { text-align: center; margin-bottom: 18px; }
+.brand { text-align: center; margin-bottom: 22px; }
 .mark {
-    display: block; background: #3b6df6; color: white;
-    border-radius: 8px; padding: 9px 0; font-weight: 700;
-    font-size: 15px; width: 94px; margin-left: auto; margin-right: auto;
+    display: block; background: #315cf6; color: white;
+    border-radius: 6px; padding: 10px 0; font-weight: 800;
+    font-size: 14px; width: 104px; margin-left: auto; margin-right: auto;
 }
 .title {
-    color: #17191f; text-align: center; font-size: 34px; font-weight: 700;
-    padding-top: 22px; padding-bottom: 12px;
+    color: #211c16; text-align: center; font-size: 42px; font-weight: 800;
+    padding-top: 22px; padding-bottom: 10px;
 }
-.sub { text-align: center; color: #8a93a5; font-size: 15px; padding-bottom: 8px; }
+.sub { text-align: center; color: #665847; font-size: 15px; padding-bottom: 8px; }
 .search {
-    background: #ffffff; border: 1px solid #d1d6e0; border-radius: 10px;
-    padding: 16px 18px; margin: 20px 0 18px; color: #8a93a5;
-    font-size: 16px;
+    background: #fffaf1; border: 1px solid #d5c4a6; border-radius: 8px;
+    padding: 18px 20px; margin: 24px 0 20px; color: #65553f;
+    font-size: 16px; box-shadow: 0 8px 22px rgba(63, 45, 20, 0.08);
+}
+.search strong { color: #211c16; }
+.hint {
+    display: block; color: #8b7960; font-size: 13px;
+    padding-top: 5px;
 }
 .section-title {
-    color: #8a93a5; font-size: 12px; font-weight: 700;
+    color: #665847; font-size: 12px; font-weight: 800;
     padding-top: 18px; padding-bottom: 10px; text-transform: uppercase;
 }
 .links { padding: 0; }
 .links a {
-    display: block; background: #ffffff; border: 1px solid #d1d6e0;
-    border-radius: 8px; padding: 15px 16px; margin: 8px 0;
-    text-decoration: none; color: #3b6df6; font-size: 15px; font-weight: 700;
+    display: block; background: #fffaf1; border: 1px solid #d8c8ac;
+    border-radius: 7px; padding: 16px 18px; margin: 9px 0;
+    text-decoration: none; color: #315cf6; font-size: 15px; font-weight: 800;
+}
+.links span {
+    display: block; color: #74664f; font-size: 12px; font-weight: 500;
+    padding-top: 4px;
 }
 .shortcuts {
-    background: #e5e8ee; border-radius: 8px; padding: 14px 18px;
-    margin-top: 18px;
+    background: #e6d6ba; border: 1px solid #d1bd99;
+    border-radius: 8px; padding: 14px 18px; margin-top: 20px;
 }
-.key { display: block; padding: 5px 0; color: #5d6575; font-size: 13px; }
+.key { display: block; padding: 5px 0; color: #594b38; font-size: 13px; }
 .ft { padding-top: 24px; text-align: center; }
-.ft p { font-size: 12px; color: #8a93a5; }
-.tag { color: #3b6df6; font-size: 12px; font-weight: 700; }
+.ft p { font-size: 12px; color: #74664f; }
+.tag { color: #315cf6; font-size: 12px; font-weight: 800; }
 </style>
 </head>
 <body>
@@ -188,13 +197,13 @@ body {
 <div class="title">Start browsing</div>
 <div class="sub">A from-scratch browser engine with its own HTML, CSS, JS, layout, and renderer.</div>
 </div>
-<div class="search">Ctrl+L - search or enter a URL</div>
+<div class="search"><strong>Ctrl+L</strong> - search or enter a URL<span class="hint">Try a site, open a quick link, or jump into history.</span></div>
 <div class="section-title">Quick links</div>
 <div class="links">
-<a href="https://www.wikipedia.org/">Wikipedia - www.wikipedia.org</a>
-<a href="https://news.ycombinator.com">Hacker News - news.ycombinator.com</a>
-<a href="https://lite.cnn.com">CNN Lite - lite.cnn.com</a>
-<a href="vertex://history">History - vertex://history</a>
+<a href="https://www.wikipedia.org/">Wikipedia<span>www.wikipedia.org</span></a>
+<a href="https://news.ycombinator.com">Hacker News<span>news.ycombinator.com</span></a>
+<a href="https://lite.cnn.com">CNN Lite<span>lite.cnn.com</span></a>
+<a href="vertex://history">History<span>vertex://history</span></a>
 </div>
 <div class="shortcuts">
 <div class="section-title" style="margin-top:0;">Shortcuts</div>
