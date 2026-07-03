@@ -133,10 +133,14 @@ elseif (APPLE)
     set_source_files_properties(src/platform/vertex_icon.icns PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
+    set_source_files_properties(src/platform/vertex_icon_light.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
     add_executable(Vertex MACOSX_BUNDLE
         src/platform/main_macos.mm
         src/platform/platform_macos.mm
         src/platform/vertex_icon.icns
+        src/platform/vertex_icon_light.icns
     )
     target_include_directories(Vertex PRIVATE src)
     target_link_libraries(Vertex PRIVATE
@@ -164,6 +168,9 @@ elseif (UNIX)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png
             $<TARGET_FILE_DIR:Vertex>/vertex_icon.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon_light.png
+            $<TARGET_FILE_DIR:Vertex>/vertex_icon_light.png
     )
 endif()
 

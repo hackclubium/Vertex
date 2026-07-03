@@ -52,6 +52,24 @@ static NSColor* ThemeColor(vertex::chrome_theme::Rgb c, CGFloat alpha = 1.0) {
                                      alpha:alpha];
 }
 
+static bool IsMacDarkAppearance() {
+    NSAppearance* appearance = [NSApp effectiveAppearance];
+    NSString* match = [appearance bestMatchFromAppearancesWithNames:@[
+        NSAppearanceNameAqua,
+        NSAppearanceNameDarkAqua
+    ]];
+    return [match isEqualToString:NSAppearanceNameDarkAqua];
+}
+
+static void ApplyThemedApplicationIcon() {
+    NSString* fileName = IsMacDarkAppearance() ? @"vertex_icon_light.icns" : @"vertex_icon.icns";
+    NSString* baseName = [fileName stringByDeletingPathExtension];
+    NSURL* iconUrl = [[NSBundle mainBundle] URLForResource:baseName withExtension:@"icns"];
+    NSImage* icon = iconUrl ? [[NSImage alloc] initWithContentsOfURL:iconUrl] : nil;
+    if (icon)
+        [NSApp setApplicationIconImage:icon];
+}
+
 static NSString* UrlBadgeText(const std::string& url) {
     if (url.rfind("vertex://", 0) == 0 || url.rfind("felix://", 0) == 0) return @"H";
     if (url.rfind("https://", 0) == 0) return @"S";
@@ -287,6 +305,14 @@ int main(int argc, const char* argv[]) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        ApplyThemedApplicationIcon();
+        [[NSDistributedNotificationCenter defaultCenter]
+            addObserverForName:@"AppleInterfaceThemeChangedNotification"
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification*) {
+                        ApplyThemedApplicationIcon();
+                    }];
 
         // Auto-update.
         {

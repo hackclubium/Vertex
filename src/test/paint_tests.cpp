@@ -52,6 +52,38 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
+        std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
+        std::string cmake = ReadTextFile(root / "CMakeLists.txt");
+        std::string rc = ReadTextFile(root / "src/platform/vertex.rc");
+        std::string resourceH = ReadTextFile(root / "src/platform/resource.h");
+        const bool hasPlatformLightAssets =
+            std::filesystem::exists(root / "src/platform/vertex_icon_light.png")
+            && std::filesystem::exists(root / "src/platform/vertex_icon_light.ico")
+            && std::filesystem::exists(root / "src/platform/vertex_icon_light.icns");
+        const bool themedIcons =
+            hasPlatformLightAssets
+            && resourceH.find("IDI_VERTEX_APP_LIGHT") != std::string::npos
+            && rc.find("vertex_icon_light.ico") != std::string::npos
+            && mainWin.find("AppsUseLightTheme") != std::string::npos
+            && mainWin.find("ApplyThemedWindowIcon") != std::string::npos
+            && mainWin.find("WM_SETTINGCHANGE") != std::string::npos
+            && linuxMain.find("gtk-application-prefer-dark-theme") != std::string::npos
+            && linuxMain.find("vertex_icon_light.png") != std::string::npos
+            && linuxMain.find("notify::gtk-application-prefer-dark-theme") != std::string::npos
+            && cmake.find("src/platform/vertex_icon_light.icns") != std::string::npos
+            && macMain.find("effectiveAppearance") != std::string::npos
+            && macMain.find("vertex_icon_light.icns") != std::string::npos
+            && macMain.find("AppleInterfaceThemeChangedNotification") != std::string::npos;
+        ExpectEqual("paint/platform-icons-follow-system-theme",
+            themedIcons ? "themed\n" : "static\n",
+            "themed\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
         const bool hoverDoesNotAlwaysRebuild =
             renderer.find("&& !hoverChanged") == std::string::npos;

@@ -2,6 +2,7 @@
 #include <commctrl.h>
 #include <shlobj.h>
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "advapi32.lib")
 
 #include "network/resource_cache.h"
 #include "network/url.h"
@@ -82,6 +83,9 @@ static HBRUSH   g_toolbarBrush = nullptr;
 static HBRUSH   g_statusBrush = nullptr;
 static HBRUSH   g_editBrush = nullptr;
 static HBRUSH   g_windowBrush = nullptr;
+static HICON    g_appIconLarge = nullptr;
+static HICON    g_appIconSmall = nullptr;
+static int      g_appIconResourceId = 0;
 
 static constexpr COLORREF ToColorRef(vertex::chrome_theme::Rgb c) {
     return RGB(c.r, c.g, c.b);
@@ -102,6 +106,54 @@ static constexpr COLORREF kChromeLine    = ToColorRef(vertex::chrome_theme::Line
 
 // ─── layout constants ─────────────────────────────────────────────────────────
 // Layout constants from ChromeLayout (shared with chrome.h).
+static bool IsSystemDarkMode() {
+    DWORD appsUseLightTheme = 1;
+    DWORD size = sizeof(appsUseLightTheme);
+    LSTATUS status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &appsUseLightTheme,
+        &size);
+    return status == ERROR_SUCCESS && appsUseLightTheme == 0;
+}
+
+static int ThemedIconResourceId() {
+    return IsSystemDarkMode() ? IDI_VERTEX_APP_LIGHT : IDI_VERTEX_APP;
+}
+
+static void LoadThemedAppIcons(HINSTANCE instance) {
+    int iconId = ThemedIconResourceId();
+    if (g_appIconResourceId == iconId && g_appIconLarge && g_appIconSmall)
+        return;
+    if (g_appIconLarge) {
+        DestroyIcon(g_appIconLarge);
+        g_appIconLarge = nullptr;
+    }
+    if (g_appIconSmall) {
+        DestroyIcon(g_appIconSmall);
+        g_appIconSmall = nullptr;
+    }
+    g_appIconLarge = (HICON)LoadImageW(
+        instance, MAKEINTRESOURCEW(iconId), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    g_appIconSmall = (HICON)LoadImageW(
+        instance, MAKEINTRESOURCEW(iconId), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+    g_appIconResourceId = iconId;
+}
+
+static void ApplyThemedWindowIcon(HWND hwnd) {
+    HINSTANCE instance = (HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE);
+    LoadThemedAppIcons(instance);
+    if (g_appIconLarge)
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g_appIconLarge);
+    if (g_appIconSmall)
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g_appIconSmall);
+}
+
 constexpr int TAB_H     = vertex::chrome_theme::TabHeight;
 constexpr int TOOLBAR_H = vertex::chrome_theme::ToolbarHeight;
 constexpr int STATUS_H  = vertex::chrome_theme::StatusHeight;
@@ -792,6 +844,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         g_cursorArrow = LoadCursor(NULL, IDC_ARROW);
         g_cursorHand  = LoadCursor(NULL, IDC_HAND);
+        ApplyThemedWindowIcon(hwnd);
 
         HINSTANCE hi = GetModuleHandleW(NULL);
         auto btn = [&](LPCWSTR t, int id) {
@@ -1381,6 +1434,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND:
         return 1;
 
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+        ApplyThemedWindowIcon(hwnd);
+        return 0;
+
     case WM_DESTROY:
         if (g_uiFont) { DeleteObject(g_uiFont); g_uiFont = nullptr; }
         if (g_urlFont) { DeleteObject(g_urlFont); g_urlFont = nullptr; }
@@ -1388,6 +1446,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_statusBrush) { DeleteObject(g_statusBrush); g_statusBrush = nullptr; }
         if (g_editBrush) { DeleteObject(g_editBrush); g_editBrush = nullptr; }
         if (g_windowBrush) { DeleteObject(g_windowBrush); g_windowBrush = nullptr; }
+        if (g_appIconLarge) { DestroyIcon(g_appIconLarge); g_appIconLarge = nullptr; }
+        if (g_appIconSmall) { DestroyIcon(g_appIconSmall); g_appIconSmall = nullptr; }
+        g_appIconResourceId = 0;
         PostQuitMessage(0);
         return 0;
     }
@@ -1460,9 +1521,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     g_windowBrush = CreateSolidBrush(kChromePanel);
     wc.hbrBackground = g_windowBrush;
-    wc.hIcon         = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_VERTEX_APP));
-    wc.hIconSm       = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(IDI_VERTEX_APP),
-                                         IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+    LoadThemedAppIcons(hInst);
+    wc.hIcon         = g_appIconLarge;
+    wc.hIconSm       = g_appIconSmall;
     RegisterClassExW(&wc);
 
     g_hwnd = CreateWindowExW(0,

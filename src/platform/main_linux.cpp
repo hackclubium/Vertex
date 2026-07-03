@@ -37,16 +37,35 @@ static auto& g_js        = g_chrome.state.js;
 static auto& g_formState = g_chrome.state.form;
 static auto& g_updater   = g_chrome.state.updater;
 
+static bool IsLinuxDarkTheme() {
+    GtkSettings* settings = gtk_settings_get_default();
+    if (!settings) return false;
+    gboolean preferDark = FALSE;
+    gchar* themeName = nullptr;
+    g_object_get(settings,
+        "gtk-application-prefer-dark-theme", &preferDark,
+        "gtk-theme-name", &themeName,
+        nullptr);
+    std::string lowerTheme;
+    if (themeName) {
+        for (const char* p = themeName; *p; ++p)
+            lowerTheme += (char)std::tolower((unsigned char)*p);
+        g_free(themeName);
+    }
+    return preferDark || lowerTheme.find("dark") != std::string::npos;
+}
+
 static void SetLinuxWindowIcon(GtkWidget* window, const char* argv0) {
+    const char* iconName = IsLinuxDarkTheme() ? "vertex_icon_light.png" : "vertex_icon.png";
     std::vector<std::string> candidates;
     if (argv0 && *argv0) {
         std::string exe(argv0);
         size_t slash = exe.find_last_of('/');
         if (slash != std::string::npos)
-            candidates.push_back(exe.substr(0, slash + 1) + "vertex_icon.png");
+            candidates.push_back(exe.substr(0, slash + 1) + iconName);
     }
-    candidates.push_back("vertex_icon.png");
-    candidates.push_back("src/platform/vertex_icon.png");
+    candidates.push_back(iconName);
+    candidates.push_back(std::string("src/platform/") + iconName);
 
     for (const auto& path : candidates) {
         if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) continue;
@@ -57,6 +76,11 @@ static void SetLinuxWindowIcon(GtkWidget* window, const char* argv0) {
         }
         if (error) g_error_free(error);
     }
+}
+
+static void OnLinuxThemeChanged(GtkSettings*, GParamSpec*, gpointer) {
+    if (g_window)
+        SetLinuxWindowIcon(g_window, nullptr);
 }
 static Semaphore g_imageFetchGate(6);
 
@@ -467,6 +491,12 @@ static gboolean on_key_press(GtkWidget* widget, GdkEventKey* event, gpointer dat
 
 int main(int argc, char* argv[]) {
     gtk_init(&argc, &argv);
+    if (GtkSettings* settings = gtk_settings_get_default()) {
+        g_signal_connect(settings, "notify::gtk-application-prefer-dark-theme",
+            G_CALLBACK(OnLinuxThemeChanged), nullptr);
+        g_signal_connect(settings, "notify::gtk-theme-name",
+            G_CALLBACK(OnLinuxThemeChanged), nullptr);
+    }
 
     // Auto-update: apply staged update, then check for new one in background.
     {
