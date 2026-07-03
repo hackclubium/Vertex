@@ -225,6 +225,49 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml(
+            "<html><body>"
+            "<article id=\"a1\"></article><p id=\"p1\"></p><article id=\"a2\"></article>"
+            "<p id=\"p2\"></p><article id=\"a3\"></article>"
+            "</body></html>");
+        auto sheet = ParseStylesheet(
+            "article:nth-of-type(2n+1) { color: red; }"
+            "p:nth-last-of-type(1) { margin-left: 7px; }");
+        std::string actual;
+        for (const std::string id : { "a1", "a2", "a3", "p1", "p2" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/nth-of-type-selectors",
+            actual,
+            "a1: color=1,0,0,1 \n"
+            "a2: \n"
+            "a3: color=1,0,0,1 \n"
+            "p1: \n"
+            "p2: marginLeft=7 \n",
+            result);
+    }
+
+    {
+        auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
+        auto* rootNode = FindFirstElement(dom.get(), "html");
+        auto* target = FindElementById(dom.get(), "target");
+        auto sheet = ParseStylesheet(
+            ":root { --fallback-gap: 9px; }"
+            "#target { padding-left: var(--missing, var(--fallback-gap, 3px));"
+            "          color: var(--missing-color, rgb(1, 2, 3)); }");
+        auto rootStyle = rootNode ? sheet.resolve(rootNode) : ComputedStyle{};
+        ResolveStyleVariables(rootStyle);
+        auto targetStyle = target ? rootStyle.inherit(sheet.resolve(target)) : ComputedStyle{};
+        ResolveStyleVariables(targetStyle);
+        ExpectEqual("css/custom-properties/nested-var-fallbacks",
+            SerializeComputedStyle(targetStyle),
+            "color=0.00392157,0.00784314,0.0117647,1 paddingLeft=9 \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
         auto* target = FindElementById(dom.get(), "target");
         auto sheet = ParseStylesheet(
@@ -622,6 +665,28 @@ TestResult RunCssTests() {
         ExpectEqual("css/media/min-width",
             "narrow: " + narrow + "wide: " + wide,
             "narrow: color=1,0,0,1 \nwide: color=0,0,1,1 \n",
+            result);
+    }
+
+    {
+        auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
+        auto* target = FindElementById(dom.get(), "target");
+        auto sheet = ParseStylesheet(
+            "#target { color: red; }"
+            "@media (width <= 700px) { #target { color: blue; } }"
+            "@media (600px <= width) { #target { margin-left: 4px; } }"
+            "@media (height > 500px) { #target { padding-left: 6px; } }");
+        sheet.setViewport(500.f, 400.f);
+        const std::string small = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
+        sheet.setViewport(650.f, 600.f);
+        const std::string middle = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
+        sheet.setViewport(750.f, 600.f);
+        const std::string wide = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
+        ExpectEqual("css/media/range-syntax",
+            "small: " + small + "middle: " + middle + "wide: " + wide,
+            "small: color=0,0,1,1 \n"
+            "middle: color=0,0,1,1 marginLeft=4 paddingLeft=6 \n"
+            "wide: color=1,0,0,1 marginLeft=4 paddingLeft=6 \n",
             result);
     }
 

@@ -1894,6 +1894,24 @@ static int ElementChildCount(const Node* node) {
     return count;
 }
 
+static int ElementTypeIndex(const Node* node) {
+    if (!node || !node->parent) return 0;
+    int idx = 0;
+    for (const auto& c : node->parent->children) {
+        if (c->type == NodeType::Element && c->tagName == node->tagName) ++idx;
+        if (c.get() == node) return idx;
+    }
+    return 0;
+}
+
+static int ElementTypeCount(const Node* node) {
+    if (!node || !node->parent) return 0;
+    int count = 0;
+    for (const auto& c : node->parent->children)
+        if (c->type == NodeType::Element && c->tagName == node->tagName) ++count;
+    return count;
+}
+
 static bool IsFirstOfType(const Node* node) {
     if (!node || !node->parent) return false;
     for (const auto& c : node->parent->children) {
@@ -1963,6 +1981,17 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
         std::string arg = pseudo.substr(15, pseudo.size() - 16);
         auto [a, b] = ParseNthExpr(arg);
         int fromEnd = ElementChildCount(node) - ElementChildIndex(node) + 1;
+        return MatchesNth(fromEnd, a, b);
+    }
+    if (pseudo.rfind("nth-of-type(", 0) == 0) {
+        std::string arg = pseudo.substr(12, pseudo.size() - 13);
+        auto [a, b] = ParseNthExpr(arg);
+        return MatchesNth(ElementTypeIndex(node), a, b);
+    }
+    if (pseudo.rfind("nth-last-of-type(", 0) == 0) {
+        std::string arg = pseudo.substr(17, pseudo.size() - 18);
+        auto [a, b] = ParseNthExpr(arg);
+        int fromEnd = ElementTypeCount(node) - ElementTypeIndex(node) + 1;
         return MatchesNth(fromEnd, a, b);
     }
     // :hover — check if the node or any ancestor is the hovered element.
@@ -2383,7 +2412,8 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                 // Extract the argument text (between the parens).
                 size_t argStart = sel.find('(', nameStart) + 1;
                 std::string argText = sTrim(sel.substr(argStart, j - 1 - argStart));
-                if (pseudo == "nth-child" || pseudo == "nth-last-child") {
+                if (pseudo == "nth-child" || pseudo == "nth-last-child"
+                    || pseudo == "nth-of-type" || pseudo == "nth-last-of-type") {
                     // Store as "nth-child(2n+1)" so MatchesPseudoClass can parse it.
                     part.pseudos.push_back(pseudo + "(" + sLower(argText) + ")");
                 } else if (pseudo == "not") {
@@ -2555,6 +2585,65 @@ static bool ParseMediaLength(const std::string& raw, float& out) {
     return true;
 }
 
+static bool ApplyMediaRange(CssMediaCondition& condition,
+                            const std::string& name,
+                            const std::string& op,
+                            float length,
+                            bool featureOnLeft) {
+    const float epsilon = 0.001f;
+    auto applyMin = [&](float value) {
+        condition.minWidth = name == "width" ? std::max(condition.minWidth, value) : condition.minWidth;
+        condition.minHeight = name == "height" ? std::max(condition.minHeight, value) : condition.minHeight;
+    };
+    auto applyMax = [&](float value) {
+        if (name == "width")
+            condition.maxWidth = condition.maxWidth < 0.f ? value : std::min(condition.maxWidth, value);
+        else if (name == "height")
+            condition.maxHeight = condition.maxHeight < 0.f ? value : std::min(condition.maxHeight, value);
+    };
+
+    if (name != "width" && name != "height") return false;
+    if (featureOnLeft) {
+        if (op == "<=") { applyMax(length); return true; }
+        if (op == "<")  { applyMax(length - epsilon); return true; }
+        if (op == ">=") { applyMin(length); return true; }
+        if (op == ">")  { applyMin(length + epsilon); return true; }
+    } else {
+        if (op == "<=") { applyMin(length); return true; }
+        if (op == "<")  { applyMin(length + epsilon); return true; }
+        if (op == ">=") { applyMax(length); return true; }
+        if (op == ">")  { applyMax(length - epsilon); return true; }
+    }
+    return false;
+}
+
+static bool ParseMediaRangeFeature(const std::string& feature,
+                                   CssMediaCondition& condition) {
+    static const char* ops[] = { "<=", ">=", "<", ">" };
+    for (const char* rawOp : ops) {
+        const std::string op(rawOp);
+        size_t pos = feature.find(op);
+        if (pos == std::string::npos) continue;
+
+        std::string left = sTrim(feature.substr(0, pos));
+        std::string right = sTrim(feature.substr(pos + op.size()));
+        if (left.empty() || right.empty()) return false;
+
+        if (left == "width" || left == "height") {
+            float length = 0.f;
+            return ParseMediaLength(right, length)
+                && ApplyMediaRange(condition, left, op, length, true);
+        }
+        if (right == "width" || right == "height") {
+            float length = 0.f;
+            return ParseMediaLength(left, length)
+                && ApplyMediaRange(condition, right, op, length, false);
+        }
+        return false;
+    }
+    return false;
+}
+
 static std::vector<CssMediaCondition> ParseMediaConditions(const std::string& prelude) {
     std::vector<CssMediaCondition> conditions;
     for (const auto& part : SplitMediaList(prelude)) {
@@ -2574,7 +2663,8 @@ static std::vector<CssMediaCondition> ParseMediaConditions(const std::string& pr
             const std::string feature = sTrim(lower.substr(open + 1, close - open - 1));
             const size_t colon = feature.find(':');
             if (colon == std::string::npos) {
-                condition.supported = false;
+                if (!ParseMediaRangeFeature(feature, condition))
+                    condition.supported = false;
             } else {
                 const std::string name = sTrim(feature.substr(0, colon));
                 float length = 0.f;
