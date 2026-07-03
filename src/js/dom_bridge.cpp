@@ -723,6 +723,10 @@ struct SelectorPart {
     char combinatorBefore = 0;
 };
 
+struct ParsedSelectorGroup {
+    std::vector<SelectorPart> parts;
+};
+
 static std::vector<SelectorPart> parseSelectorParts(const std::string& selector) {
     std::vector<SelectorPart> parts;
     std::string cur;
@@ -768,6 +772,15 @@ static std::vector<SelectorPart> parseSelectorParts(const std::string& selector)
     }
     flush();
     return parts;
+}
+
+static std::vector<ParsedSelectorGroup> parseSelectorGroups(const std::string& selector) {
+    std::vector<ParsedSelectorGroup> groups;
+    for (const auto& group : splitSelectorTopLevel(selector, ',')) {
+        auto parts = parseSelectorParts(group);
+        if (!parts.empty()) groups.push_back({ std::move(parts) });
+    }
+    return groups;
 }
 
 static bool hasClassToken(const Node* n, const std::string& cls) {
@@ -1037,15 +1050,23 @@ static bool matchesSelectorParts(Node* n, const std::vector<SelectorPart>& parts
 }
 
 static bool matchesSelector(Node* n, const std::string& selector, Node* scope) {
-    for (const auto& group : splitSelectorTopLevel(selector, ',')) {
-        auto parts = parseSelectorParts(group);
-        if (!parts.empty() && matchesSelectorParts(n, parts, (int)parts.size() - 1, scope))
+    auto groups = parseSelectorGroups(selector);
+    for (const auto& group : groups) {
+        if (!group.parts.empty() && matchesSelectorParts(n, group.parts, (int)group.parts.size() - 1, scope))
             return true;
     }
     return false;
 }
 
-static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::string& sel) {
+static bool matchesParsedSelector(Node* n, const std::vector<ParsedSelectorGroup>& groups, Node* scope) {
+    for (const auto& group : groups) {
+        if (!group.parts.empty() && matchesSelectorParts(n, group.parts, (int)group.parts.size() - 1, scope))
+            return true;
+    }
+    return false;
+}
+
+static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::vector<ParsedSelectorGroup>& groups) {
     std::vector<std::shared_ptr<Node>> result;
     size_t visited = 0;
     int depth = 0;
@@ -1053,7 +1074,29 @@ static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::str
         if (++depth > 1000) { --depth; return; }   // guard against deep/cyclic trees
         for (auto& c : n->children) {
             if (++visited > 200000) break;          // guard against runaway traversal
-            if (matchesSelector(c.get(), sel, root)) result.push_back(c);
+            if (matchesParsedSelector(c.get(), groups, root)) result.push_back(c);
+            walk(c.get());
+        }
+        --depth;
+    };
+    walk(root);
+    return result;
+}
+
+static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::string& sel) {
+    return domQueryAll(root, parseSelectorGroups(sel));
+}
+
+static std::shared_ptr<Node> domQueryFirst(Node* root, const std::string& sel) {
+    auto groups = parseSelectorGroups(sel);
+    size_t visited = 0;
+    int depth = 0;
+    std::shared_ptr<Node> result;
+    std::function<void(Node*)> walk = [&](Node* n) {
+        if (result || ++depth > 1000) { if (depth > 0) --depth; return; }
+        for (auto& c : n->children) {
+            if (result || ++visited > 200000) break;
+            if (matchesParsedSelector(c.get(), groups, root)) { result = c; break; }
             walk(c.get());
         }
         --depth;
@@ -1541,8 +1584,8 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     addNativeM("querySelector", NATIVE("querySelector") {
         Node* n = unwrapNode(thisVal);
         if (!n || args.empty()) return JsValue::null();
-        auto results = domQueryAll(n, args[0].toString());
-        return results.empty() ? JsValue::null() : wrapNode(vm, results[0]);
+        auto found = domQueryFirst(n, args[0].toString());
+        return found ? wrapNode(vm, found) : JsValue::null();
     });
     addNativeM("querySelectorAll", NATIVE("querySelectorAll") {
         Node* n = unwrapNode(thisVal);

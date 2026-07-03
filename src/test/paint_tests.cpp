@@ -213,6 +213,48 @@ TestResult RunPaintTests() {
         auto root = FindRepoRoot();
         std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
         std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool offscreenTextSkipsHits =
+            painter.find("continue; // offscreen text/link fragments do not need paint or hit regions") != std::string::npos
+            && painter.find("if (sy + frag.h < topInset || sy > (float)m_height)") != std::string::npos
+            && sharedPainter.find("continue; // offscreen text/link fragments do not need paint or hit regions") != std::string::npos
+            && sharedPainter.find("if (sy + frag.h < ps.topInset || sy > (float)ps.r->Height())") != std::string::npos;
+        ExpectEqual("paint/offscreen-text-skips-hit-regions",
+            offscreenTextSkipsHits ? "skipped\n" : "records-offscreen-hits\n",
+            "skipped\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string bridge = ReadTextFile(root / "src/js/dom_bridge.cpp");
+        const bool selectorParseCache =
+            bridge.find("struct ParsedSelectorGroup") != std::string::npos
+            && bridge.find("parseSelectorGroups(") != std::string::npos
+            && bridge.find("matchesParsedSelector(") != std::string::npos
+            && bridge.find("domQueryAll(Node* root, const std::vector<ParsedSelectorGroup>& groups)") != std::string::npos;
+        ExpectEqual("paint/dom-selector-query-parses-once",
+            selectorParseCache ? "cached\n" : "reparse-per-node\n",
+            "cached\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool blockLinkHitCulls =
+            painter.find("bool hitVisible = hy + hh >= topInset && hy <= (float)m_height;") != std::string::npos
+            && sharedPainter.find("bool hitVisible = hy + hh >= ps.topInset && hy <= (float)ps.r->Height();") != std::string::npos;
+        ExpectEqual("paint/offscreen-block-links-skip-hit-regions",
+            blockLinkHitCulls ? "culled\n" : "records-offscreen-hits\n",
+            "culled\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
         const bool simpleFastPath =
             painter.find("bool simpleInFlowChildren = true;") != std::string::npos
             && sharedPainter.find("bool simpleInFlowChildren = true;") != std::string::npos

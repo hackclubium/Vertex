@@ -478,9 +478,7 @@ void Renderer::PaintLines(const LayoutBox& box, float scrollY, float topInset, b
             if (fs.visibilitySet && fs.visibilityHidden) continue;
             float sy = frag.y - (underFixed ? 0.f : scrollY) + topInset;
             if (sy + frag.h < topInset || sy > (float)m_height) {
-                if (!frag.src->href.empty())
-                    m_hits.push_back({ frag.x, sy, frag.w, frag.h, frag.src->href });
-                continue;
+                continue; // offscreen text/link fragments do not need paint or hit regions
             }
             FontKey f;
             f.size = std::clamp((fs.fontSize > 0 ? fs.fontSize : 16.f) * m_zoom, 1.f, 40.f);
@@ -561,7 +559,8 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         float hy = box.y - effScroll + topInset;
         float hw = box.borderBoxW();
         float hh = box.borderBoxH();
-        if (hw > 0 && hh > 0)
+        bool hitVisible = hy + hh >= topInset && hy <= (float)m_height;
+        if (hitVisible && hw > 0 && hh > 0)
             m_hits.push_back({ hx, hy, hw, hh, box.href });
     }
 

@@ -316,9 +316,7 @@ inline void PaintLines(PaintState& ps, const LayoutBox& box) {
             if (fs.opacitySet && fs.opacity < 0.01f) continue;
             float sy = frag.y - ps.scrollY + ps.topInset;
             if (sy + frag.h < ps.topInset || sy > (float)ps.r->Height()) {
-                if (ps.hits && !frag.src->href.empty())
-                    ps.hits->push_back({ frag.x, sy, frag.w, frag.h, frag.src->href });
-                continue;
+                continue; // offscreen text/link fragments do not need paint or hit regions
             }
             FontKey fk;
             fk.size = std::clamp((fs.fontSize > 0 ? fs.fontSize : 16.f), 1.f, 40.f);
@@ -365,7 +363,8 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         float hy = box.y - hitScrollY + ps.topInset;
         float hw = box.borderBoxW();
         float hh = box.borderBoxH();
-        if (hw > 0 && hh > 0)
+        bool hitVisible = hy + hh >= ps.topInset && hy <= (float)ps.r->Height();
+        if (hitVisible && hw > 0 && hh > 0)
             ps.hits->push_back({ hx, hy, hw, hh, box.href });
     }
 
