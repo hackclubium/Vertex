@@ -1479,6 +1479,11 @@ void Engine::layoutTable(LayoutBox& box) {
         if (c->node) { try { n = std::max(1, std::stoi(c->node->attr("colspan"))); } catch (...) {} }
         return n;
     };
+    auto rowSpan = [](LayoutBox* c) {
+        int n = 1;
+        if (c->node) { try { n = std::max(1, std::stoi(c->node->attr("rowspan"))); } catch (...) {} }
+        return n;
+    };
 
     // Group children into rows (explicit <tr>/row-group, or one implicit row).
     std::vector<std::vector<LayoutBox*>> rows;
@@ -1486,9 +1491,22 @@ void Engine::layoutTable(LayoutBox& box) {
     std::vector<LayoutBox*> rowBoxes;  // parallel to `rows`; nullptr for implicit
     for (auto& k : box.kids) {
         if (k->isOutOfFlow()) continue;
-        bool isRow = k->kind == BoxKind::TableRow || k->style.isDisplayTableRow()
-                  || k->style.isDisplayTableRowGroup();
-        if (isRow) {
+        std::string tag = k->node ? k->node->tagName : "";
+        bool isRowGroup = k->style.isDisplayTableRowGroup()
+            || tag == "thead" || tag == "tbody" || tag == "tfoot";
+        bool isRow = k->kind == BoxKind::TableRow || k->style.isDisplayTableRow();
+        if (isRowGroup) {
+            if (!implicit.empty()) { rows.push_back(implicit); rowBoxes.push_back(nullptr); implicit.clear(); }
+            for (auto& rowPtr : k->kids) {
+                if (rowPtr->isOutOfFlow()) continue;
+                bool childIsRow = rowPtr->kind == BoxKind::TableRow || rowPtr->style.isDisplayTableRow();
+                if (!childIsRow) continue;
+                std::vector<LayoutBox*> cells;
+                for (auto& c : rowPtr->kids) if (!c->isOutOfFlow()) cells.push_back(c.get());
+                rows.push_back(std::move(cells));
+                rowBoxes.push_back(rowPtr.get());
+            }
+        } else if (isRow) {
             if (!implicit.empty()) { rows.push_back(implicit); rowBoxes.push_back(nullptr); implicit.clear(); }
             std::vector<LayoutBox*> cells;
             for (auto& c : k->kids) if (!c->isOutOfFlow()) cells.push_back(c.get());
@@ -1501,33 +1519,56 @@ void Engine::layoutTable(LayoutBox& box) {
     if (!implicit.empty()) { rows.push_back(implicit); rowBoxes.push_back(nullptr); }
     if (rows.empty()) { box.contentW = 0; box.contentH = 0; return; }
 
-    // Column count = max sum of colspans across rows.
-    size_t cols = 0;
-    for (auto& row : rows) {
-        size_t c = 0; for (auto* cell : row) c += cellSpan(cell);
-        cols = std::max(cols, c);
-    }
-    if (cols == 0) { box.contentW = 0; box.contentH = 0; return; }
+    struct PlacedCell {
+        LayoutBox* cell = nullptr;
+        size_t row = 0;
+        size_t col = 0;
+        int colSpan = 1;
+        int rowSpan = 1;
+    };
 
+    std::vector<PlacedCell> placed;
+    std::vector<int> occupied;
+    size_t cols = 0;
+    size_t rowCount = rows.size();
+    for (size_t r = 0; r < rows.size(); ++r) {
+        size_t ci = 0;
+        for (auto* cell : rows[r]) {
+            while (ci < occupied.size() && occupied[ci] > 0) ++ci;
+            int cspan = cellSpan(cell);
+            int rspan = rowSpan(cell);
+            if (ci + static_cast<size_t>(cspan) > occupied.size())
+                occupied.resize(ci + static_cast<size_t>(cspan), 0);
+            placed.push_back({ cell, r, ci, cspan, rspan });
+            cols = std::max(cols, ci + static_cast<size_t>(cspan));
+            rowCount = std::max(rowCount, r + static_cast<size_t>(rspan));
+            for (int s = 0; s < cspan; ++s)
+                occupied[ci + static_cast<size_t>(s)] = std::max(occupied[ci + static_cast<size_t>(s)], rspan);
+            ci += static_cast<size_t>(cspan);
+        }
+        for (int& n : occupied)
+            if (n > 0) --n;
+    }
+    if (cols == 0 || placed.empty()) { box.contentW = 0; box.contentH = 0; return; }
     // Per-column max-content. Single-column cells set their column directly;
     // spanning cells add a constraint that the spanned columns sum wide enough.
     std::vector<float> colW(cols, 0.f);
-    for (auto& row : rows) {
-        size_t ci = 0;
-        for (auto* cell : row) {
-            int span = cellSpan(cell);
-            float want = maxContent(*cell) + hExtra(cell->style);
-            if (cell->style.width >= 0) want = px(cell->style.width) + hExtra(cell->style);
-            if (span == 1) {
-                if (ci < cols) colW[ci] = std::max(colW[ci], want);
-            } else {
-                float have = 0; for (int s = 0; s < span && ci + s < cols; ++s) have += colW[ci + s];
-                if (want > have && span > 0) {
-                    float add = (want - have) / span;
-                    for (int s = 0; s < span && ci + s < cols; ++s) colW[ci + s] += add;
-                }
+    for (const auto& pc : placed) {
+        int span = pc.colSpan;
+        size_t ci = pc.col;
+        float want = maxContent(*pc.cell) + hExtra(pc.cell->style);
+        if (pc.cell->style.width >= 0) want = px(pc.cell->style.width) + hExtra(pc.cell->style);
+        if (span == 1) {
+            if (ci < cols) colW[ci] = std::max(colW[ci], want);
+        } else {
+            float have = 0;
+            for (int s = 0; s < span && ci + static_cast<size_t>(s) < cols; ++s)
+                have += colW[ci + static_cast<size_t>(s)];
+            if (want > have && span > 0) {
+                float add = (want - have) / span;
+                for (int s = 0; s < span && ci + static_cast<size_t>(s) < cols; ++s)
+                    colW[ci + static_cast<size_t>(s)] += add;
             }
-            ci += span;
         }
     }
 
@@ -1548,48 +1589,77 @@ void Engine::layoutTable(LayoutBox& box) {
     std::vector<float> colX(cols, 0.f);
     { float x = x0 + spacing; for (size_t i = 0; i < cols; ++i) { colX[i] = x; x += colW[i] + spacing; } }
 
-    float y = y0;
-    for (size_t r = 0; r < rows.size(); ++r) {
-        float rowH = 0;
-        size_t ci = 0;
-        for (auto* cell : rows[r]) {
-            int span = cellSpan(cell);
-            float cw = 0;
-            for (int s = 0; s < span && ci + s < cols; ++s)
-                cw += colW[ci + s] + (s > 0 ? spacing : 0);
-            float cx = ci < cols ? colX[ci] : x0 + spacing;
-            cell->y = y + spacing;
-            // Pin the cell to its shared column width (override auto) so columns align.
-            float savedW = cell->style.width;
-            float savedPct = cell->style.widthPercent;
-            float savedCalcPct = cell->style.widthCalcPercent;
-            float savedCalcOffset = cell->style.widthCalcOffset;
-            cell->style.width = std::max(0.f, cw - hExtra(cell->style)) / std::max(0.01f, Z);
-            cell->style.widthPercent = -1;
-            cell->style.widthCalcPercent = -1;
-            cell->style.widthCalcOffset = 0;
-            std::vector<LayoutBox*> pos;
-            layoutBox(*cell, cx, cw, -1.f, pos, nullptr);
-            cell->style.width = savedW;
-            cell->style.widthPercent = savedPct;
-            cell->style.widthCalcPercent = savedCalcPct;
-            cell->style.widthCalcOffset = savedCalcOffset;
-            rowH = std::max(rowH, cell->borderBoxH());
-            ci += span;
+    std::vector<float> rowH(rowCount, 0.f);
+    for (const auto& pc : placed) {
+        float cw = 0;
+        for (int s = 0; s < pc.colSpan && pc.col + static_cast<size_t>(s) < cols; ++s)
+            cw += colW[pc.col + static_cast<size_t>(s)] + (s > 0 ? spacing : 0);
+        float cx = pc.col < cols ? colX[pc.col] : x0 + spacing;
+        pc.cell->y = y0 + spacing;
+        // Pin the cell to its shared column width (override auto) so columns align.
+        float savedW = pc.cell->style.width;
+        float savedPct = pc.cell->style.widthPercent;
+        float savedCalcPct = pc.cell->style.widthCalcPercent;
+        float savedCalcOffset = pc.cell->style.widthCalcOffset;
+        pc.cell->style.width = std::max(0.f, cw - hExtra(pc.cell->style)) / std::max(0.01f, Z);
+        pc.cell->style.widthPercent = -1;
+        pc.cell->style.widthCalcPercent = -1;
+        pc.cell->style.widthCalcOffset = 0;
+        std::vector<LayoutBox*> pos;
+        layoutBox(*pc.cell, cx, cw, -1.f, pos, nullptr);
+        pc.cell->style.width = savedW;
+        pc.cell->style.widthPercent = savedPct;
+        pc.cell->style.widthCalcPercent = savedCalcPct;
+        pc.cell->style.widthCalcOffset = savedCalcOffset;
+
+        if (pc.rowSpan <= 1 && pc.row < rowH.size())
+            rowH[pc.row] = std::max(rowH[pc.row], pc.cell->borderBoxH());
+    }
+
+    for (const auto& pc : placed) {
+        if (pc.rowSpan <= 1) continue;
+        float have = 0;
+        size_t last = std::min(rowH.size(), pc.row + static_cast<size_t>(pc.rowSpan));
+        for (size_t r = pc.row; r < last; ++r)
+            have += rowH[r] + (r > pc.row ? spacing : 0);
+        float need = pc.cell->borderBoxH();
+        if (need > have && last > pc.row) {
+            float add = (need - have) / static_cast<float>(last - pc.row);
+            for (size_t r = pc.row; r < last; ++r)
+                rowH[r] += add;
         }
-        for (auto* cell : rows[r]) {
-            float extra = rowH - cell->borderBoxH();
-            if (extra > 0) cell->contentH += extra;
-        }
+    }
+
+    std::vector<float> rowTop(rowCount, y0 + spacing);
+    float y = y0 + spacing;
+    for (size_t r = 0; r < rowCount; ++r) {
+        rowTop[r] = y;
+        y += rowH[r] + spacing;
+    }
+
+    for (const auto& pc : placed) {
+        size_t last = std::min(rowH.size(), pc.row + static_cast<size_t>(pc.rowSpan));
+        float targetH = 0;
+        for (size_t r = pc.row; r < last; ++r)
+            targetH += rowH[r] + (r > pc.row ? spacing : 0);
+        float extra = targetH - pc.cell->borderBoxH();
+        if (extra > 0) pc.cell->contentH += extra;
+        float targetX = pc.col < cols ? colX[pc.col] : x0 + spacing;
+        float targetY = pc.row < rowTop.size() ? rowTop[pc.row] : y0 + spacing;
+        TranslateSubtree(*pc.cell, targetX - pc.cell->x, targetY - pc.cell->y);
+    }
+
+    for (size_t r = 0; r < rows.size() && r < rowBoxes.size(); ++r) {
         if (rowBoxes[r]) {
-            rowBoxes[r]->x = x0; rowBoxes[r]->y = y;
-            rowBoxes[r]->contentW = targetW; rowBoxes[r]->contentH = rowH;
+            rowBoxes[r]->x = x0;
+            rowBoxes[r]->y = (r < rowTop.size() ? rowTop[r] : y0 + spacing) - spacing;
+            rowBoxes[r]->contentW = targetW;
+            rowBoxes[r]->contentH = r < rowH.size() ? rowH[r] : 0.f;
         }
-        y += rowH + spacing;
     }
 
     box.contentW = std::max(0.f, targetW);
-    box.contentH = std::max(0.f, y + spacing - y0);
+    box.contentH = std::max(0.f, y - y0);
 }
 
 // ─── inline layout ───────────────────────────────────────────────────────────

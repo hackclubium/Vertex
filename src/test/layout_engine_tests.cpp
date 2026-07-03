@@ -279,6 +279,40 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    // Rowspans reserve their columns in following rows, so later cells land in
+    // the same shared columns as the row above instead of sliding left.
+    {
+        auto rdom = ParseHtml(
+            "<html><body><table>"
+            "<tr><td id=\"span\" rowspan=\"2\">Tall</td><td id=\"r1\">A</td></tr>"
+            "<tr><td id=\"r2\">B</td></tr>"
+            "</table></body></html>");
+        auto rsheet = ParseStylesheet(
+            "table { border-spacing:0; } td { padding:0; margin:0; height:20px; }");
+        FixedMeasure rmeasure;
+        LayoutInput rin;
+        rin.document = rdom.get();
+        rin.sheet = &rsheet;
+        rin.measure = &rmeasure;
+        rin.viewportW = 1200.f;
+        rin.viewportH = 600.f;
+        auto rlayout = LayoutDocument(rin);
+        auto* span = FindEngineBoxById(rlayout.get(), "span");
+        auto* r1 = FindEngineBoxById(rlayout.get(), "r1");
+        auto* r2 = FindEngineBoxById(rlayout.get(), "r2");
+        bool rok = span && r1 && r2;
+        bool skipped = rok && (int)(r2->x + .5f) == (int)(r1->x + .5f);
+        bool below = rok && r2->y > r1->y + r1->borderBoxH() - 1.f;
+        bool tall = rok && span->borderBoxH() >= (r2->y + r2->borderBoxH()) - span->y - 1.f;
+        ExpectEqual("layout-engine/table-rowspan-reserves-columns",
+            std::string(rok ? "ok" : "missing")
+                + " skipped=" + (skipped ? "1" : "0")
+                + " below=" + (below ? "1" : "0")
+                + " tall=" + (tall ? "1" : "0") + "\n",
+            "ok skipped=1 below=1 tall=1\n",
+            result);
+    }
+
     // align-items: center positions a short flex item in the middle of the
     // line's cross axis (defined by the tallest item).
     {
