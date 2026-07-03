@@ -104,20 +104,21 @@ static PaintYExtent ComputePaintYExtent(const LayoutBox& root) {
 static bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
                                          float scrollY,
                                          float topInset,
-                                         float viewportH) {
+                                         float dirtyTop,
+                                         float dirtyBottom) {
     if (box.style.positionMode == 3 || box.style.transformSet) return false;
     if (box.kind == BoxKind::Inline || box.kind == BoxKind::Text || box.kind == BoxKind::Break)
         return false;
 
     const float boxTop = box.y - scrollY + topInset;
     const float boxBottom = boxTop + box.borderBoxH();
-    if (boxBottom >= topInset && boxTop <= viewportH) return false;
+    if (boxBottom >= dirtyTop && boxTop <= dirtyBottom) return false;
 
     PaintYExtent extent = ComputePaintYExtent(box);
     if (!extent.safe) return false;
     const float screenMin = extent.minY - scrollY + topInset;
     const float screenMax = extent.maxY - scrollY + topInset;
-    return screenMax < topInset || screenMin > viewportH;
+    return screenMax < dirtyTop || screenMin > dirtyBottom;
 }
 
 // ─── ITextMeasure ─────────────────────────────────────────────────────────────
@@ -623,7 +624,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     bool hidden = (box.style.visibilitySet && box.style.visibilityHidden)
                 || (box.style.opacitySet && box.style.opacity < 0.01f);
 
-    if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, (float)m_height))
+    if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, m_paintDirtyTop, m_paintDirtyBottom))
         return;
 
     if (!hidden && !box.href.empty()

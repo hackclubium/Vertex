@@ -887,6 +887,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
+        g_renderer.SetPaintDirtyRect(ps.rcPaint);
         bool repaintChrome = ps.rcPaint.top < TOP_INSET;
 
         auto tabs = BuildTabEntries();

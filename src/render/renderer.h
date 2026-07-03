@@ -61,6 +61,7 @@ public:
 
     void DiscardTarget();
     void ReceiveImage(const std::string& url, const std::vector<uint8_t>& bytes);
+    void SetPaintDirtyRect(const RECT& rect);
 
     void SetImageRequestCallback(std::function<void(std::string)> cb) {
         m_imageRequestCb = std::move(cb);
@@ -119,8 +120,12 @@ private:
     HWND  m_hwnd   = nullptr;
     UINT  m_width  = 800;
     UINT  m_height = 600;
+    bool  m_hasPaintDirtyRect = false;
+    float m_paintDirtyTop = 0.f;
+    float m_paintDirtyBottom = 0.f;
 
     std::vector<HitRegion> m_hits;
+    float m_hitRegionScrollY = -1.f;
     mutable bool m_lastHitValid = false;
     mutable HitRegion m_lastHitRegion;
     mutable std::string m_lastHitHref;
@@ -151,6 +156,7 @@ private:
     void ApplyPaintOnlyHoverStylesToChangedChain(const Stylesheet& sheet,
                                                  const Node* oldHover,
                                                  const Node* newHover);
+    void RemoveHitRegionsInDirtyRect();
     bool ImageDecodeAffectsLayout(const std::string& url) const;
     IDWriteTextFormat* FormatForKey(const FontKey& f);
     std::map<std::string, IDWriteTextFormat*> m_fmtCache;

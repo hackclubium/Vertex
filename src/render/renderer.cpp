@@ -223,6 +223,19 @@ void Renderer::Resize(UINT w, UINT h) {
     if (m_rt) m_rt->Resize(D2D1::SizeU(w, h));
 }
 
+void Renderer::SetPaintDirtyRect(const RECT& rect) {
+    m_hasPaintDirtyRect = rect.right > rect.left && rect.bottom > rect.top;
+    if (!m_hasPaintDirtyRect) {
+        m_paintDirtyTop = 0.f;
+        m_paintDirtyBottom = (float)m_height;
+        return;
+    }
+    m_paintDirtyTop = std::max(0.f, (float)rect.top);
+    m_paintDirtyBottom = std::min((float)m_height, (float)rect.bottom);
+    if (m_paintDirtyBottom < m_paintDirtyTop)
+        std::swap(m_paintDirtyTop, m_paintDirtyBottom);
+}
+
 void Renderer::InvalidateLayout() {
     m_layoutRoot.reset();
     m_layoutBaseStyles.clear();
@@ -593,6 +606,17 @@ void Renderer::ApplyPaintOnlyHoverStylesToChangedChain(const Stylesheet& sheet,
     applyChain(newHover);
 }
 
+void Renderer::RemoveHitRegionsInDirtyRect() {
+    m_hits.erase(std::remove_if(m_hits.begin(), m_hits.end(),
+        [&](const HitRegion& hit) {
+            const float bottom = hit.y + hit.h;
+            return bottom >= m_paintDirtyTop && hit.y <= m_paintDirtyBottom;
+        }),
+        m_hits.end());
+    m_lastHitValid = false;
+    m_lastHitHref.clear();
+}
+
 bool Renderer::ImageDecodeAffectsLayout(const std::string& url) const {
     if (!m_layoutRoot) return true;
 
@@ -646,11 +670,19 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
     if (!EnsureTarget()) return 0.f;
     m_lastTimings = RendererTimings{};
     auto paintStart = std::chrono::steady_clock::now();
+    if (!m_hasPaintDirtyRect) {
+        m_paintDirtyTop = 0.f;
+        m_paintDirtyBottom = (float)m_height;
+    }
+    auto resetPaintDirty = [&]() {
+        m_hasPaintDirtyRect = false;
+        m_paintDirtyTop = 0.f;
+        m_paintDirtyBottom = (float)m_height;
+    };
 
     for (auto* b : m_tempBrushes) if (b) b->Release();
     m_tempBrushes.clear();
     m_tempBrushCache.clear();
-    m_hits.clear();
     m_lastHitValid = false;
     // m_anchorY is rebuilt only when the layout tree is rebuilt (see below).
 
@@ -685,7 +717,10 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
     if (repaintChrome) {
         m_rt->Clear(bgF);
     } else {
-        m_rt->FillRectangle(D2D1::RectF(0, topInset, (float)m_width, (float)m_height), TempBrush(bgF));
+        const float fillTop = std::max(topInset, m_paintDirtyTop);
+        const float fillBottom = std::min((float)m_height, m_paintDirtyBottom);
+        if (fillBottom > fillTop)
+            m_rt->FillRectangle(D2D1::RectF(0, fillTop, (float)m_width, fillBottom), TempBrush(bgF));
     }
 
     // Chrome area (toolbar + tab strip)
@@ -786,13 +821,28 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                 };
                 startTransitions(*m_layoutRoot);
             }
+            const bool fullContentDirty = m_paintDirtyTop <= topInset
+                && m_paintDirtyBottom >= (float)m_height;
+            const bool rebuildHitRegions = !reuse
+                || m_hitRegionScrollY != scrollY
+                || fullContentDirty;
+            if (rebuildHitRegions) {
+                m_hits.clear();
+                m_hitRegionScrollY = scrollY;
+            } else {
+                RemoveHitRegionsInDirtyRect();
+            }
             prevHover = g_hoverNode;
             if (m_layoutRoot) {
-                m_rt->PushAxisAlignedClip(
-                    D2D1::RectF(0, topInset, (float)m_width, (float)m_height),
-                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                PaintBox(*m_layoutRoot, scrollY, topInset, false);
-                m_rt->PopAxisAlignedClip();
+                const float clipTop = std::max(topInset, m_paintDirtyTop);
+                const float clipBottom = std::min((float)m_height, m_paintDirtyBottom);
+                if (clipBottom > clipTop) {
+                    m_rt->PushAxisAlignedClip(
+                        D2D1::RectF(0, clipTop, (float)m_width, clipBottom),
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    PaintBox(*m_layoutRoot, scrollY, topInset, false);
+                    m_rt->PopAxisAlignedClip();
+                }
                 docH = m_layoutRoot->contentH + 32.f;
                 // If transitions are active, schedule another repaint.
                 if (TransitionManager::instance().hasActiveTransitions() && m_hwnd)
@@ -811,13 +861,17 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
         m_lastTimings.paintMs =
             std::chrono::duration<double, std::milli>(paintEnd - paintStart).count();
         if (hr == D2DERR_RECREATE_TARGET) ReleaseTarget();
+        resetPaintDirty();
         return docH;
     }
 
+    m_hits.clear();
+    m_hitRegionScrollY = -1.f;
     m_rt->EndDraw();
     auto paintEnd = std::chrono::steady_clock::now();
     m_lastTimings.paintMs =
         std::chrono::duration<double, std::milli>(paintEnd - paintStart).count();
+    resetPaintDirty();
     return 0.f;
 }
 

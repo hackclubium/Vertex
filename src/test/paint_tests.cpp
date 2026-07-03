@@ -76,6 +76,39 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
+        const bool dirtyRectsReachPainter =
+            rendererH.find("SetPaintDirtyRect") != std::string::npos
+            && mainWin.find("g_renderer.SetPaintDirtyRect(ps.rcPaint)") != std::string::npos
+            && renderer.find("m_hasPaintDirtyRect") != std::string::npos
+            && painter.find("CanCullOffscreenPaintSubtree(box, scrollY, topInset, m_paintDirtyTop, m_paintDirtyBottom)") != std::string::npos;
+        ExpectEqual("paint/windows-dirty-rect-culls-box-walk",
+            dirtyRectsReachPainter ? "dirty-cull\n" : "viewport-walk\n",
+            "dirty-cull\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
+        const bool retainedHits =
+            rendererH.find("m_hitRegionScrollY") != std::string::npos
+            && renderer.find("RemoveHitRegionsInDirtyRect") != std::string::npos
+            && renderer.find("const bool rebuildHitRegions") != std::string::npos
+            && renderer.find("if (rebuildHitRegions)") != std::string::npos
+            && renderer.find("RemoveHitRegionsInDirtyRect();") != std::string::npos;
+        ExpectEqual("paint/dirty-rect-paint-retains-hit-regions",
+            retainedHits ? "retained\n" : "clears-all\n",
+            "retained\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
         const bool cached =
             renderer.find("IDWriteTextFormat* closeFmt = nullptr") == std::string::npos
@@ -594,7 +627,7 @@ TestResult RunPaintTests() {
         const bool complexSubtreeCull =
             painter.find("CanCullOffscreenPaintSubtree") != std::string::npos
             && painter.find("ComputePaintYExtent") != std::string::npos
-            && painter.find("if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, (float)m_height))") != std::string::npos
+            && painter.find("if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, m_paintDirtyTop, m_paintDirtyBottom))") != std::string::npos
             && sharedPainter.find("CanCullOffscreenPaintSubtree") != std::string::npos
             && sharedPainter.find("ComputePaintYExtent") != std::string::npos
             && sharedPainter.find("if (CanCullOffscreenPaintSubtree(box, ps.scrollY, ps.topInset, (float)ps.r->Height()))") != std::string::npos;
