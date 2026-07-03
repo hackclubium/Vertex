@@ -77,6 +77,7 @@ struct Stylesheet {
     std::unordered_map<std::string, std::vector<size_t>> classRuleBuckets;
     std::unordered_map<std::string, std::vector<size_t>> tagRuleBuckets;
     std::vector<size_t> universalRuleBucket;
+    mutable std::unordered_map<std::string, std::vector<size_t>> candidateRuleIndexCache;
     float viewportWidth = 800.f;
     float viewportHeight = 600.f;
     float rootRemBase = 16.f;
@@ -85,6 +86,7 @@ struct Stylesheet {
     void setViewport(float width, float height) {
         viewportWidth = width;
         viewportHeight = height;
+        candidateRuleIndexCache.clear();
     }
 
     void rebuildRuleBuckets();

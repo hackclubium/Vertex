@@ -578,6 +578,60 @@ TestResult RunCssTests() {
     }
 
     {
+        auto root = FindRepoRoot();
+        std::string header = ReadTextFile(root / "src/css/stylesheet.h");
+        std::string source = ReadTextFile(root / "src/css/stylesheet.cpp");
+        auto dom = ParseHtml("<html><body><article id=\"story\" class=\"featured lead\"><p id=\"child\" class=\"lead\"></p></article></body></html>");
+        auto* story = FindElementById(dom.get(), "story");
+        auto* child = FindElementById(dom.get(), "child");
+        auto sheet = ParseStylesheet(
+            "#story { color: red; }"
+            ".featured { padding-left: 2px; }"
+            ".lead { padding-right: 5px; }"
+            "article { margin-left: 3px; }"
+            "body .lead p { margin-right: 4px; }"
+            "* { margin-top: 1px; }");
+        const bool cached =
+            header.find("candidateRuleIndexCache") != std::string::npos
+            && header.find("mutable std::unordered_map") != std::string::npos
+            && source.find("CandidateCacheKey") != std::string::npos
+            && source.find("candidateRuleIndexCache.clear()") != std::string::npos;
+        std::string actual = cached ? "cached\n" : "uncached\n";
+        actual += "story: ";
+        actual += story ? SerializeComputedStyle(sheet.resolve(story)) : "missing\n";
+        actual += "child: ";
+        actual += child ? SerializeComputedStyle(sheet.resolve(child)) : "missing\n";
+        ExpectEqual("css/cascade/candidate-rule-cache-preserves-style",
+            actual,
+            "cached\n"
+            "story: color=1,0,0,1 marginTop=1 marginLeft=3 paddingRight=5 paddingLeft=2 \n"
+            "child: marginTop=1 marginRight=4 paddingRight=5 \n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string source = ReadTextFile(root / "src/css/stylesheet.cpp");
+        const bool cached =
+            source.find("g_inlineStyleCache") != std::string::npos
+            && source.find("kMaxInlineStyleCacheEntries") != std::string::npos
+            && source.find("g_inlineStyleCache.find(style)") != std::string::npos;
+        ComputedStyle first = ParseInlineStyle("color: #123456; margin-left: 7px; --gap: 3px; padding-left: var(--gap)");
+        ResolveStyleVariables(first);
+        ComputedStyle second = ParseInlineStyle("color: #123456; margin-left: 7px; --gap: 3px; padding-left: var(--gap)");
+        ResolveStyleVariables(second);
+        std::string actual = cached ? "cached\n" : "uncached\n";
+        actual += SerializeComputedStyle(first);
+        actual += SerializeComputedStyle(second);
+        ExpectEqual("css/cascade/inline-style-parser-cache-preserves-vars",
+            actual,
+            "cached\n"
+            "color=0.0705882,0.203922,0.337255,1 marginLeft=7 paddingLeft=3 \n"
+            "color=0.0705882,0.203922,0.337255,1 marginLeft=7 paddingLeft=3 \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div class=\"picture\"><p id=\"scalp\"></p></div></body></html>");
         auto* node = FindElementById(dom.get(), "scalp");
         auto sheet = ParseStylesheet(

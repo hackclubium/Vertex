@@ -1817,6 +1817,13 @@ void ResolveStyleVariables(ComputedStyle& style) {
 }
 
 ComputedStyle ParseInlineStyle(const std::string& style) {
+    static std::unordered_map<std::string, ComputedStyle> g_inlineStyleCache;
+    constexpr size_t kMaxInlineStyleCacheEntries = 512;
+    auto cached = g_inlineStyleCache.find(style);
+    if (cached != g_inlineStyleCache.end()) return cached->second;
+    if (g_inlineStyleCache.size() >= kMaxInlineStyleCacheEntries)
+        g_inlineStyleCache.clear();
+
     ComputedStyle out;
     for (const auto& decl : SplitDeclarations(style)) {
         size_t colon = decl.find(':');
@@ -1824,6 +1831,7 @@ ComputedStyle ParseInlineStyle(const std::string& style) {
         StoreDeclaration(sLower(sTrim(decl.substr(0, colon))),
                          sTrim(decl.substr(colon+1)), out);
     }
+    g_inlineStyleCache.emplace(style, out);
     return out;
 }
 
@@ -2329,6 +2337,7 @@ void Stylesheet::rebuildRuleBuckets() {
     classRuleBuckets.clear();
     tagRuleBuckets.clear();
     universalRuleBucket.clear();
+    candidateRuleIndexCache.clear();
 
     for (size_t i = 0; i < rules.size(); ++i) {
         const CssRule& rule = rules[i];
@@ -2358,7 +2367,29 @@ static std::vector<std::string> ElementClassTokens(const Node* node) {
     return tokens;
 }
 
-static std::vector<const CssRule*> candidateRulesFor(const Stylesheet& sheet, const Node* node) {
+static std::string CandidateCacheKey(const Node* node) {
+    if (!node || node->type != NodeType::Element) return "|doc||";
+    std::vector<std::string> classes = ElementClassTokens(node);
+    std::sort(classes.begin(), classes.end());
+    classes.erase(std::unique(classes.begin(), classes.end()), classes.end());
+
+    std::string key = node->tagName;
+    key += "|";
+    key += node->attr("id");
+    key += "|";
+    for (const auto& cls : classes) {
+        key += cls;
+        key += ".";
+    }
+    return key;
+}
+
+static const std::vector<size_t>& candidateRuleIndicesFor(const Stylesheet& sheet, const Node* node) {
+    const std::string key = CandidateCacheKey(node);
+    auto cached = sheet.candidateRuleIndexCache.find(key);
+    if (cached != sheet.candidateRuleIndexCache.end())
+        return cached->second;
+
     std::vector<size_t> indices;
     AppendCandidateIndices(indices, &sheet.universalRuleBucket);
     if (node && node->type == NodeType::Element) {
@@ -2380,7 +2411,12 @@ static std::vector<const CssRule*> candidateRulesFor(const Stylesheet& sheet, co
 
     std::sort(indices.begin(), indices.end());
     indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    auto inserted = sheet.candidateRuleIndexCache.emplace(key, std::move(indices));
+    return inserted.first->second;
+}
 
+static std::vector<const CssRule*> candidateRulesFor(const Stylesheet& sheet, const Node* node) {
+    const std::vector<size_t>& indices = candidateRuleIndicesFor(sheet, node);
     std::vector<const CssRule*> candidates;
     candidates.reserve(indices.size());
     for (size_t idx : indices) {
