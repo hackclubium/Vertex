@@ -148,5 +148,22 @@ TestResult RunNetworkTests() {
             result);
     }
 
+    {
+        auto root = FindRepoRoot();
+        std::string cache = ReadTextFile(root / "src/network/resource_cache.cpp");
+        const bool boundedWorkers =
+            cache.find("g_workerThreads") != std::string::npos
+            && cache.find("g_asyncJobs") != std::string::npos
+            && cache.find(".detach()") == std::string::npos;
+        const bool dedupesInflight =
+            cache.find("g_inflight") != std::string::npos
+            && cache.find("waiters") != std::string::npos;
+        ExpectEqual("network/resource-cache/async-uses-worker-pool-and-inflight-dedupe",
+            std::string(boundedWorkers ? "pool " : "thread-per-fetch ")
+                + (dedupesInflight ? "dedupe\n" : "duplicates\n"),
+            "pool dedupe\n",
+            result);
+    }
+
     return result;
 }

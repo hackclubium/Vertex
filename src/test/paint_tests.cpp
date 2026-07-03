@@ -64,6 +64,19 @@ TestResult RunPaintTests() {
     {
         auto root = FindRepoRoot();
         std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        const bool imageDecodeCanRepaintOnly =
+            renderer.find("ImageDecodeAffectsLayout") != std::string::npos
+            && renderer.find("InvalidateLayout();") != std::string::npos
+            && renderer.find("InvalidateRect(m_hwnd, nullptr, FALSE);") != std::string::npos;
+        ExpectEqual("paint/image-decode-can-avoid-full-layout-invalidation",
+            imageDecodeCanRepaintOnly ? "conditional\n" : "always-relayout\n",
+            "conditional\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
         const bool cached =
             renderer.find("IDWriteTextFormat* closeFmt = nullptr") == std::string::npos
             && renderer.find("IDWriteTextFormat* centered = nullptr") == std::string::npos;

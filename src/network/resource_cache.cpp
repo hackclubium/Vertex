@@ -1,12 +1,16 @@
 #include "network/resource_cache.h"
 
+#include <algorithm>
 #include <chrono>
 #include <atomic>
+#include <condition_variable>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -19,9 +23,24 @@ struct PendingCompletion {
     FetchResult result;
 };
 
+struct AsyncRequest {
+    std::string url;
+    size_t maxResponseBytes = 0;
+    ResourceKind kind = ResourceKind::Other;
+    std::vector<ResourceCallback> waiters;
+};
+
 std::mutex g_cacheMutex;
 std::unordered_map<std::string, CachedResource> g_cache;
 ResourceCacheStats g_stats;
+
+std::mutex g_asyncMutex;
+std::condition_variable g_workerCv;
+std::deque<std::string> g_asyncJobs;
+std::unordered_map<std::string, AsyncRequest> g_inflight;
+std::vector<std::thread> g_workerThreads;
+bool g_stopWorkers = false;
+bool g_workersStarted = false;
 
 std::mutex g_completionMutex;
 std::deque<PendingCompletion> g_completions;
@@ -46,6 +65,72 @@ FetchResult TooLargeFromCache(const std::string& url, size_t maxResponseBytes) {
     if (maxResponseBytes == 0)
         result.error = "Response exceeds size limit";
     return result;
+}
+
+std::string InflightKey(const std::string& url, size_t maxResponseBytes) {
+    return url + "\n" + std::to_string(maxResponseBytes);
+}
+
+void PushCompletion(ResourceCallback callback, FetchResult result) {
+    std::lock_guard<std::mutex> lock(g_completionMutex);
+    g_completions.push_back(PendingCompletion{ std::move(callback), std::move(result) });
+}
+
+void ResourceWorkerLoop() {
+    for (;;) {
+        std::string key;
+        AsyncRequest request;
+        {
+            std::unique_lock<std::mutex> lock(g_asyncMutex);
+            g_workerCv.wait(lock, [] {
+                return g_stopWorkers || !g_asyncJobs.empty();
+            });
+            if (g_stopWorkers && g_asyncJobs.empty()) return;
+            key = std::move(g_asyncJobs.front());
+            g_asyncJobs.pop_front();
+            auto it = g_inflight.find(key);
+            if (it == g_inflight.end()) continue;
+            request.url = it->second.url;
+            request.maxResponseBytes = it->second.maxResponseBytes;
+            request.kind = it->second.kind;
+        }
+
+        FetchResult result = FetchResourceCached(request.url, request.maxResponseBytes, request.kind);
+
+        {
+            std::lock_guard<std::mutex> lock(g_asyncMutex);
+            auto it = g_inflight.find(key);
+            if (it != g_inflight.end()) {
+                request.waiters = std::move(it->second.waiters);
+                g_inflight.erase(it);
+            }
+        }
+
+        for (auto& waiter : request.waiters)
+            PushCompletion(std::move(waiter), result);
+    }
+}
+
+void StopResourceWorkers() {
+    {
+        std::lock_guard<std::mutex> lock(g_asyncMutex);
+        g_stopWorkers = true;
+    }
+    g_workerCv.notify_all();
+    for (auto& worker : g_workerThreads) {
+        if (worker.joinable()) worker.join();
+    }
+}
+
+void EnsureResourceWorkersLocked() {
+    if (g_workersStarted) return;
+    g_workersStarted = true;
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned count = std::max(2u, std::min(hw ? hw : 4u, 6u));
+    g_workerThreads.reserve(count);
+    for (unsigned i = 0; i < count; ++i)
+        g_workerThreads.emplace_back(ResourceWorkerLoop);
+    std::atexit(StopResourceWorkers);
 }
 
 } // namespace
@@ -99,6 +184,11 @@ void ResourceCache::clearForTests() {
         g_stats = ResourceCacheStats{};
     }
     {
+        std::lock_guard<std::mutex> lock(g_asyncMutex);
+        g_asyncJobs.clear();
+        g_inflight.clear();
+    }
+    {
         std::lock_guard<std::mutex> lock(g_completionMutex);
         g_completions.clear();
     }
@@ -116,11 +206,22 @@ void FetchResourceAsync(const std::string& url,
                         ResourceKind kind,
                         ResourceCallback callback) {
     g_pendingAsync.fetch_add(1);
-    std::thread([url, maxResponseBytes, kind, callback = std::move(callback)]() mutable {
-        FetchResult result = FetchResourceCached(url, maxResponseBytes, kind);
-        std::lock_guard<std::mutex> lock(g_completionMutex);
-        g_completions.push_back(PendingCompletion{ std::move(callback), std::move(result) });
-    }).detach();
+    std::lock_guard<std::mutex> lock(g_asyncMutex);
+    EnsureResourceWorkersLocked();
+    const std::string key = InflightKey(url, maxResponseBytes);
+    auto it = g_inflight.find(key);
+    if (it != g_inflight.end()) {
+        it->second.waiters.push_back(std::move(callback));
+        return;
+    }
+    AsyncRequest request;
+    request.url = url;
+    request.maxResponseBytes = maxResponseBytes;
+    request.kind = kind;
+    request.waiters.push_back(std::move(callback));
+    g_inflight.emplace(key, std::move(request));
+    g_asyncJobs.push_back(key);
+    g_workerCv.notify_one();
 }
 
 size_t DrainResourceCompletions(size_t maxCallbacks) {

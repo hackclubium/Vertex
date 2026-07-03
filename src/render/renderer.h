@@ -148,6 +148,7 @@ private:
     void CollectAnchors(const LayoutBox& box);
     void CaptureLayoutBaseStyles(const LayoutBox& box);
     void ApplyPaintOnlyHoverStyles(LayoutBox& box, const Stylesheet& sheet);
+    bool ImageDecodeAffectsLayout(const std::string& url) const;
     IDWriteTextFormat* FormatForKey(const FontKey& f);
     std::map<std::string, IDWriteTextFormat*> m_fmtCache;
     std::map<std::wstring, float>             m_measureCache;

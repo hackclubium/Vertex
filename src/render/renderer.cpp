@@ -298,8 +298,13 @@ void Renderer::ReceiveImage(const std::string& url, const std::vector<uint8_t>& 
     if (SUCCEEDED(hr) && bmp) {
         auto it = m_images.find(url);
         if (it != m_images.end() && it->second) it->second->Release();
+        const bool affectsLayout = ImageDecodeAffectsLayout(url);
         m_images[url] = bmp;
-        InvalidateLayout();
+        if (affectsLayout) {
+            InvalidateLayout();
+        } else if (m_hwnd) {
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
         m_failedImages.erase(url);
     } else {
         fail();
@@ -540,6 +545,28 @@ void Renderer::ApplyPaintOnlyHoverStyles(LayoutBox& box, const Stylesheet& sheet
 
     for (auto& child : box.kids)
         ApplyPaintOnlyHoverStyles(*child, sheet);
+}
+
+bool Renderer::ImageDecodeAffectsLayout(const std::string& url) const {
+    if (!m_layoutRoot) return true;
+
+    bool sawImageBox = false;
+    std::vector<const LayoutBox*> stack;
+    stack.push_back(m_layoutRoot.get());
+    while (!stack.empty()) {
+        const LayoutBox* box = stack.back();
+        stack.pop_back();
+        if (!box) continue;
+        if (box->replacedUrl == url) {
+            sawImageBox = true;
+            if (box->intrinsicW <= 0.f || box->intrinsicH <= 0.f)
+                return true;
+        }
+        for (const auto& child : box->kids)
+            stack.push_back(child.get());
+    }
+
+    return !sawImageBox;
 }
 
 CssColor Renderer::FindBodyBgColor(const Node* root, const Stylesheet& sheet) {
