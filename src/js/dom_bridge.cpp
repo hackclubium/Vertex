@@ -806,6 +806,15 @@ static Node* previousElementSibling(const Node* n) {
     return nullptr;
 }
 
+static Node* nextElementSibling(const Node* n) {
+    bool found = false;
+    for (Node* sibling : elementSiblings(n)) {
+        if (found) return sibling;
+        if (sibling == n) found = true;
+    }
+    return nullptr;
+}
+
 static std::vector<Node*> typeSiblings(const Node* n) {
     std::vector<Node*> out;
     if (!n || !n->parent) return out;
@@ -900,10 +909,79 @@ static bool attrMatches(const Node* n, const std::string& raw) {
 
 static bool matchesSelector(Node* n, const std::string& selector, Node* scope);
 
+static size_t findTopLevelOfKeyword(const std::string& text) {
+    int paren = 0;
+    int bracket = 0;
+    char quote = 0;
+    for (size_t i = 0; i + 3 < text.size(); ++i) {
+        char c = text[i];
+        if (quote) {
+            if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') { quote = c; continue; }
+        if (c == '(') { ++paren; continue; }
+        if (c == ')' && paren > 0) { --paren; continue; }
+        if (c == '[') { ++bracket; continue; }
+        if (c == ']' && bracket > 0) { --bracket; continue; }
+        if (paren == 0 && bracket == 0
+            && std::isspace(static_cast<unsigned char>(c))
+            && i + 3 < text.size()
+            && lowerCopy(text.substr(i + 1, 2)) == "of"
+            && std::isspace(static_cast<unsigned char>(text[i + 3]))) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
+static bool descendantMatchesSelector(Node* root, const std::string& selector, Node* scope) {
+    if (!root) return false;
+    for (const auto& child : root->children) {
+        if (!child || child->type != NodeType::Element) continue;
+        Node* candidate = child.get();
+        if (matchesSelector(candidate, selector, scope)) return true;
+        if (descendantMatchesSelector(candidate, selector, scope)) return true;
+    }
+    return false;
+}
+
+static bool hasRelativeSelector(Node* n, const std::string& rawSelector, Node* scope) {
+    std::string selector = trimCopy(rawSelector);
+    if (!n || selector.empty()) return false;
+    if (selector[0] == '>') {
+        std::string childSelector = trimCopy(selector.substr(1));
+        for (const auto& child : n->children) {
+            if (child && child->type == NodeType::Element
+                && matchesSelector(child.get(), childSelector, scope))
+                return true;
+        }
+        return false;
+    }
+    if (selector[0] == '+') {
+        Node* next = nextElementSibling(n);
+        return next && matchesSelector(next, trimCopy(selector.substr(1)), scope);
+    }
+    if (selector[0] == '~') {
+        std::string siblingSelector = trimCopy(selector.substr(1));
+        for (Node* next = nextElementSibling(n); next; next = nextElementSibling(next)) {
+            if (matchesSelector(next, siblingSelector, scope)) return true;
+        }
+        return false;
+    }
+    return descendantMatchesSelector(n, selector, scope);
+}
+
 static bool matchesPseudo(Node* n, const std::string& name, const std::string& arg, Node* scope) {
     if (!n) return false;
     if (name == "not") return !matchesSelector(n, arg, scope);
     if (name == "is" || name == "where") return matchesSelector(n, arg, scope);
+    if (name == "has") {
+        for (const auto& selector : splitSelectorTopLevel(arg, ',')) {
+            if (hasRelativeSelector(n, selector, scope)) return true;
+        }
+        return false;
+    }
     if (name == "checked") return hasAttr(n, "checked") || hasAttr(n, "selected");
     if (name == "disabled") return hasAttr(n, "disabled");
     if (name == "enabled") return !hasAttr(n, "disabled");
@@ -934,7 +1012,18 @@ static bool matchesPseudo(Node* n, const std::string& name, const std::string& a
         bool ofType = name.find("of-type") != std::string::npos;
         bool fromEnd = name.find("nth-last") == 0;
         auto siblings = ofType ? typeSiblings(n) : elementSiblings(n);
-        return nthMatches(indexInList(n, siblings, fromEnd), arg);
+        std::string nthArg = arg;
+        if (!ofType) {
+            size_t ofPos = findTopLevelOfKeyword(arg);
+            if (ofPos != std::string::npos) {
+                nthArg = trimCopy(arg.substr(0, ofPos));
+                std::string filter = trimCopy(arg.substr(ofPos + 4));
+                siblings.erase(std::remove_if(siblings.begin(), siblings.end(),
+                    [&](Node* sibling) { return !matchesSelector(sibling, filter, scope); }),
+                    siblings.end());
+            }
+        }
+        return nthMatches(indexInList(n, siblings, fromEnd), nthArg);
     }
     if (name == "root") return n->parent && n->parent->type == NodeType::Document;
     if (name == "scope") return n == scope;
@@ -3559,7 +3648,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 observed->push_back(targetVal);
                 auto* records = newArrayWithPrototype(vm);
                 records->arrayPush(makeRecord(vm, targetVal));
-                try { vm.call(callback, thisVal, { JsValue::object(records), thisVal }); } catch (...) {}
+                JsValue recordsVal = JsValue::object(records);
+                JsValue observerVal = thisVal;
+                auto* deliver = vm.gc().newNativeFunction(
+                    [callback, observerVal, recordsVal](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+                        try { vm.call(callback, observerVal, { recordsVal, observerVal }); } catch (...) {}
+                        return JsValue::undefined();
+                    },
+                    "IntersectionObserverDelivery");
+                vm.scheduleMacrotask(JsValue::object(deliver), {}, 0, false);
                 return JsValue::undefined();
             });
             addNative(vm, obs, "unobserve", [observed](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
@@ -3624,7 +3721,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 observed->push_back(targetVal);
                 auto* records = newArrayWithPrototype(vm);
                 records->arrayPush(makeRecord(vm, targetVal));
-                try { vm.call(callback, thisVal, { JsValue::object(records), thisVal }); } catch (...) {}
+                JsValue recordsVal = JsValue::object(records);
+                JsValue observerVal = thisVal;
+                auto* deliver = vm.gc().newNativeFunction(
+                    [callback, observerVal, recordsVal](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+                        try { vm.call(callback, observerVal, { recordsVal, observerVal }); } catch (...) {}
+                        return JsValue::undefined();
+                    },
+                    "ResizeObserverDelivery");
+                vm.scheduleMacrotask(JsValue::object(deliver), {}, 0, false);
                 return JsValue::undefined();
             });
             addNative(vm, obs, "unobserve", [observed](VM&, JsValue, std::vector<JsValue> args) -> JsValue {

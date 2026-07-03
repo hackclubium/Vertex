@@ -144,14 +144,20 @@ static std::string RunDomObserverSnapshot() {
     engine.setDocument(dom, []() {});
     bool ok = engine.runScript(
         "var el = document.getElementById('box');\n"
-        "var mutations = 0, intersections = 0, resizes = 0;\n"
-        "var mo = new MutationObserver(function(records){ mutations += records.length; });\n"
+        "globalThis.mutations = 0; globalThis.intersections = 0; globalThis.resizes = 0;\n"
+        "var mo = new MutationObserver(function(records){ globalThis.mutations += records.length; });\n"
         "mo.observe(el, { attributes: true });\n"
         "el.setAttribute('data-x', '1');\n"
-        "new IntersectionObserver(function(records){ intersections = records.length; }).observe(el);\n"
-        "new ResizeObserver(function(records){ resizes = records.length; }).observe(el);\n"
-        "el.setAttribute('data-result', mutations + ':' + intersections + ':' + resizes);\n",
+        "new IntersectionObserver(function(records){ globalThis.intersections = records.length; }).observe(el);\n"
+        "new ResizeObserver(function(records){ globalThis.resizes = records.length; }).observe(el);\n"
+        "el.setAttribute('data-before', globalThis.mutations + ':' + globalThis.intersections + ':' + globalThis.resizes);\n",
         "observers");
+    if (!ok) return "script failed\n";
+    engine.runMacrotasks();
+    ok = engine.runScript(
+        "var el = document.getElementById('box');\n"
+        "el.setAttribute('data-result', el.getAttribute('data-before') + '->' + globalThis.mutations + ':' + globalThis.intersections + ':' + globalThis.resizes);\n",
+        "observers-after");
     if (!ok) return "script failed\n";
     Node* box = FindById(dom.get(), "box");
     return box ? box->attr("data-result") + "\n" : "missing box\n";
@@ -164,23 +170,28 @@ static std::string RunObserverLifecycleSnapshot() {
     bool ok = engine.runScript(
         "var box = document.getElementById('box');\n"
         "var other = document.getElementById('other');\n"
-        "var ioLog = 'io:';\n"
-        "var io = new IntersectionObserver(function(records, obs) { ioLog += records.length + ':' + records[0].target.id + ':' + records[0].isIntersecting + ':' + (obs === io) + ';'; });\n"
+        "globalThis.ioLog = 'io:';\n"
+        "globalThis.io = new IntersectionObserver(function(records, obs) { globalThis.ioLog += records.length + ':' + records[0].target.id + ':' + records[0].isIntersecting + ':' + (obs === globalThis.io) + ';'; });\n"
         "io.observe(box);\n"
         "io.observe(box);\n"
         "io.unobserve(box);\n"
         "io.observe(other);\n"
         "io.disconnect();\n"
         "io.observe(box);\n"
-        "var ioRecords = io.takeRecords();\n"
-        "var roLog = 'ro:';\n"
-        "var ro = new ResizeObserver(function(records, obs) { roLog += records.length + ':' + records[0].target.id + ':' + records[0].contentRect.width + 'x' + records[0].contentRect.height + ':' + (obs === ro) + ';'; });\n"
+        "globalThis.ioRecords = io.takeRecords();\n"
+        "globalThis.roLog = 'ro:';\n"
+        "globalThis.ro = new ResizeObserver(function(records, obs) { globalThis.roLog += records.length + ':' + records[0].target.id + ':' + records[0].contentRect.width + 'x' + records[0].contentRect.height + ':' + (obs === globalThis.ro) + ';'; });\n"
         "ro.observe(box);\n"
         "ro.observe(box);\n"
         "ro.unobserve(box);\n"
         "ro.disconnect();\n"
-        "document.body.setAttribute('data-result', ioLog + '|take=' + ioRecords.length + '|' + roLog);\n",
+        "document.body.setAttribute('data-before', globalThis.ioLog + '|take=' + globalThis.ioRecords.length + '|' + globalThis.roLog);\n",
         "observer-lifecycle");
+    if (!ok) return "script failed\n";
+    engine.runMacrotasks();
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', globalThis.ioLog + '|take=' + globalThis.ioRecords.length + '|' + globalThis.roLog);\n",
+        "observer-lifecycle-after");
     if (!ok) return "script failed\n";
     Node* body = FindByTag(dom.get(), "body");
     return body ? body->attr("data-result") + "\n" : "missing body\n";
@@ -192,18 +203,23 @@ static std::string RunObserverOptionsSnapshot() {
     engine.setDocument(dom, []() {});
     bool ok = engine.runScript(
         "var box = document.getElementById('box');\n"
-        "var ioResult = 'missing';\n"
+        "globalThis.ioResult = 'missing';\n"
         "var io = new IntersectionObserver(function(records) {\n"
-        "  ioResult = this.thresholds.join(',') + ':' + this.rootMargin + ':' + records[0].intersectionRatio + ':' + !!records[0].boundingClientRect;\n"
+        "  globalThis.ioResult = this.thresholds.join(',') + ':' + this.rootMargin + ':' + records[0].intersectionRatio + ':' + !!records[0].boundingClientRect;\n"
         "}, { rootMargin: '1px 2px', threshold: [0, 0.5, 1] });\n"
         "io.observe(box);\n"
-        "var roResult = 'missing';\n"
+        "globalThis.roResult = 'missing';\n"
         "var ro = new ResizeObserver(function(records) {\n"
-        "  roResult = records[0].contentBoxSize.length + ':' + records[0].borderBoxSize.length + ':' + records[0].devicePixelContentBoxSize.length;\n"
+        "  globalThis.roResult = records[0].contentBoxSize.length + ':' + records[0].borderBoxSize.length + ':' + records[0].devicePixelContentBoxSize.length;\n"
         "});\n"
         "ro.observe(box);\n"
-        "document.body.setAttribute('data-result', ioResult + '|' + roResult);\n",
+        "document.body.setAttribute('data-before', globalThis.ioResult + '|' + globalThis.roResult);\n",
         "observer-options");
+    if (!ok) return "script failed\n";
+    engine.runMacrotasks();
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', globalThis.ioResult + '|' + globalThis.roResult);\n",
+        "observer-options-after");
     if (!ok) return "script failed\n";
     Node* body = FindByTag(dom.get(), "body");
     return body ? body->attr("data-result") + "\n" : "missing body\n";
@@ -280,10 +296,11 @@ static std::string RunDomSelectorCompatibilitySnapshot() {
         "</div>"
         "</section>"
         "<ul id=\"toc-list\">"
-        "<li class=\"tocitem\">Intro</li>"
-        "<li class=\"tocitem\">History</li>"
+        "<li class=\"tocitem featured\">Intro</li>"
+        "<li class=\"tocitem hidden\">History</li>"
         "<li class=\"tocitem\">Refs</li>"
         "</ul>"
+        "<aside id=\"sister\"><a class=\"mw-link\" href=\"/wiki/Wikibooks\">Books</a></aside>"
         "<aside><em id=\"solo\">Only</em></aside>"
         "</div>"
         "</main>"
@@ -300,6 +317,9 @@ static std::string RunDomSelectorCompatibilitySnapshot() {
         "out = out + '|' + document.querySelector('#toc-list > li:nth-of-type(2)').textContent;\n"
         "out = out + '|' + document.querySelector('#toc-list > li:last-of-type').textContent;\n"
         "out = out + '|' + (document.getElementById('solo').matches('em:only-of-type') ? 'only' : 'not-only');\n"
+        "out = out + '|' + document.querySelector('aside:has(a[href^=\"/wiki/\"])').id;\n"
+        "out = out + '|' + document.querySelectorAll('#toc-list > li:nth-child(2n+1 of .tocitem)').length;\n"
+        "out = out + '|' + document.querySelectorAll('#toc-list > li.tocitem:not(.hidden, .featured)').length;\n"
         "document.getElementsByTagName('body')[0].setAttribute('data-result', out);\n",
         "selector-compat");
     if (!ok) return "script failed\n";
@@ -1038,7 +1058,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/dom/selector-compatibility",
         RunDomSelectorCompatibilitySnapshot(),
-        "body|History|2|match|#History|2|History|Refs|only\n",
+        "body|History|2|match|#History|2|History|Refs|only|sister|2|1\n",
         result);
 
     ExpectEqual(
@@ -1234,7 +1254,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/dom/observers-fire",
         RunDomObserverSnapshot(),
-        "1:1:1\n",
+        "1:0:0->2:1:1\n",
         result);
 
     ExpectEqual(

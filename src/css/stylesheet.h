@@ -27,6 +27,7 @@ struct CssSelectorPart {
     std::vector<std::string> pseudos;
     std::vector<std::string> notSelectors;  // :not() argument text (simple selectors)
     std::vector<std::vector<std::string>> matchSelectorLists; // :is()/:where() selector-list args
+    std::vector<std::vector<std::string>> hasSelectorLists; // :has() selector-list args
     int functionalSpecificity = 0;  // max selector specificity contributed by :is()
     std::string pseudoElement;  // "before" or "after" for generated content
     bool neverMatch = false;

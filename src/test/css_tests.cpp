@@ -257,6 +257,39 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml(
+            "<html><body>"
+            "<section id=\"portal\" class=\"portal-card\"><a class=\"mw-link\" href=\"/wiki/Main_Page\">Main</a></section>"
+            "<section id=\"plain\" class=\"portal-card\"><span>Plain</span></section>"
+            "<ul>"
+            "<li id=\"one\" class=\"entry featured\">One</li>"
+            "<li id=\"two\" class=\"entry hidden\">Two</li>"
+            "<li id=\"three\" class=\"entry\">Three</li>"
+            "<li id=\"four\" class=\"other\">Four</li>"
+            "</ul>"
+            "</body></html>");
+        auto sheet = ParseStylesheet(
+            "section:has(a[href^=\"/wiki/\"]) { margin-left: 11px; }"
+            "li.entry:not(.hidden, .featured) { padding-left: 13px; }"
+            "li:nth-child(2n+1 of .entry) { margin-top: 17px; }");
+        std::string actual;
+        for (const std::string id : { "portal", "plain", "one", "two", "three", "four" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/relational-and-filtered-selectors",
+            actual,
+            "portal: marginLeft=11 \n"
+            "plain: \n"
+            "one: marginTop=17 \n"
+            "two: \n"
+            "three: marginTop=17 paddingLeft=13 \n"
+            "four: \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
         auto* rootNode = FindFirstElement(dom.get(), "html");
         auto* target = FindElementById(dom.get(), "target");
@@ -281,11 +314,13 @@ TestResult RunCssTests() {
             "#target { color: red; }"
             "@supports (display: grid) { #target { color: blue; margin-left: 5px; } }"
             "@supports not (display: grid) { #target { padding-left: 9px; } }"
-            "@supports (display: made-up) { #target { padding-right: 11px; } }");
+            "@supports (display: made-up) { #target { padding-right: 11px; } }"
+            "@supports selector(:has(a[href])) { #target { margin-top: 7px; } }"
+            "@supports not selector(:has(a[href])) { #target { margin-bottom: 13px; } }");
         std::string actual = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
         ExpectEqual("css/supports/display-feature-queries",
             actual,
-            "color=0,0,1,1 marginLeft=5 \n",
+            "color=0,0,1,1 marginTop=7 marginLeft=5 \n",
             result);
     }
 

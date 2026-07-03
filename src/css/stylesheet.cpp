@@ -1868,6 +1868,51 @@ static bool SelectorListMatches(const std::vector<std::string>& selectors, const
     return false;
 }
 
+static bool DescendantSelectorListMatches(const std::vector<std::string>& selectors, const Node* node) {
+    if (!node) return false;
+    for (const auto& child : node->children) {
+        if (!child || child->type != NodeType::Element) continue;
+        if (SelectorListMatches(selectors, child.get())) return true;
+        if (DescendantSelectorListMatches(selectors, child.get())) return true;
+    }
+    return false;
+}
+
+static bool RelativeSelectorMatches(const std::string& rawSelector, const Node* node) {
+    std::string selector = sTrim(rawSelector);
+    if (!node || selector.empty()) return false;
+
+    if (selector[0] == '>') {
+        std::string childSelector = sTrim(selector.substr(1));
+        for (const auto& child : node->children) {
+            if (child && child->type == NodeType::Element
+                && SelectorListMatches({ childSelector }, child.get()))
+                return true;
+        }
+        return false;
+    }
+    if (selector[0] == '+') {
+        const Node* next = NextElementSibling(node);
+        return next && SelectorListMatches({ sTrim(selector.substr(1)) }, next);
+    }
+    if (selector[0] == '~') {
+        std::string siblingSelector = sTrim(selector.substr(1));
+        for (const Node* next = NextElementSibling(node); next; next = NextElementSibling(next)) {
+            if (SelectorListMatches({ siblingSelector }, next)) return true;
+        }
+        return false;
+    }
+
+    return DescendantSelectorListMatches({ selector }, node);
+}
+
+static bool HasSelectorListMatches(const std::vector<std::string>& selectors, const Node* node) {
+    for (const auto& selector : selectors) {
+        if (RelativeSelectorMatches(selector, node)) return true;
+    }
+    return false;
+}
+
 static int SelectorListMaxSpecificity(const std::vector<std::string>& selectors) {
     int maxSpecificity = 0;
     for (const auto& selector : selectors) {
@@ -1875,6 +1920,49 @@ static int SelectorListMaxSpecificity(const std::vector<std::string>& selectors)
             maxSpecificity = std::max(maxSpecificity, parseSelector(selector).specificity());
     }
     return maxSpecificity;
+}
+
+static size_t FindTopLevelOfKeyword(const std::string& text) {
+    int parens = 0;
+    int brackets = 0;
+    char quote = 0;
+    bool escaped = false;
+    for (size_t i = 0; i + 3 < text.size(); ++i) {
+        const char c = text[i];
+        if (escaped) { escaped = false; continue; }
+        if (c == '\\') { escaped = true; continue; }
+        if (quote) { if (c == quote) quote = 0; continue; }
+        if (c == '"' || c == '\'') { quote = c; continue; }
+        if (c == '(') { ++parens; continue; }
+        if (c == ')' && parens > 0) { --parens; continue; }
+        if (c == '[') { ++brackets; continue; }
+        if (c == ']' && brackets > 0) { --brackets; continue; }
+        if (parens == 0 && brackets == 0
+            && std::isspace((unsigned char)c)
+            && text.compare(i + 1, 2, "of") == 0
+            && i + 3 < text.size()
+            && std::isspace((unsigned char)text[i + 3])) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
+static int ElementChildIndexFiltered(const Node* node,
+                                     const std::vector<std::string>& filters,
+                                     bool fromEnd) {
+    if (!node || !node->parent) return 0;
+    std::vector<const Node*> matches;
+    for (const auto& child : node->parent->children) {
+        if (!child || child->type != NodeType::Element) continue;
+        if (filters.empty() || SelectorListMatches(filters, child.get()))
+            matches.push_back(child.get());
+    }
+    for (size_t i = 0; i < matches.size(); ++i) {
+        if (matches[i] == node)
+            return fromEnd ? (int)(matches.size() - i) : (int)i + 1;
+    }
+    return 0;
 }
 
 static int ElementChildIndex(const Node* node) {
@@ -1975,13 +2063,28 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
     // :nth-child(An+B) — the argument is stored in the pseudo string itself.
     if (pseudo.rfind("nth-child(", 0) == 0) {
         std::string arg = pseudo.substr(10, pseudo.size() - 11);
+        std::vector<std::string> filters;
+        size_t ofPos = FindTopLevelOfKeyword(arg);
+        if (ofPos != std::string::npos) {
+            filters = SplitCssList(arg.substr(ofPos + 4));
+            arg = sTrim(arg.substr(0, ofPos));
+        }
         auto [a, b] = ParseNthExpr(arg);
-        return MatchesNth(ElementChildIndex(node), a, b);
+        int index = filters.empty() ? ElementChildIndex(node)
+                                    : ElementChildIndexFiltered(node, filters, false);
+        return MatchesNth(index, a, b);
     }
     if (pseudo.rfind("nth-last-child(", 0) == 0) {
         std::string arg = pseudo.substr(15, pseudo.size() - 16);
+        std::vector<std::string> filters;
+        size_t ofPos = FindTopLevelOfKeyword(arg);
+        if (ofPos != std::string::npos) {
+            filters = SplitCssList(arg.substr(ofPos + 4));
+            arg = sTrim(arg.substr(0, ofPos));
+        }
         auto [a, b] = ParseNthExpr(arg);
-        int fromEnd = ElementChildCount(node) - ElementChildIndex(node) + 1;
+        int fromEnd = filters.empty() ? ElementChildCount(node) - ElementChildIndex(node) + 1
+                                      : ElementChildIndexFiltered(node, filters, true);
         return MatchesNth(fromEnd, a, b);
     }
     if (pseudo.rfind("nth-of-type(", 0) == 0) {
@@ -2091,6 +2194,9 @@ static bool MatchesSimpleSelector(const CssSelectorPart& part, const Node* node)
     }
     for (const auto& selectorList : part.matchSelectorLists) {
         if (!SelectorListMatches(selectorList, node)) return false;
+    }
+    for (const auto& selectorList : part.hasSelectorLists) {
+        if (!HasSelectorListMatches(selectorList, node)) return false;
     }
     // :not() — the node must NOT match the simple selector argument.
     for (const auto& notArg : part.notSelectors) {
@@ -2421,7 +2527,14 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                     // :not(selector) — parse the argument as a simple selector and
                     // store it as a negation pseudo. We support simple cases:
                     // :not(.class), :not(tag), :not(#id), :not([attr]).
-                    part.notSelectors.push_back(sLower(argText));
+                    auto selectorList = SplitCssList(argText);
+                    if (selectorList.empty()) {
+                        part.neverMatch = true;
+                    } else {
+                        for (auto& selector : selectorList)
+                            part.notSelectors.push_back(sLower(selector));
+                        part.functionalSpecificity += SelectorListMaxSpecificity(selectorList);
+                    }
                 } else if (pseudo == "is" || pseudo == "where") {
                     auto selectorList = SplitCssList(argText);
                     if (selectorList.empty()) {
@@ -2430,6 +2543,14 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                         part.matchSelectorLists.push_back(selectorList);
                         if (pseudo == "is")
                             part.functionalSpecificity += SelectorListMaxSpecificity(selectorList);
+                    }
+                } else if (pseudo == "has") {
+                    auto selectorList = SplitCssList(argText);
+                    if (selectorList.empty()) {
+                        part.neverMatch = true;
+                    } else {
+                        part.hasSelectorLists.push_back(selectorList);
+                        part.functionalSpecificity += SelectorListMaxSpecificity(selectorList);
                     }
                 } else {
                     part.neverMatch = true;
@@ -2758,6 +2879,21 @@ static bool SupportsPropertyValue(const std::string& feature) {
     return false;
 }
 
+static bool SupportsSelectorFeature(const std::string& feature) {
+    std::string value = sTrim(feature);
+    if (value.rfind("selector(", 0) != 0 || value.back() != ')') return false;
+    std::string selectorText = sTrim(value.substr(9, value.size() - 10));
+    if (selectorText.empty()) return false;
+    for (const auto& selector : SplitCssList(selectorText)) {
+        CssRule rule = parseSelector(selector);
+        if (rule.selector.empty()) return false;
+        for (const auto& part : rule.selector) {
+            if (part.neverMatch) return false;
+        }
+    }
+    return true;
+}
+
 static bool StripOuterParens(std::string& value) {
     value = sTrim(value);
     if (value.size() < 2 || value.front() != '(' || value.back() != ')') return false;
@@ -2825,6 +2961,8 @@ static bool SupportsConditionMatches(std::string raw) {
     }
 
     while (StripOuterParens(value)) {}
+    if (value.rfind("selector(", 0) == 0)
+        return SupportsSelectorFeature(value);
     return SupportsPropertyValue(value);
 }
 
