@@ -240,6 +240,41 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string bridge = ReadTextFile(root / "src/js/dom_bridge.cpp");
+        std::string css = ReadTextFile(root / "src/css/stylesheet.cpp");
+        const bool nestedDomSelectorsCached =
+            bridge.find("CachedSelectorGroups") != std::string::npos
+            && bridge.find("matchesSelectorCached") != std::string::npos
+            && bridge.find("cachedSelectorGroups(selector)") != std::string::npos;
+        ExpectEqual("paint/dom-nested-selector-pseudos-use-parse-cache",
+            nestedDomSelectorsCached ? "cached\n" : "reparse-nested\n",
+            "cached\n",
+            result);
+        const bool cssRelationalSelectorsCached =
+            css.find("CachedCssSelector") != std::string::npos
+            && css.find("CachedCssSelector(selector).matches(node)") != std::string::npos
+            && css.find("CachedCssSelector(selector).specificity()") != std::string::npos;
+        ExpectEqual("paint/css-relational-selector-checks-use-parse-cache",
+            cssRelationalSelectorsCached ? "cached\n" : "reparse-relational\n",
+            "cached\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string layout = ReadTextFile(root / "src/layout/layout_engine.cpp");
+        const bool reusesChildStyle =
+            layout.find("const ComputedStyle* precomputedStyle") != std::string::npos
+            && layout.find("precomputedStyle ? *precomputedStyle") != std::string::npos
+            && layout.find("BuildBox(child.get(), style, bc, href, &childStyle)") != std::string::npos;
+        ExpectEqual("paint/layout-build-reuses-precomputed-child-style",
+            reusesChildStyle ? "reused\n" : "double-resolve\n",
+            "reused\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
         std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
         const bool blockLinkHitCulls =

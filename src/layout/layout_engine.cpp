@@ -301,7 +301,8 @@ BoxKind KindFromDisplay(int disp, bool replaced) {
 }
 
 std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& parentStyle,
-                                    const BuildCtx& bc, const std::string& inheritedHref);
+                                    const BuildCtx& bc, const std::string& inheritedHref,
+                                    const ComputedStyle* precomputedStyle = nullptr);
 
 // Build children list (with pseudo-elements and anonymous-box fixup applied
 // by the caller). Whitespace-only text between blocks is dropped later.
@@ -353,7 +354,7 @@ void BuildChildren(const Node* node, const ComputedStyle& style, const BuildCtx&
                 BuildChildren(child.get(), childStyle, bc, childHref, out);
                 continue;
             }
-            auto cb = BuildBox(child.get(), style, bc, href);
+            auto cb = BuildBox(child.get(), style, bc, href, &childStyle);
             if (cb) out.push_back(std::move(cb));
         }
     }
@@ -499,7 +500,8 @@ std::unique_ptr<LayoutBox> BuildPseudo(const Node* el, const char* which,
 }
 
 std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& parentStyle,
-                                    const BuildCtx& bc, const std::string& inheritedHref) {
+                                    const BuildCtx& bc, const std::string& inheritedHref,
+                                    const ComputedStyle* precomputedStyle) {
     if (!node || node->type != NodeType::Element) return nullptr;
     DepthScope _d; if (g_depth > kMaxDepth) return nullptr;
     const std::string& tag = node->tagName;
@@ -508,11 +510,14 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     if (tag == "dialog" && !HasAttr(node, "open")) return nullptr;
     if (tag == "input" && LowerAscii(node->attr("type")) == "hidden") return nullptr;
 
-    ComputedStyle s = bc.sheet ? bc.sheet->resolve(node) : ComputedStyle{};
+    ComputedStyle s = precomputedStyle ? *precomputedStyle
+        : (bc.sheet ? bc.sheet->resolve(node) : ComputedStyle{});
+    if (!precomputedStyle) {
+        InheritInto(s, parentStyle);
+        ApplyUaDefaults(tag, s);
+        ResolveStyleVariables(s);
+    }
     if (s.isDisplayNone()) return nullptr;
-    InheritInto(s, parentStyle);
-    ApplyUaDefaults(tag, s);
-    ResolveStyleVariables(s);
 
     // Effective display.
     int disp = s.display != 0 ? s.display : UaDisplay(tag);

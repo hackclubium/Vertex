@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <unordered_map>
 
 // ─── length parsing ──────────────────────────────────────────────────────────
 
@@ -1831,6 +1832,7 @@ ComputedStyle ParseInlineStyle(const std::string& style) {
 static const Node* PreviousElementSibling(const Node* node);
 static const Node* NextElementSibling(const Node* node);
 static CssRule parseSelector(const std::string& sel);
+static const CssRule& CachedCssSelector(const std::string& selector);
 
 static std::vector<std::string> SplitCssList(const std::string& text) {
     std::vector<std::string> parts;
@@ -1862,7 +1864,7 @@ static std::vector<std::string> SplitCssList(const std::string& text) {
 
 static bool SelectorListMatches(const std::vector<std::string>& selectors, const Node* node) {
     for (const auto& selector : selectors) {
-        if (!selector.empty() && parseSelector(selector).matches(node))
+        if (!selector.empty() && CachedCssSelector(selector).matches(node))
             return true;
     }
     return false;
@@ -1917,7 +1919,7 @@ static int SelectorListMaxSpecificity(const std::vector<std::string>& selectors)
     int maxSpecificity = 0;
     for (const auto& selector : selectors) {
         if (!selector.empty())
-            maxSpecificity = std::max(maxSpecificity, parseSelector(selector).specificity());
+            maxSpecificity = std::max(maxSpecificity, CachedCssSelector(selector).specificity());
     }
     return maxSpecificity;
 }
@@ -2668,6 +2670,16 @@ static CssRule parseSelector(const std::string& sel) {
     return rule;
 }
 
+static const CssRule& CachedCssSelector(const std::string& selector) {
+    static std::unordered_map<std::string, CssRule> cache;
+    constexpr size_t kMaxCssSelectorCacheEntries = 512;
+    auto it = cache.find(selector);
+    if (it != cache.end()) return it->second;
+    if (cache.size() >= kMaxCssSelectorCacheEntries) cache.clear();
+    auto inserted = cache.emplace(selector, parseSelector(selector));
+    return inserted.first->second;
+}
+
 static size_t FindMatchingCssBrace(const std::string& css, size_t lbrace) {
     int depth = 0;
     char quote = 0;
@@ -2885,7 +2897,7 @@ static bool SupportsSelectorFeature(const std::string& feature) {
     std::string selectorText = sTrim(value.substr(9, value.size() - 10));
     if (selectorText.empty()) return false;
     for (const auto& selector : SplitCssList(selectorText)) {
-        CssRule rule = parseSelector(selector);
+        const CssRule& rule = CachedCssSelector(selector);
         if (rule.selector.empty()) return false;
         for (const auto& part : rule.selector) {
             if (part.neverMatch) return false;

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <chrono>
 #include <cstdio>
+#include <unordered_map>
 #include <unordered_set>
 
 #define NATIVE(name) [](VM& vm, JsValue thisVal, std::vector<JsValue> args) -> JsValue
@@ -783,6 +784,20 @@ static std::vector<ParsedSelectorGroup> parseSelectorGroups(const std::string& s
     return groups;
 }
 
+static const std::vector<ParsedSelectorGroup>& CachedSelectorGroups(const std::string& selector) {
+    static std::unordered_map<std::string, std::vector<ParsedSelectorGroup>> cache;
+    constexpr size_t kMaxSelectorCacheEntries = 512;
+    auto it = cache.find(selector);
+    if (it != cache.end()) return it->second;
+    if (cache.size() >= kMaxSelectorCacheEntries) cache.clear();
+    auto inserted = cache.emplace(selector, parseSelectorGroups(selector));
+    return inserted.first->second;
+}
+
+static const std::vector<ParsedSelectorGroup>& cachedSelectorGroups(const std::string& selector) {
+    return CachedSelectorGroups(selector);
+}
+
 static bool hasClassToken(const Node* n, const std::string& cls) {
     if (!n || cls.empty()) return false;
     return classHas(classTokens(n->attr("class")), cls);
@@ -908,6 +923,16 @@ static bool attrMatches(const Node* n, const std::string& raw) {
 }
 
 static bool matchesSelector(Node* n, const std::string& selector, Node* scope);
+static bool matchesSelectorParts(Node* n, const std::vector<SelectorPart>& parts, int index, Node* scope);
+
+static bool matchesSelectorCached(Node* n, const std::string& selector, Node* scope) {
+    const auto& groups = CachedSelectorGroups(selector);
+    for (const auto& group : groups) {
+        if (!group.parts.empty() && matchesSelectorParts(n, group.parts, (int)group.parts.size() - 1, scope))
+            return true;
+    }
+    return false;
+}
 
 static size_t findTopLevelOfKeyword(const std::string& text) {
     int paren = 0;
@@ -940,7 +965,7 @@ static bool descendantMatchesSelector(Node* root, const std::string& selector, N
     for (const auto& child : root->children) {
         if (!child || child->type != NodeType::Element) continue;
         Node* candidate = child.get();
-        if (matchesSelector(candidate, selector, scope)) return true;
+        if (matchesSelectorCached(candidate, selector, scope)) return true;
         if (descendantMatchesSelector(candidate, selector, scope)) return true;
     }
     return false;
@@ -953,19 +978,19 @@ static bool hasRelativeSelector(Node* n, const std::string& rawSelector, Node* s
         std::string childSelector = trimCopy(selector.substr(1));
         for (const auto& child : n->children) {
             if (child && child->type == NodeType::Element
-                && matchesSelector(child.get(), childSelector, scope))
+                && matchesSelectorCached(child.get(), childSelector, scope))
                 return true;
         }
         return false;
     }
     if (selector[0] == '+') {
         Node* next = nextElementSibling(n);
-        return next && matchesSelector(next, trimCopy(selector.substr(1)), scope);
+        return next && matchesSelectorCached(next, trimCopy(selector.substr(1)), scope);
     }
     if (selector[0] == '~') {
         std::string siblingSelector = trimCopy(selector.substr(1));
         for (Node* next = nextElementSibling(n); next; next = nextElementSibling(next)) {
-            if (matchesSelector(next, siblingSelector, scope)) return true;
+            if (matchesSelectorCached(next, siblingSelector, scope)) return true;
         }
         return false;
     }
@@ -974,8 +999,8 @@ static bool hasRelativeSelector(Node* n, const std::string& rawSelector, Node* s
 
 static bool matchesPseudo(Node* n, const std::string& name, const std::string& arg, Node* scope) {
     if (!n) return false;
-    if (name == "not") return !matchesSelector(n, arg, scope);
-    if (name == "is" || name == "where") return matchesSelector(n, arg, scope);
+    if (name == "not") return !matchesSelectorCached(n, arg, scope);
+    if (name == "is" || name == "where") return matchesSelectorCached(n, arg, scope);
     if (name == "has") {
         for (const auto& selector : splitSelectorTopLevel(arg, ',')) {
             if (hasRelativeSelector(n, selector, scope)) return true;
@@ -1019,7 +1044,7 @@ static bool matchesPseudo(Node* n, const std::string& name, const std::string& a
                 nthArg = trimCopy(arg.substr(0, ofPos));
                 std::string filter = trimCopy(arg.substr(ofPos + 4));
                 siblings.erase(std::remove_if(siblings.begin(), siblings.end(),
-                    [&](Node* sibling) { return !matchesSelector(sibling, filter, scope); }),
+                    [&](Node* sibling) { return !matchesSelectorCached(sibling, filter, scope); }),
                     siblings.end());
             }
         }
@@ -1139,7 +1164,7 @@ static bool matchesSelectorParts(Node* n, const std::vector<SelectorPart>& parts
 }
 
 static bool matchesSelector(Node* n, const std::string& selector, Node* scope) {
-    auto groups = parseSelectorGroups(selector);
+    const auto& groups = cachedSelectorGroups(selector);
     for (const auto& group : groups) {
         if (!group.parts.empty() && matchesSelectorParts(n, group.parts, (int)group.parts.size() - 1, scope))
             return true;
@@ -1173,11 +1198,11 @@ static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::vec
 }
 
 static std::vector<std::shared_ptr<Node>> domQueryAll(Node* root, const std::string& sel) {
-    return domQueryAll(root, parseSelectorGroups(sel));
+    return domQueryAll(root, cachedSelectorGroups(sel));
 }
 
 static std::shared_ptr<Node> domQueryFirst(Node* root, const std::string& sel) {
-    auto groups = parseSelectorGroups(sel);
+    const auto& groups = cachedSelectorGroups(sel);
     size_t visited = 0;
     int depth = 0;
     std::shared_ptr<Node> result;
