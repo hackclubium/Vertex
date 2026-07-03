@@ -447,7 +447,7 @@ int main(int argc, const char* argv[]) {
         [NSTimer scheduledTimerWithTimeInterval:0.016 repeats:YES block:^(NSTimer*) {
             resetDomDirtyCoalesce();
             try {
-                g_js.runMacrotasks();
+                g_js.runMacrotasks(8);
             } catch (...) {
             }
         }];

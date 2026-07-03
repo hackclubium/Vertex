@@ -4,6 +4,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <cstddef>
 
 struct JsScriptBudget {
     size_t maxScriptBytes = 1024 * 1024;
@@ -47,7 +48,7 @@ public:
     void dispatchDocumentEvent(const std::string& eventName);
 
     // Run pending macrotasks (called by Win32 WM_TIMER).
-    void runMacrotasks();
+    void runMacrotasks(size_t maxTasks = static_cast<size_t>(-1));
     bool hasPendingMacrotasks() const;
 
 private:

@@ -182,6 +182,23 @@ TestResult RunPaintTests() {
     {
         auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
+        std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
+        const bool timerBudgetsWork =
+            mainWin.find("kMaxResourceCompletionsPerTimerTick") != std::string::npos
+            && mainWin.find("DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick)") != std::string::npos
+            && mainWin.find("g_js.runMacrotasks(kMaxMacrotasksPerTimerTick)") != std::string::npos
+            && linuxMain.find("g_js.runMacrotasks(8)") != std::string::npos
+            && macMain.find("g_js.runMacrotasks(8)") != std::string::npos;
+        ExpectEqual("paint/platform-timers-budget-resource-and-js-work",
+            timerBudgetsWork ? "budgeted\n" : "unbounded\n",
+            "budgeted\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
         std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
         std::string resourceH = ReadTextFile(root / "src/network/resource_cache.h");
         const bool perfSurface =
@@ -534,6 +551,23 @@ TestResult RunPaintTests() {
             && sharedPainter.find("screenY + box.borderBoxH() < ps.topInset") != std::string::npos;
         ExpectEqual("paint/offscreen-simple-subtrees-are-culled",
             subtreeCull ? "culled\n" : "visited\n",
+            "culled\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool complexSubtreeCull =
+            painter.find("CanCullOffscreenPaintSubtree") != std::string::npos
+            && painter.find("ComputePaintYExtent") != std::string::npos
+            && painter.find("if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, (float)m_height))") != std::string::npos
+            && sharedPainter.find("CanCullOffscreenPaintSubtree") != std::string::npos
+            && sharedPainter.find("ComputePaintYExtent") != std::string::npos
+            && sharedPainter.find("if (CanCullOffscreenPaintSubtree(box, ps.scrollY, ps.topInset, (float)ps.r->Height()))") != std::string::npos;
+        ExpectEqual("paint/offscreen-complex-subtrees-use-visual-bounds",
+            complexSubtreeCull ? "culled\n" : "walks-complex\n",
             "culled\n",
             result);
     }

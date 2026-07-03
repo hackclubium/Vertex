@@ -567,7 +567,7 @@ int main(int argc, char* argv[]) {
     g_timeout_add(16, [](gpointer) -> gboolean {
         resetDomDirtyCoalesce();
         try {
-            g_js.runMacrotasks();
+            g_js.runMacrotasks(8);
         } catch (...) {
         }
         return G_SOURCE_CONTINUE;

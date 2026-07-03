@@ -225,6 +225,36 @@ static std::string RunObserverOptionsSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunMacrotaskBudgetSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "globalThis.count = 0;\n"
+        "for (var i = 0; i < 5; i = i + 1) setTimeout(function(){ globalThis.count = globalThis.count + 1; }, 0);\n",
+        "macrotask-budget-setup");
+    if (!ok) return "script failed\n";
+
+    engine.runMacrotasks(2);
+    ok = engine.runScript(
+        "document.body.setAttribute('data-first', String(globalThis.count));\n",
+        "macrotask-budget-first");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    std::string first = body ? body->attr("data-first") : "missing";
+    std::string pending = engine.hasPendingMacrotasks() ? "pending" : "empty";
+
+    while (engine.hasPendingMacrotasks())
+        engine.runMacrotasks(2);
+    ok = engine.runScript(
+        "document.body.setAttribute('data-final', String(globalThis.count));\n",
+        "macrotask-budget-final");
+    if (!ok) return "script failed\n";
+    std::string final = body ? body->attr("data-final") : "missing";
+    std::string remaining = engine.hasPendingMacrotasks() ? "pending" : "empty";
+    return "first=" + first + ":" + pending + " final=" + final + ":" + remaining + "\n";
+}
+
 static std::string RunWindowLifecycleSurfaceSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body></body></html>");
@@ -1237,6 +1267,12 @@ TestResult RunJsTests() {
         "js/engine/script-budget-profile-counters",
         RunScriptBudgetProfileSnapshot(),
         "small=yes\nlarge=no\nattempted=2\nexecuted=1\nskipped=1\ntimed=yes\n",
+        result);
+
+    ExpectEqual(
+        "js/engine/macrotask-pump-respects-frame-budget",
+        RunMacrotaskBudgetSnapshot(),
+        "first=2:pending final=5:empty\n",
         result);
 
     ExpectEqual(

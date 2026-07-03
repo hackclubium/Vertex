@@ -71,6 +71,8 @@ struct PendingPageScript {
 };
 
 static constexpr size_t kMaxScriptsPerTimerTick = 2;
+static constexpr size_t kMaxResourceCompletionsPerTimerTick = 8;
+static constexpr size_t kMaxMacrotasksPerTimerTick = 8;
 static std::deque<PendingPageScript> g_pendingPageScripts;
 
 static HCURSOR  g_cursorArrow, g_cursorHand;
@@ -1355,12 +1357,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_TIMER:
         resetDomDirtyCoalesce(); // Allow next batch of DOM mutations to trigger repaint.
-        if (DrainResourceCompletions() > 0) {
+        if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
             InvalidateContent();
         }
         RunPendingPageScripts(hwnd);
         try {
-            g_js.runMacrotasks();
+            g_js.runMacrotasks(kMaxMacrotasksPerTimerTick);
         } catch (...) {
             OutputDebugStringA("[JS] Macrotask pump failed; timer stopped\n");
             KillTimer(hwnd, 1);

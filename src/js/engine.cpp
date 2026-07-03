@@ -6,6 +6,8 @@
 #include "js/lexer.h"
 #include "js/parser.h"
 #include "js/compiler.h"
+#include <algorithm>
+#include <cstddef>
 #include <chrono>
 #include <cstdio>
 
@@ -134,10 +136,20 @@ void JsEngine::dispatchDocumentEvent(const std::string& eventName) {
     m_impl->vm.drainMicrotasks();
 }
 
-void JsEngine::runMacrotasks() {
+void JsEngine::runMacrotasks(size_t maxTasks) {
     auto& vm = m_impl->vm;
-    auto tasks = std::move(vm.macrotasks());
-    vm.macrotasks().clear();
+    auto& queue = vm.macrotasks();
+    const size_t initialTasks = queue.size();
+    const size_t taskBudget = std::min(maxTasks, initialTasks);
+    std::vector<VM::Macrotask> tasks;
+    tasks.reserve(taskBudget);
+    for (size_t i = 0; i < taskBudget; ++i)
+        tasks.push_back(std::move(queue[i]));
+    if (taskBudget == queue.size())
+        queue.clear();
+    else if (taskBudget > 0)
+        queue.erase(queue.begin(), queue.begin() + (ptrdiff_t)taskBudget);
+
     for (auto& task : tasks) {
         if (task.id <= 0 || !task.fn.isCallable()) continue;
         try {
@@ -145,7 +157,7 @@ void JsEngine::runMacrotasks() {
             vm.drainMicrotasks();
         } catch (...) {}
         if (task.interval)
-            vm.macrotasks().push_back(task);
+            queue.push_back(task);
     }
 }
 

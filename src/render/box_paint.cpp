@@ -49,6 +49,77 @@ static std::string FontCacheKey(const FontKey& f) {
     return k;
 }
 
+struct PaintYExtent {
+    float minY = 0.f;
+    float maxY = 0.f;
+    bool safe = true;
+};
+
+static PaintYExtent ComputePaintYExtent(const LayoutBox& root) {
+    PaintYExtent extent;
+    bool initialized = false;
+    std::vector<const LayoutBox*> stack;
+    stack.push_back(&root);
+
+    while (!stack.empty()) {
+        const LayoutBox* box = stack.back();
+        stack.pop_back();
+        if (!box || box->style.isDisplayNone()) continue;
+
+        if (box->style.positionMode == 3 || box->style.transformSet) {
+            extent.safe = false;
+            return extent;
+        }
+
+        auto includeY = [&](float top, float bottom) {
+            if (!std::isfinite(top) || !std::isfinite(bottom)) return;
+            if (bottom < top) std::swap(top, bottom);
+            if (!initialized) {
+                extent.minY = top;
+                extent.maxY = bottom;
+                initialized = true;
+            } else {
+                extent.minY = std::min(extent.minY, top);
+                extent.maxY = std::max(extent.maxY, bottom);
+            }
+        };
+
+        includeY(box->y, box->y + box->borderBoxH());
+        for (const auto& line : box->lines) {
+            includeY(line.y, line.y + line.h);
+            for (const auto& frag : line.frags)
+                includeY(frag.y, frag.y + frag.h);
+        }
+        for (const auto& kid : box->kids)
+            stack.push_back(kid.get());
+    }
+
+    if (!initialized) {
+        extent.minY = root.y;
+        extent.maxY = root.y + root.borderBoxH();
+    }
+    return extent;
+}
+
+static bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
+                                         float scrollY,
+                                         float topInset,
+                                         float viewportH) {
+    if (box.style.positionMode == 3 || box.style.transformSet) return false;
+    if (box.kind == BoxKind::Inline || box.kind == BoxKind::Text || box.kind == BoxKind::Break)
+        return false;
+
+    const float boxTop = box.y - scrollY + topInset;
+    const float boxBottom = boxTop + box.borderBoxH();
+    if (boxBottom >= topInset && boxTop <= viewportH) return false;
+
+    PaintYExtent extent = ComputePaintYExtent(box);
+    if (!extent.safe) return false;
+    const float screenMin = extent.minY - scrollY + topInset;
+    const float screenMax = extent.maxY - scrollY + topInset;
+    return screenMax < topInset || screenMin > viewportH;
+}
+
 // ─── ITextMeasure ─────────────────────────────────────────────────────────────
 
 IDWriteTextFormat* Renderer::FormatForKey(const FontKey& f) {
@@ -551,6 +622,9 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
 
     bool hidden = (box.style.visibilitySet && box.style.visibilityHidden)
                 || (box.style.opacitySet && box.style.opacity < 0.01f);
+
+    if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, (float)m_height))
+        return;
 
     if (!hidden && !box.href.empty()
         && box.kind != BoxKind::Text && box.kind != BoxKind::Inline
