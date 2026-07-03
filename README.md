@@ -40,6 +40,7 @@ Vertex is already a usable experimental browser shell:
 | Pages | Loads real HTTP/HTTPS pages, images, CSS, scripts, SVGs, and local `vertex://` pages |
 | UI | Tabs, address bar, history, reload/stop/home, zoom, find-in-page, status text |
 | Updates | GitHub release checking and background download, applied with `F12` |
+| Performance | Cached resources, cached stylesheets, cached selector parsing, dirty layout paths, and hover fast paths |
 | Testing | Dedicated HTML, CSS, layout, paint, JS, network, and layout-engine suites |
 
 It is still young. Some sites will look strange, some JavaScript will hit missing
@@ -72,11 +73,13 @@ what the page means, where boxes go, what scripts can touch, and what gets paint
 
 - HTML tokenizer and parser with entity handling, autoclose behavior, rawtext, and
   browser-style recovery paths.
-- CSS cascade with combinators, attributes, pseudo-classes, media/support queries,
+- CSS cascade with combinators, attributes, pseudo-classes, relational selectors
+  like `:has()`, filtered `:nth-child(... of selector)`, media/support queries,
   custom properties, logical properties, transforms, gradients, flex, grid, tables,
   floats, positioning, form styling, and viewport/math functions.
 - JavaScript lexer, parser, compiler, VM, native DOM bindings, timers, events,
-  promises, fetch surface, storage, selectors, geometry APIs, and observers.
+  promises, async fetch surface, storage, DOM selectors, geometry APIs, and
+  observer APIs.
 - Layout engine for block, inline, line boxes, floats, tables, flex, grid, replaced
   elements, positioned boxes, scrolling, and dirty-layout invalidation.
 - SVG renderer for inline and external SVGs, paths, gradients, transforms, text,
@@ -188,6 +191,27 @@ build/dump_js script.js
 `dump_layout` is especially useful when a real site looks broken. It prints the box
 tree and geometry so layout bugs can be reduced into focused tests instead of guessed
 from screenshots.
+
+## Performance Debugging
+
+Set `VERTEX_PERF=1` before launching Vertex to print per-page timing counters while
+you browse:
+
+```sh
+VERTEX_PERF=1 ./build/Vertex
+```
+
+On Windows:
+
+```bat
+set VERTEX_PERF=1
+build\Release\Vertex.exe
+```
+
+The log includes fetch time, resource requests/cache hits, style time, layout time,
+paint time, JavaScript parse/run time, and whether layout was reused. It is meant for
+real-page work like Wikipedia debugging, where guessing from a screenshot is usually
+slower than checking which subsystem is actually hot.
 
 ## Compatibility Philosophy
 
