@@ -33,36 +33,48 @@ jobs:
         if: matrix.name == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
 
+      - name: Install Windows packaging deps
+        if: matrix.name == 'windows'
+        run: choco install nsis -y
+
       - name: Configure
         run: ${{ matrix.configure }}
 
       - name: Build
         run: cmake --build build --config Release
 
-      - name: Package macOS bundle
+      - name: Package Windows installer
+        if: matrix.name == 'windows'
+        run: cpack -G NSIS -C Release --config build/CPackConfig.cmake
+
+      - name: Package macOS disk image
         if: matrix.name == 'macos'
-        run: cd build && zip -r Vertex-macos.zip Vertex.app
+        run: cpack -G DragNDrop --config build/CPackConfig.cmake
+
+      - name: Package Linux archive
+        if: matrix.name == 'linux'
+        run: cpack -G TGZ --config build/CPackConfig.cmake
 
       - name: Upload artifact (Windows)
         if: matrix.name == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: vertex-windows
-          path: build/Release/Vertex.exe
+          name: vertex-windows-installer
+          path: Vertex-*.exe
 
       - name: Upload artifact (macOS)
         if: matrix.name == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: vertex-macos
-          path: build/Vertex-macos.zip
+          name: vertex-macos-installer
+          path: Vertex-*.dmg
 
       - name: Upload artifact (Linux)
         if: matrix.name == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: vertex-linux
-          path: build/Vertex
+          name: vertex-linux-installer
+          path: Vertex-*.tar.gz
 
   release:
     needs: build
@@ -76,10 +88,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          mv vertex-windows/Vertex.exe Vertex-windows.exe || true
-          mv vertex-macos/Vertex-macos.zip Vertex-macos.zip || true
-          mv vertex-linux/Vertex Vertex-linux || true
-          chmod +x Vertex-linux || true
+          mv vertex-windows-installer/Vertex-*.exe Vertex-windows-installer.exe || true
+          mv vertex-macos-installer/Vertex-*.dmg Vertex-macos-installer.dmg || true
+          mv vertex-linux-installer/Vertex-*.tar.gz Vertex-linux-installer.tar.gz || true
 
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 && \
             gh release upload "$tag" Vertex-* --repo "$GITHUB_REPOSITORY" --clobber || \

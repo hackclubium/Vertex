@@ -5,6 +5,7 @@
 #include "network/text_decode.h"
 #include "network/url.h"
 #include "platform/downloads.h"
+#include "platform/profile.h"
 #include "html/parser.h"
 #include "html/resources.h"
 
@@ -83,6 +84,35 @@ TestResult RunNetworkTests() {
             "my_name.zip\n"
             "download.txt\n"
             "C:/Downloads/file (2).txt\n",
+            result);
+    }
+
+    {
+        std::filesystem::path root = std::filesystem::temp_directory_path() / "vertex-profile-test-data";
+        std::filesystem::path cache = std::filesystem::temp_directory_path() / "vertex-profile-test-cache";
+        std::filesystem::remove_all(root);
+        std::filesystem::remove_all(cache);
+
+        auto paths = vertex::profile::ResolvePaths(root.generic_string(), cache.generic_string(), "Default");
+        bool dirs = vertex::profile::EnsureDirectories(paths);
+        vertex::profile::AppendTsvRow(paths.historyFile, { "123", "https://example.test/a", "Example" });
+        vertex::profile::AppendTsvRow(paths.historyFile, { "124", "https://example.test/b?x=1\t2", "Two\nLines" });
+        auto rows = vertex::profile::ReadTsvRows(paths.historyFile);
+
+        std::string actual;
+        actual += dirs ? "dirs\n" : "no-dirs\n";
+        actual += std::filesystem::exists(paths.profileRoot) ? "profile\n" : "no-profile\n";
+        actual += std::filesystem::exists(paths.localStorageDir) ? "local-storage\n" : "no-local-storage\n";
+        actual += std::filesystem::exists(paths.cacheProfileRoot) ? "cache\n" : "no-cache\n";
+        actual += std::to_string(rows.size()) + "\n";
+        actual += rows.size() > 1 && rows[1].size() > 2 ? rows[1][1] + "|" + rows[1][2] + "\n" : "missing\n";
+
+        std::filesystem::remove_all(root);
+        std::filesystem::remove_all(cache);
+
+        ExpectEqual("network/profile/paths-and-tsv-storage",
+            actual,
+            "dirs\nprofile\nlocal-storage\ncache\n2\nhttps://example.test/b?x=1\t2|Two\nLines\n",
             result);
     }
 

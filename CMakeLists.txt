@@ -36,6 +36,7 @@ else ()
     set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
     # Per-OS TLS backend for libcurl
     if (WIN32)
         set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
@@ -79,6 +80,7 @@ add_library(vertex_engine STATIC
     src/network/text_decode.cpp
     src/network/url.cpp
     src/platform/downloads.cpp
+    src/platform/profile.cpp
     src/html/tokenizer.cpp
     src/html/parser.cpp
     src/html/resources.cpp
@@ -222,3 +224,39 @@ endif()
 set_target_properties(Vertex vertex-tests vertex-layout-engine-tests dump_layout render_probe dump_js PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
 )
+
+install(TARGETS Vertex
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION .
+)
+
+if (UNIX AND NOT APPLE)
+    install(FILES
+        src/platform/vertex_icon.png
+        src/platform/vertex_icon_light.png
+        DESTINATION .
+    )
+endif()
+
+set(CPACK_PACKAGE_NAME "Vertex")
+set(CPACK_PACKAGE_VENDOR "hackclubium")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A from-scratch browser engine and native browser shell.")
+set(CPACK_PACKAGE_VERSION "${VERTEX_VERSION}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Vertex")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_FILE_NAME "Vertex-${VERTEX_VERSION}-${CMAKE_SYSTEM_NAME}")
+
+if (WIN32)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_NSIS_DISPLAY_NAME "Vertex")
+    set(CPACK_NSIS_PACKAGE_NAME "Vertex")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
+elseif (APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+
+include(CPack)

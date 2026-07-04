@@ -204,6 +204,9 @@ body {
 <a href="https://news.ycombinator.com">Hacker News<span>news.ycombinator.com</span></a>
 <a href="https://lite.cnn.com">CNN Lite<span>lite.cnn.com</span></a>
 <a href="vertex://history">History<span>vertex://history</span></a>
+<a href="vertex://bookmarks">Bookmarks<span>vertex://bookmarks</span></a>
+<a href="vertex://downloads">Downloads<span>vertex://downloads</span></a>
+<a href="vertex://settings">Settings<span>vertex://settings</span></a>
 </div>
 <div class="shortcuts">
 <div class="section-title" style="margin-top:0;">Shortcuts</div>

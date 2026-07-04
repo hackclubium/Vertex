@@ -38,9 +38,10 @@ Vertex is already a usable experimental browser shell:
 |---|---|
 | Platforms | Windows, macOS, and Linux native shells over one shared engine |
 | Pages | Loads real HTTP/HTTPS pages, images, CSS, scripts, SVGs, and local `vertex://` pages |
-| UI | Tabs, address bar, history, reload/stop/home, zoom, find-in-page, status text |
+| UI | Tabs, address bar, profile-backed history/bookmarks/downloads, reload/stop/home, zoom, find-in-page, status text |
 | Updates | GitHub release checking and background download, applied with `F12` |
 | Performance | Cached resources, cached stylesheets, cached selector parsing, dirty layout paths, and hover fast paths |
+| Profile | Per-user storage for settings, history, bookmarks, downloads, cookies, local storage, and session restore |
 | Testing | Dedicated HTML, CSS, layout, paint, JS, network, and layout-engine suites |
 
 It is still young. Some sites will look strange, some JavaScript will hit missing
@@ -112,12 +113,29 @@ Release assets are produced by GitHub Actions whenever a tag is pushed:
 
 | Platform | Asset |
 |---|---|
-| Windows | `Vertex-windows.exe` |
-| macOS | `Vertex-macos.zip` |
-| Linux | `Vertex-linux` |
+| Windows | `Vertex-windows-installer.exe` |
+| macOS | `Vertex-macos-installer.dmg` |
+| Linux | `Vertex-linux-installer.tar.gz` |
 
 Vertex also checks for newer GitHub releases on startup. When an update is ready,
 press `F12` to apply it.
+
+## Profile Data
+
+Vertex creates its profile folders on first launch, whether it came from an
+installer, package, or local developer build.
+
+| Platform | Profile | Cache |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\Vertex\User Data\Default` | `%LOCALAPPDATA%\Vertex\Cache\Default` |
+| macOS | `~/Library/Application Support/Vertex/Default` | `~/Library/Caches/Vertex/Default` |
+| Linux | `~/.config/Vertex/Default` | `~/.cache/Vertex/Default` |
+
+The default profile contains simple files such as `history.tsv`, `bookmarks.tsv`,
+`downloads.tsv`, `settings.json`, `cookies.tsv`, `local_storage/`, and
+`session_restore.json`. The browser also exposes `vertex://settings`,
+`vertex://site-data`, `vertex://history`, `vertex://bookmarks`, and
+`vertex://downloads`.
 
 ## Build
 

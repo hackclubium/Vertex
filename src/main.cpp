@@ -18,6 +18,7 @@
 #include "platform/chrome_theme.h"
 #include "platform/box_painter.h"
 #include "platform/downloads.h"
+#include "platform/profile.h"
 #include "js/engine.h"
 #include "js/dom_bridge.h"
 
@@ -32,6 +33,7 @@
 #include <cstdio>
 #include <mutex>
 #include <condition_variable>
+#include <ctime>
 
 static Semaphore g_imageFetchGate(6);
 
@@ -87,6 +89,7 @@ static HBRUSH   g_windowBrush = nullptr;
 static HICON    g_appIconLarge = nullptr;
 static HICON    g_appIconSmall = nullptr;
 static int      g_appIconResourceId = 0;
+static vertex::profile::ProfilePaths g_profilePaths;
 static std::vector<vertex::downloads::DownloadRecord> g_downloads;
 
 static constexpr COLORREF ToColorRef(vertex::chrome_theme::Rgb c) {
@@ -233,14 +236,135 @@ static std::string HtmlEscape(const std::string& input) {
     return out;
 }
 
+static std::string NowSecondsString() {
+    return std::to_string((long long)std::time(nullptr));
+}
+
+static std::string AppPageCss() {
+    return "body{font:16px system-ui,sans-serif;background:#f7f2e8;color:#151515;margin:0;padding:36px;}"
+           "main{max-width:900px;margin:auto;}h1{font-size:32px;margin:0 0 20px;}"
+           ".item{background:white;border:1px solid #ded6c8;margin:10px 0;padding:14px 16px;}"
+           ".name{font-weight:700;color:#245bd8}.meta{color:#555;margin-top:6px}.bad{color:#a12626}"
+           "code{background:#fff;padding:2px 5px;border:1px solid #ded6c8}";
+}
+
+static void AppendHistoryRecord(const std::string& url, const std::string& title = "") {
+    if (url.empty() || url.rfind("vertex://", 0) == 0 || url.rfind("felix://", 0) == 0)
+        return;
+    vertex::profile::AppendTsvRow(g_profilePaths.historyFile,
+        { NowSecondsString(), url, title });
+}
+
+static void AppendBookmarkRecord(const std::string& url, const std::string& title) {
+    if (url.empty()) return;
+    vertex::profile::AppendTsvRow(g_profilePaths.bookmarksFile,
+        { NowSecondsString(), url, title.empty() ? url : title });
+}
+
+static void AppendDownloadRecord(const vertex::downloads::DownloadRecord& record) {
+    vertex::profile::AppendTsvRow(g_profilePaths.downloadsFile,
+        { NowSecondsString(), record.url, record.path, record.filename,
+          record.contentType, std::to_string(record.bytes),
+          record.success ? "1" : "0", record.error });
+}
+
+static void LoadDownloadRecords() {
+    g_downloads.clear();
+    auto rows = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile);
+    for (const auto& row : rows) {
+        if (row.size() < 8) continue;
+        vertex::downloads::DownloadRecord record;
+        record.url = row[1];
+        record.path = row[2];
+        record.filename = row[3];
+        record.contentType = row[4];
+        try { record.bytes = (size_t)std::stoull(row[5]); } catch (...) { record.bytes = 0; }
+        record.success = row[6] == "1";
+        record.error = row[7];
+        g_downloads.push_back(record);
+    }
+}
+
+static std::string HistoryPageHtml() {
+    std::string html = "<html><head><title>History</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>History</h1>";
+    auto rows = vertex::profile::ReadTsvRows(g_profilePaths.historyFile);
+    bool any = false;
+    for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No history yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string BookmarksPageHtml() {
+    std::string html = "<html><head><title>Bookmarks</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Bookmarks</h1>";
+    auto rows = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile);
+    bool any = false;
+    for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No bookmarks yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string SettingsPageHtml() {
+    std::string html = "<html><head><title>Settings</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Settings</h1>"
+        "<div class=\"item\"><div class=\"name\">Profile</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cache</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.cacheProfileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Controls</div>"
+        "<div class=\"meta\"><a href=\"vertex://history\">History</a> · "
+        "<a href=\"vertex://bookmarks\">Bookmarks</a> · "
+        "<a href=\"vertex://downloads\">Downloads</a> · "
+        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<div class=\"item\"><div class=\"name\">Current defaults</div>"
+        "<div class=\"meta\">JavaScript on · Images on · Cache on · Search engine Bing</div></div>"
+        "</main></body></html>";
+    return html;
+}
+
+static std::string SiteDataPageHtml() {
+    auto history = vertex::profile::ReadTsvRows(g_profilePaths.historyFile);
+    auto bookmarks = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile);
+    auto downloads = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile);
+    std::string html = "<html><head><title>Site Data</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Site Data</h1>"
+        "<div class=\"item\"><div class=\"name\">Storage root</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">History entries</div><div class=\"meta\">"
+        + std::to_string(history.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Bookmarks</div><div class=\"meta\">"
+        + std::to_string(bookmarks.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Downloads</div><div class=\"meta\">"
+        + std::to_string(downloads.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Local storage</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.localStorageDir) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
+        "</main></body></html>";
+    return html;
+}
+
 static std::string DownloadsPageHtml() {
     std::string html =
-        "<html><head><title>Downloads</title><style>"
-        "body{font:16px system-ui,sans-serif;background:#f7f2e8;color:#151515;margin:0;padding:36px;}"
-        "main{max-width:860px;margin:auto;}h1{font-size:32px;margin:0 0 20px;}"
-        ".item{background:white;border:1px solid #ded6c8;margin:10px 0;padding:14px 16px;}"
-        ".name{font-weight:700;color:#245bd8}.meta{color:#555;margin-top:6px}.bad{color:#a12626}"
-        "</style></head><body><main><h1>Downloads</h1>";
+        "<html><head><title>Downloads</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Downloads</h1>";
     if (g_downloads.empty()) {
         html += "<p>No downloads yet.</p>";
     } else {
@@ -453,12 +577,14 @@ static void Navigate(const std::string& rawUrl, bool push = true) {
     Navigate(g_activeTab, rawUrl, push);
 }
 
-static void ShowDownloadsPage(bool pushHistory = true) {
+static void ShowInternalPage(const std::string& url,
+                             const std::string& title,
+                             const std::string& html,
+                             bool pushHistory = true) {
     Tab& tab = CurTab();
-    const std::string url = "vertex://downloads";
-    tab.page.reset(new Page{ url, ParseHtml(DownloadsPageHtml()), {} });
+    tab.page.reset(new Page{ url, ParseHtml(html), {} });
     tab.url = url;
-    tab.title = "Downloads";
+    tab.title = title;
     tab.loading = false;
     tab.scrollY = 0.f;
     tab.pendingFragment.clear();
@@ -473,6 +599,22 @@ static void ShowDownloadsPage(bool pushHistory = true) {
     InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
+static void ShowDownloadsPage(bool pushHistory = true) {
+    ShowInternalPage("vertex://downloads", "Downloads", DownloadsPageHtml(), pushHistory);
+}
+
+static void ShowBookmarksPage(bool pushHistory = true) {
+    ShowInternalPage("vertex://bookmarks", "Bookmarks", BookmarksPageHtml(), pushHistory);
+}
+
+static void ShowSettingsPage(bool pushHistory = true) {
+    ShowInternalPage("vertex://settings", "Settings", SettingsPageHtml(), pushHistory);
+}
+
+static void ShowSiteDataPage(bool pushHistory = true) {
+    ShowInternalPage("vertex://site-data", "Site Data", SiteDataPageHtml(), pushHistory);
+}
+
 static void StartDownload(const std::string& url, const std::string& downloadName = "") {
     if (url.empty()) return;
     SetStatus("Downloading " + url);
@@ -481,6 +623,7 @@ static void StartDownload(const std::string& url, const std::string& downloadNam
         [url, downloadName](FetchResult res) {
             auto record = vertex::downloads::SaveFetchedBody(url, res, downloadName);
             g_downloads.push_back(record);
+            AppendDownloadRecord(record);
             SetStatus(record.success ? ("Saved " + record.filename)
                                      : ("Download failed: " + record.error));
             if (CurTab().url == "vertex://downloads")
@@ -522,39 +665,24 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
 
     // ── built-in: history ──────────────────────────────────────────────
     if (url == "vertex://history" || url == "felix://history") {
-        url = "vertex://history";
-        std::string html = "<html><body><h1>History</h1>";
-        bool any = false;
-        for (int i = (int)tab.history.size() - 1; i >= 0; i--) {
-            const auto& h = tab.history[i];
-            if (h == "vertex://history") continue;
-            html += "<p><a href=\"" + h + "\">" + h + "</a></p>";
-            any = true;
-        }
-        if (!any) html += "<p>No history yet.</p>";
-        html += "</body></html>";
-        tab.page.reset(new Page{ url, ParseHtml(html), {} });
-        tab.url     = url;
-        tab.title   = "History";
-        tab.loading = false;
-        tab.scrollY = 0.f;
-        tab.pendingFragment.clear();
-        tab.fragmentScrollPending = false;
-        if (pushHistory) TabPushHistory(tab, url);
-        if (tabIdx == g_activeTab) {
-            EnableWindow(g_hwndStop, FALSE);
-            EnableWindow(g_hwndRefr, TRUE);
-            SetUrlBar(url);
-            UpdateTitle();
-            g_renderer.InvalidateLayout();
-            UpdateScrollbar();
-            InvalidateRect(g_hwnd, NULL, FALSE);
-        }
+        ShowInternalPage("vertex://history", "History", HistoryPageHtml(), pushHistory);
         return;
     }
 
     if (url == "vertex://downloads") {
         ShowDownloadsPage(pushHistory);
+        return;
+    }
+    if (url == "vertex://bookmarks") {
+        ShowBookmarksPage(pushHistory);
+        return;
+    }
+    if (url == "vertex://settings") {
+        ShowSettingsPage(pushHistory);
+        return;
+    }
+    if (url == "vertex://site-data") {
+        ShowSiteDataPage(pushHistory);
         return;
     }
 
@@ -576,7 +704,10 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     tab.title      = "Loading…";
     tab.pendingFragment = UrlFragment(url);
     tab.fragmentScrollPending = !tab.pendingFragment.empty();
-    if (pushHistory) TabPushHistory(tab, url);
+    if (pushHistory) {
+        TabPushHistory(tab, url);
+        AppendHistoryRecord(url);
+    }
 
     if (tabIdx == g_activeTab) {
         EnableWindow(g_hwndStop, TRUE);
@@ -1392,47 +1523,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case 9011: GoForward(); break;
                 case 9012: if (!CurTab().loading) Navigate(CurTab().url, false); break;
                 case 9020: {
-                    // Add current page to bookmarks file.
-                    std::string bmPath;
-                    char appdata[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) == S_OK)
-                        bmPath = std::string(appdata) + "\\Vertex\\bookmarks.txt";
-                    if (!bmPath.empty()) {
-                        CreateDirectoryA((std::string(appdata) + "\\Vertex").c_str(), NULL);
-                        FILE* f = fopen(bmPath.c_str(), "a");
-                        if (f) { fprintf(f, "%s|%s\n", CurTab().url.c_str(), CurTab().title.c_str()); fclose(f); }
-                    }
+                    AppendBookmarkRecord(CurTab().url, CurTab().title);
+                    SetStatus("Bookmarked " + CurTab().url);
                     break;
                 }
                 case 9021: {
-                    // Load bookmarks as a simple page.
-                    std::string bmPath;
-                    char appdata[MAX_PATH]; if (SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata) == S_OK)
-                        bmPath = std::string(appdata) + "\\Vertex\\bookmarks.txt";
-                    std::string html = "<html><head><title>Bookmarks</title></head><body><h1>Bookmarks</h1><ul>";
-                    if (!bmPath.empty()) {
-                        FILE* f = fopen(bmPath.c_str(), "r");
-                        if (f) {
-                            char line[4096];
-                            while (fgets(line, sizeof(line), f)) {
-                                std::string l(line); while (!l.empty() && (l.back()=='\n'||l.back()=='\r')) l.pop_back();
-                                size_t pipe = l.find('|');
-                                std::string url = pipe != std::string::npos ? l.substr(0, pipe) : l;
-                                std::string title = pipe != std::string::npos ? l.substr(pipe + 1) : url;
-                                html += "<li><a href=\"" + url + "\">" + title + "</a></li>";
-                            }
-                            fclose(f);
-                        }
-                    }
-                    html += "</ul></body></html>";
-                    Tab& tab = CurTab();
-                    tab.page = std::make_shared<Page>();
-                    tab.page->url = "vertex://bookmarks";
-                    tab.page->dom = ParseHtml(html);
-                    tab.title = "Bookmarks";
-                    tab.url = "vertex://bookmarks";
-                    g_renderer.InvalidateLayout();
-                    InvalidateRect(hwnd, NULL, FALSE);
-                    UpdateTitle();
+                    ShowBookmarksPage();
                     break;
                 }
             }
@@ -1597,6 +1693,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+    g_profilePaths = vertex::profile::DefaultPaths();
+    vertex::profile::EnsureDirectories(g_profilePaths);
+    LoadDownloadRecords();
+
     // Auto-update: apply a previously downloaded update, then check for new ones.
     char exeBuf[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, exeBuf, MAX_PATH);
@@ -1658,6 +1758,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                     handled = true;
                 } else if (msg.wParam == 'H') {
                     Navigate("vertex://history");
+                    handled = true;
+                } else if (msg.wParam == 'J') {
+                    Navigate("vertex://downloads");
+                    handled = true;
+                } else if (msg.wParam == 'B') {
+                    Navigate("vertex://bookmarks");
                     handled = true;
                 } else if (msg.wParam == 'F') {
                     ShowFind(!g_findVisible);

@@ -53,6 +53,38 @@ TestResult RunPaintTests() {
     {
         auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string profileH = ReadTextFile(root / "src/platform/profile.h");
+        const bool profilePages =
+            profileH.find("ProfilePaths") != std::string::npos
+            && mainWin.find("vertex::profile::DefaultPaths()") != std::string::npos
+            && mainWin.find("vertex://settings") != std::string::npos
+            && mainWin.find("vertex://site-data") != std::string::npos
+            && mainWin.find("AppendDownloadRecord(record)") != std::string::npos
+            && mainWin.find("AppendBookmarkRecord(CurTab().url, CurTab().title)") != std::string::npos;
+        ExpectEqual("paint/profile-backed-app-pages-are-wired",
+            profilePages ? "profile\n" : "adhoc\n",
+            "profile\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string cmake = ReadTextFile(root / "CMakeLists.txt");
+        std::string workflow = ReadTextFile(root / ".github/workflows/release.yml");
+        const bool packagesInstallers =
+            cmake.find("include(CPack)") != std::string::npos
+            && workflow.find("cpack -G NSIS") != std::string::npos
+            && workflow.find("Vertex-windows.exe") == std::string::npos
+            && workflow.find("Vertex-windows-installer") != std::string::npos;
+        ExpectEqual("paint/release-workflow-packages-installers",
+            packagesInstallers ? "installer\n" : "raw-exe\n",
+            "installer\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
         std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
         std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
         std::string cmake = ReadTextFile(root / "CMakeLists.txt");
