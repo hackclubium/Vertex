@@ -262,6 +262,12 @@ set(CPACK_PACKAGE_FILE_NAME "Vertex-${VERTEX_VERSION}-${CMAKE_SYSTEM_NAME}")
 
 if (WIN32)
     set(CPACK_GENERATOR "NSIS")
+    # Install per-user under %LOCALAPPDATA% (like the Vertex profile data
+    # already does) instead of Program Files. Program Files needs admin
+    # rights to write to, which broke the self-updater: the unelevated,
+    # running Vertex.exe couldn't write its own downloaded update next to
+    # itself and failed with "Failed to write update."
+    set(CPACK_NSIS_INSTALL_ROOT "$LOCALAPPDATA\\\\Programs")
     set(CPACK_NSIS_DISPLAY_NAME "Vertex")
     set(CPACK_NSIS_PACKAGE_NAME "Vertex")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
