@@ -122,6 +122,7 @@ struct BytecodeFunction {
     std::vector<Instruction>                 code;
     std::vector<JsValue>                     consts;  // constant pool (strings stored as JsValue::string/null for strings)
     std::vector<std::string>                 constStrings; // parallel to consts for string keys
+    std::vector<bool>                        constIsString; // separates empty string placeholders from real null
     std::vector<UpvalDesc>                   upvalDescs;
     std::vector<std::unique_ptr<BytecodeFunction>> innerFns;
 

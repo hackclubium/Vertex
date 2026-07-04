@@ -8,6 +8,7 @@
 
 uint16_t BytecodeFunction::addConst(JsValue v, const std::string& strKey) {
     constStrings.push_back(strKey);
+    constIsString.push_back(false);
     consts.push_back(v);
     return (uint16_t)(consts.size() - 1);
 }
@@ -15,10 +16,11 @@ uint16_t BytecodeFunction::addConst(JsValue v, const std::string& strKey) {
 uint16_t BytecodeFunction::addConstString(const std::string& s) {
     // Deduplicate
     for (size_t i = 0; i < constStrings.size(); i++)
-        if (constStrings[i] == s && consts[i].isNull())
+        if (i < constIsString.size() && constIsString[i] && constStrings[i] == s && consts[i].isNull())
             return (uint16_t)i;
     // Store as null with strKey; VM will intern at runtime
     constStrings.push_back(s);
+    constIsString.push_back(true);
     consts.push_back(JsValue::null()); // placeholder; VM resolves via constStrings[i]
     return (uint16_t)(consts.size() - 1);
 }

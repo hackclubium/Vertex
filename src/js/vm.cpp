@@ -25,8 +25,10 @@ VM::VM(GC& gc) : m_gc(gc) {
 JsValue VM::resolveConst(BytecodeFunction* fn, uint16_t idx) {
     if (idx >= fn->consts.size()) return JsValue::undefined();
     JsValue& c = fn->consts[idx];
-    // String constants stored as null with strKey; intern on first access
-    if (c.isNull() && idx < fn->constStrings.size() && !fn->constStrings[idx].empty()) {
+    // String constants are stored as null placeholders with a parallel marker,
+    // so an actual null constant and an empty string literal stay distinct.
+    if (c.isNull() && idx < fn->constStrings.size()
+        && idx < fn->constIsString.size() && fn->constIsString[idx]) {
         auto* s = m_gc.internString(fn->constStrings[idx]);
         c = JsValue::string(s); // cache in-place
     }

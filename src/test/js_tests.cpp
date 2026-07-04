@@ -646,6 +646,82 @@ static std::string RunFetchBodyInitAndEventSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunRangeSelectionSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><article id=\"a\"><p id=\"p\">Alpha <b id=\"b\">Beta</b> Gamma</p></article></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var p = document.getElementById('p');\n"
+        "var b = document.getElementById('b');\n"
+        "var range = document.createRange();\n"
+        "range.selectNodeContents(p);\n"
+        "var all = range.toString();\n"
+        "range.selectNode(b);\n"
+        "var frag = range.cloneContents();\n"
+        "var contextual = range.createContextualFragment('<span id=\"made\">Made</span>');\n"
+        "var sel = getSelection();\n"
+        "sel.removeAllRanges();\n"
+        "sel.addRange(range);\n"
+        "document.body.setAttribute('data-result', all + '|' + range.toString() + '|' + frag.textContent + '|' + contextual.firstElementChild.id + ':' + contextual.textContent + '|' + sel.rangeCount + ':' + sel.toString() + ':' + (sel.getRangeAt(0) === range));\n",
+        "range-selection");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunBlobFileReaderSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var blob = new Blob(['Hello', ' ', 'Vertex'], { type: 'text/plain' });\n"
+        "globalThis.blobResult = blob.size + ':' + blob.type + ':';\n"
+        "blob.text().then(function(text) { globalThis.blobResult += text; });\n"
+        "var reader = new FileReader();\n"
+        "globalThis.readerLog = '';\n"
+        "reader.onload = function(e) { globalThis.readerLog += 'load:' + reader.result + ':' + e.type + ';'; };\n"
+        "reader.onloadend = function(e) { globalThis.readerLog += 'end:' + reader.readyState + ':' + e.type + ';'; };\n"
+        "reader.readAsText(blob);\n"
+        "globalThis.req = new Request('/blob', { method: 'post', body: blob });\n"
+        "var res = new Response(blob);\n"
+        "res.text().then(function(text) { document.body.setAttribute('data-result', globalThis.blobResult + '|' + globalThis.readerLog + '|' + globalThis.req.headers.get('content-type') + ':' + globalThis.req.bodyUsed + '|' + text); });\n",
+        "blob-filereader");
+    if (!ok) return "script failed\n";
+    ok = engine.runScript("document.body.setAttribute('data-final', document.body.getAttribute('data-result'));\n", "blob-filereader-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-final") + "\n" : "missing body\n";
+}
+
+static std::string RunFormCollectionSubmitSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml(
+        "<html><body>"
+        "<form id=\"f\" name=\"search\" action=\"/w/index.php\" method=\"get\">"
+        "<label id=\"lbl\" for=\"q\">Query</label>"
+        "<input id=\"q\" name=\"title\" value=\"Vertex\">"
+        "<input id=\"hidden\" type=\"hidden\" name=\"action\" value=\"view\">"
+        "<select id=\"lang\" name=\"lang\"><option value=\"en\">English</option><option value=\"fr\" selected>French</option></select>"
+        "<button id=\"go\" name=\"go\" value=\"1\">Go</button>"
+        "</form>"
+        "</body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var form = document.forms[0];\n"
+        "var input = document.getElementById('q');\n"
+        "var label = document.getElementById('lbl');\n"
+        "var select = document.getElementById('lang');\n"
+        "globalThis.submitLog = '';\n"
+        "form.addEventListener('submit', function(e) { globalThis.submitLog += e.type + ':' + e.submitter.id + ':' + e.cancelable + ';'; e.preventDefault(); });\n"
+        "var fd = new FormData(form);\n"
+        "form.requestSubmit(document.getElementById('go'));\n"
+        "document.body.setAttribute('data-result', document.forms.length + ':' + document.forms.search.id + '|' + form.elements.length + ':' + form.elements.title.value + ':' + form.elements.lang.value + '|' + input.form.id + ':' + label.control.id + '|' + select.options.length + ':' + select.selectedIndex + ':' + select.value + '|' + fd.get('title') + ':' + fd.get('action') + ':' + fd.get('lang') + '|' + globalThis.submitLog);\n",
+        "form-collections-submit");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 static std::string RunPromiseConstructorCombinatorsSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body></body></html>");
@@ -1159,6 +1235,24 @@ TestResult RunJsTests() {
         "js/web-platform/fetch-body-init-and-events",
         RunFetchBodyInitAndEventSnapshot(),
         "POST:application/x-www-form-urlencoded;charset=UTF-8:false|keydown:Enter:Enter:true:true|28:text/custom|title=Vertex&space+value=a+b\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/range-selection-surface",
+        RunRangeSelectionSnapshot(),
+        "Alpha Beta Gamma|Beta|Beta|made:Made|1:Beta:true\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/blob-filereader-body",
+        RunBlobFileReaderSnapshot(),
+        "12:text/plain:Hello Vertex|load:Hello Vertex:load;end:2:loadend;|text/plain:false|Hello Vertex\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/form-collections-submit",
+        RunFormCollectionSubmitSnapshot(),
+        "1:f|4:Vertex:fr|f:q|2:1:fr|Vertex:view:fr|submit:go:true;\n",
         result);
 
     ExpectEqual(
