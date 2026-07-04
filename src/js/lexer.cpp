@@ -149,8 +149,13 @@ Token Lexer::readString(char quote) {
                     else if (cp < 0x800) {
                         out += (char)(0xC0 | (cp >> 6));
                         out += (char)(0x80 | (cp & 0x3F));
-                    } else {
+                    } else if (cp < 0x10000) {
                         out += (char)(0xE0 | (cp >> 12));
+                        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                        out += (char)(0x80 | (cp & 0x3F));
+                    } else {
+                        out += (char)(0xF0 | (cp >> 18));
+                        out += (char)(0x80 | ((cp >> 12) & 0x3F));
                         out += (char)(0x80 | ((cp >> 6) & 0x3F));
                         out += (char)(0x80 | (cp & 0x3F));
                     }
