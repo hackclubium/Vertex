@@ -78,6 +78,7 @@ add_library(vertex_engine STATIC
     src/network/resource_cache.cpp
     src/network/text_decode.cpp
     src/network/url.cpp
+    src/platform/downloads.cpp
     src/html/tokenizer.cpp
     src/html/parser.cpp
     src/html/resources.cpp

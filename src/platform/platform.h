@@ -19,6 +19,8 @@
 struct HitRegion {
     float       x, y, w, h;
     std::string href;
+    bool        download = false;
+    std::string downloadName;
 };
 
 // ── color ────────────────────────────────────────────────────────────────────

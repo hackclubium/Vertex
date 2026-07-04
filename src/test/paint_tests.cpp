@@ -361,7 +361,7 @@ TestResult RunPaintTests() {
         const bool reusesChildStyle =
             layout.find("const ComputedStyle* precomputedStyle") != std::string::npos
             && layout.find("precomputedStyle ? *precomputedStyle") != std::string::npos
-            && layout.find("BuildBox(child.get(), style, bc, href, &childStyle)") != std::string::npos;
+            && layout.find("BuildBox(child.get(), style, bc, childHref, &childStyle)") != std::string::npos;
         ExpectEqual("paint/layout-build-reuses-precomputed-child-style",
             reusesChildStyle ? "reused\n" : "double-resolve\n",
             "reused\n",
@@ -675,9 +675,9 @@ TestResult RunPaintTests() {
         std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
         const bool blockLinksHit =
             painter.find("!box.href.empty()") != std::string::npos
-            && painter.find("m_hits.push_back({ hx, hy, hw, hh, box.href });") != std::string::npos
+            && painter.find("m_hits.push_back({ hx, hy, hw, hh, box.href, box.download, box.downloadName });") != std::string::npos
             && sharedPainter.find("!box.href.empty()") != std::string::npos
-            && sharedPainter.find("ps.hits->push_back({ hx, hy, hw, hh, box.href });") != std::string::npos;
+            && sharedPainter.find("ps.hits->push_back({ hx, hy, hw, hh, box.href, box.download, box.downloadName });") != std::string::npos;
         ExpectEqual("paint/block-link-boxes-register-hit-regions",
             blockLinksHit ? "clickable\n" : "text-only\n",
             "clickable\n",

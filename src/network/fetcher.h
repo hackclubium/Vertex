@@ -8,6 +8,7 @@ struct FetchResult {
     std::string finalUrl;
     std::string body;
     std::string contentType;
+    std::string contentDisposition;
     std::string error;
 };
 

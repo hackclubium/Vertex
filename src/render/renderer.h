@@ -53,6 +53,8 @@ public:
                 bool repaintChrome = true);
 
     std::string HitTest(float x, float y) const;
+    bool        LastHitWasDownload() const { return m_lastHitDownload; }
+    std::string LastHitDownloadName() const { return m_lastHitDownloadName; }
     const Node* HoverNodeAt(float x, float y, float scrollY, float topInset) const;
     bool LastHoverRegion(HitRegion& out) const;
     int  HitTestTab(float x, float y) const;
@@ -129,6 +131,8 @@ private:
     mutable bool m_lastHitValid = false;
     mutable HitRegion m_lastHitRegion;
     mutable std::string m_lastHitHref;
+    mutable bool m_lastHitDownload = false;
+    mutable std::string m_lastHitDownloadName;
     mutable bool m_lastHoverNodeValid = false;
     mutable HitRegion m_lastHoverNodeRegion;
     mutable const Node* m_lastHoverNode = nullptr;

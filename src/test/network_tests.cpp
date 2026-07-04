@@ -4,10 +4,13 @@
 #include "network/resource_cache.h"
 #include "network/text_decode.h"
 #include "network/url.h"
+#include "platform/downloads.h"
 #include "html/parser.h"
 #include "html/resources.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 
 static Node* FindScriptById(Node* root, const std::string& id) {
@@ -37,6 +40,50 @@ TestResult RunNetworkTests() {
             + std::to_string(res.body.size()) + " " + res.body + "\n";
         ExpectEqual("network/data-url/base64", actual,
             "success image/png 4 ABCD\n", result);
+    }
+
+    {
+        std::filesystem::path path = std::filesystem::temp_directory_path() / "vertex-file-url-test.html";
+        {
+            std::ofstream out(path, std::ios::binary);
+            out << "<h1>local</h1>";
+        }
+        std::string url = "file:///" + path.generic_string();
+        auto res = FetchUrl(url);
+        std::filesystem::remove(path);
+        std::string actual = (res.success ? "success " : "failure ")
+            + res.contentType + " " + res.body + "\n";
+        ExpectEqual("network/file-url/local-html",
+            actual,
+            "success text/html <h1>local</h1>\n",
+            result);
+    }
+
+    {
+        std::string actual;
+        actual += vertex::downloads::SuggestFilename(
+            "https://example.test/files/report%2026.pdf",
+            "attachment; filename=\"invoice?.pdf\"",
+            "") + "\n";
+        actual += vertex::downloads::SuggestFilename(
+            "https://example.test/files/archive.tar.gz?download=1",
+            "",
+            "my:name.zip") + "\n";
+        actual += vertex::downloads::SuggestFilename(
+            "data:text/plain,hello",
+            "",
+            "") + "\n";
+        actual += vertex::downloads::MakeUniquePathForTests(
+            "C:/Downloads",
+            "file.txt",
+            { "C:/Downloads/file.txt", "C:/Downloads/file (1).txt" }) + "\n";
+        ExpectEqual("network/downloads/filename-selection-and-safe-paths",
+            actual,
+            "invoice_.pdf\n"
+            "my_name.zip\n"
+            "download.txt\n"
+            "C:/Downloads/file (2).txt\n",
+            result);
     }
 
     {

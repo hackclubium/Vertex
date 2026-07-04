@@ -606,7 +606,8 @@ void Renderer::PaintLines(const LayoutBox& box, float scrollY, float topInset, b
                 lay->Release();
             }
             if (!frag.src->href.empty())
-                m_hits.push_back({ frag.x, sy, frag.w, frag.h, frag.src->href });
+                m_hits.push_back({ frag.x, sy, frag.w, frag.h,
+                    frag.src->href, frag.src->download, frag.src->downloadName });
         }
     }
 }
@@ -636,7 +637,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         float hh = box.borderBoxH();
         bool hitVisible = hy + hh >= topInset && hy <= (float)m_height;
         if (hitVisible && hw > 0 && hh > 0)
-            m_hits.push_back({ hx, hy, hw, hh, box.href });
+            m_hits.push_back({ hx, hy, hw, hh, box.href, box.download, box.downloadName });
     }
 
     // CSS transform: apply a D2D matrix around this box's center.

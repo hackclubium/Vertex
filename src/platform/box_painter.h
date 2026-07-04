@@ -364,7 +364,7 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
             }
             // Register a hit region so clicks can focus this input.
             if (ps.hits) {
-                ps.hits->push_back({ cx, cy, cw, ch, "__input__" });
+                ps.hits->push_back({ cx, cy, cw, ch, "__input__", false, "" });
             }
         }
     }
@@ -413,7 +413,8 @@ inline void PaintLines(PaintState& ps, const LayoutBox& box) {
                 ps.r->FillRect(frag.x, strikeY, frag.w, thick, color);
             }
             if (ps.hits && !frag.src->href.empty())
-                ps.hits->push_back({ frag.x, sy, frag.w, frag.h, frag.src->href });
+                ps.hits->push_back({ frag.x, sy, frag.w, frag.h,
+                    frag.src->href, frag.src->download, frag.src->downloadName });
         }
     }
 }
@@ -440,7 +441,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         float hh = box.borderBoxH();
         bool hitVisible = hy + hh >= ps.topInset && hy <= (float)ps.r->Height();
         if (hitVisible && hw > 0 && hh > 0)
-            ps.hits->push_back({ hx, hy, hw, hh, box.href });
+            ps.hits->push_back({ hx, hy, hw, hh, box.href, box.download, box.downloadName });
     }
 
     // CSS transform: for the cross-platform painter we apply translate by

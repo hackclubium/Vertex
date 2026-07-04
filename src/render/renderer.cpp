@@ -886,11 +886,15 @@ std::string Renderer::HitTest(float x, float y) const {
          && y >= it->y && y <= it->y + it->h) {
             m_lastHitRegion = *it;
             m_lastHitHref = UnwrapBingRedirect(it->href);
+            m_lastHitDownload = it->download;
+            m_lastHitDownloadName = it->downloadName;
             m_lastHitValid = true;
             return m_lastHitHref;
         }
     m_lastHitValid = false;
     m_lastHitHref.clear();
+    m_lastHitDownload = false;
+    m_lastHitDownloadName.clear();
     return {};
 }
 

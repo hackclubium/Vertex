@@ -106,6 +106,8 @@ struct LayoutBox {
 
     // Link / interaction data resolved at build time.
     std::string  href;                   // nearest <a href> (for hit testing)
+    bool         download = false;        // nearest <a download>
+    std::string  downloadName;
 
     // ── geometry helpers ─────────────────────────────────────────────────────
     float borderBoxW() const { return borderLeft + padLeft + contentW + padRight + borderRight; }

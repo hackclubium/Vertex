@@ -337,6 +337,15 @@ void BuildChildren(const Node* node, const ComputedStyle& style, const BuildCtx&
             tb->style = style;        // carries font/color/etc.
             tb->text = outw;
             tb->href = href;
+            if (node) {
+                for (const Node* a = node->parent; a; a = a->parent) {
+                    if (a->tagName == "a" && a->attrs.find("download") != a->attrs.end()) {
+                        tb->download = true;
+                        tb->downloadName = a->attr("download");
+                        break;
+                    }
+                }
+            }
             out.push_back(std::move(tb));
         } else if (child->type == NodeType::Element) {
             ComputedStyle childStyle = bc.sheet ? bc.sheet->resolve(child.get()) : ComputedStyle{};
@@ -354,7 +363,7 @@ void BuildChildren(const Node* node, const ComputedStyle& style, const BuildCtx&
                 BuildChildren(child.get(), childStyle, bc, childHref, out);
                 continue;
             }
-            auto cb = BuildBox(child.get(), style, bc, href, &childStyle);
+            auto cb = BuildBox(child.get(), style, bc, childHref, &childStyle);
             if (cb) out.push_back(std::move(cb));
         }
     }
@@ -524,8 +533,22 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     if (disp == 3) return nullptr;
 
     std::string href = inheritedHref;
+    bool download = false;
+    std::string downloadName;
     if (tag == "a" && !node->attr("href").empty())
         href = ResolveUrlAgainstBase(node->attr("href"), bc.baseUrl);
+    if (tag == "a" && node->attrs.find("download") != node->attrs.end()) {
+        download = true;
+        downloadName = node->attr("download");
+    } else {
+        for (const Node* a = node->parent; a; a = a->parent) {
+            if (a->tagName == "a" && a->attrs.find("download") != a->attrs.end()) {
+                download = true;
+                downloadName = a->attr("download");
+                break;
+            }
+        }
+    }
 
     std::string imgUrl;
     bool replaced = TagIsReplacedImage(node, bc.baseUrl, imgUrl);
@@ -536,6 +559,8 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     box->node = node;
     box->style = s;
     box->href = href;
+    box->download = download;
+    box->downloadName = downloadName;
 
     if (tag == "br") {
         box->kind = BoxKind::Break;

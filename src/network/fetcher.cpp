@@ -2,6 +2,8 @@
 #include <curl/curl.h>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 
 // ── helpers (data-URL decoding — platform-independent, kept as-is) ───────────
@@ -68,6 +70,51 @@ static bool StartsWithNoCase(const std::string& value, const char* prefix) {
     return true;
 }
 
+static std::string PercentDecodeNoPlus(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] == '%' && i + 2 < input.size()) {
+            int hi = HexValue(input[i + 1]);
+            int lo = HexValue(input[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out += (char)((hi << 4) | lo);
+                i += 2;
+                continue;
+            }
+        }
+        out += input[i];
+    }
+    return out;
+}
+
+static std::string FileContentTypeForPath(const std::filesystem::path& path) {
+    std::string ext = path.extension().string();
+    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".html" || ext == ".htm") return "text/html";
+    if (ext == ".css") return "text/css";
+    if (ext == ".js" || ext == ".mjs") return "text/javascript";
+    if (ext == ".svg") return "image/svg+xml";
+    if (ext == ".png") return "image/png";
+    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".gif") return "image/gif";
+    if (ext == ".txt" || ext == ".log") return "text/plain";
+    return "application/octet-stream";
+}
+
+static std::filesystem::path FileUrlToPath(const std::string& url) {
+    std::string path = PercentDecodeNoPlus(url.substr(7));
+    if (path.rfind("localhost/", 0) == 0)
+        path = path.substr(9);
+    while (path.size() >= 2 && path[0] == '/' && path[1] == '/')
+        path.erase(path.begin());
+#ifdef _WIN32
+    if (path.size() >= 3 && path[0] == '/' && std::isalpha((unsigned char)path[1]) && path[2] == ':')
+        path.erase(path.begin());
+#endif
+    return std::filesystem::u8path(path);
+}
+
 // ── libcurl global init (once, thread-safe) ──────────────────────────────────
 
 static void EnsureCurlInit() {
@@ -100,6 +147,7 @@ static size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata
 
 struct HeaderCtx {
     std::string* contentType;
+    std::string* contentDisposition;
     std::string requestUrl;
 };
 
@@ -116,6 +164,13 @@ static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* use
         if (semi != std::string::npos) val = val.substr(0, semi);
         while (!val.empty() && val.back() == ' ') val.pop_back();
         *ctx->contentType = val;
+    }
+    if (StartsWithNoCase(line, "content-disposition:")) {
+        size_t colon = line.find(':');
+        std::string val = line.substr(colon + 1);
+        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(val.begin());
+        while (!val.empty() && (val.back() == '\r' || val.back() == '\n')) val.pop_back();
+        *ctx->contentDisposition = val;
     }
     if (StartsWithNoCase(line, "set-cookie:")) {
         size_t colon = line.find(':');
@@ -165,6 +220,37 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
         return r;
     }
 
+    if (StartsWithNoCase(url, "file://")) {
+        try {
+            std::filesystem::path path = FileUrlToPath(url);
+            if (std::filesystem::is_directory(path)) {
+                r.error = "File URL points to a directory";
+                return r;
+            }
+            std::ifstream in(path, std::ios::binary);
+            if (!in) {
+                r.error = "Could not open local file";
+                return r;
+            }
+            r.body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            if (r.body.size() > maxResponseBytes) {
+                r.body.clear();
+                r.error = "Response exceeds size limit";
+                return r;
+            }
+            r.contentType = FileContentTypeForPath(path);
+            r.finalUrl = url;
+            r.success = true;
+            return r;
+        } catch (const std::exception& e) {
+            r.error = e.what();
+            return r;
+        } catch (...) {
+            r.error = "Could not read local file";
+            return r;
+        }
+    }
+
     // HTTP(S) via libcurl.
     EnsureCurlInit();
     CURL* curl = curl_easy_init();
@@ -182,7 +268,7 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &wctx);
-    HeaderCtx hctx{&r.contentType, url};
+    HeaderCtx hctx{&r.contentType, &r.contentDisposition, url};
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx);
     // Send cookies from the jar.

@@ -17,6 +17,7 @@
 #include "platform/chrome.h"
 #include "platform/chrome_theme.h"
 #include "platform/box_painter.h"
+#include "platform/downloads.h"
 #include "js/engine.h"
 #include "js/dom_bridge.h"
 
@@ -86,6 +87,7 @@ static HBRUSH   g_windowBrush = nullptr;
 static HICON    g_appIconLarge = nullptr;
 static HICON    g_appIconSmall = nullptr;
 static int      g_appIconResourceId = 0;
+static std::vector<vertex::downloads::DownloadRecord> g_downloads;
 
 static constexpr COLORREF ToColorRef(vertex::chrome_theme::Rgb c) {
     return RGB(c.r, c.g, c.b);
@@ -214,6 +216,48 @@ static void SetStatus(const std::string& s) {
     if (effective == lastStatus) return;
     lastStatus = effective;
     SetWindowTextW(g_hwndStatus, ToWide(effective).c_str());
+}
+
+static std::string HtmlEscape(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+
+static std::string DownloadsPageHtml() {
+    std::string html =
+        "<html><head><title>Downloads</title><style>"
+        "body{font:16px system-ui,sans-serif;background:#f7f2e8;color:#151515;margin:0;padding:36px;}"
+        "main{max-width:860px;margin:auto;}h1{font-size:32px;margin:0 0 20px;}"
+        ".item{background:white;border:1px solid #ded6c8;margin:10px 0;padding:14px 16px;}"
+        ".name{font-weight:700;color:#245bd8}.meta{color:#555;margin-top:6px}.bad{color:#a12626}"
+        "</style></head><body><main><h1>Downloads</h1>";
+    if (g_downloads.empty()) {
+        html += "<p>No downloads yet.</p>";
+    } else {
+        for (auto it = g_downloads.rbegin(); it != g_downloads.rend(); ++it) {
+            html += "<div class=\"item\"><div class=\"name\">" + HtmlEscape(it->filename) + "</div>";
+            html += "<div class=\"meta\">" + HtmlEscape(it->path) + "</div>";
+            if (it->success) {
+                html += "<div class=\"meta\">" + std::to_string(it->bytes) + " bytes from "
+                    + HtmlEscape(it->url) + "</div>";
+            } else {
+                html += "<div class=\"bad\">" + HtmlEscape(it->error) + "</div>";
+            }
+            html += "</div>";
+        }
+    }
+    html += "</main></body></html>";
+    return html;
 }
 
 static void UpdatePerfStatusMaybe() {
@@ -409,6 +453,41 @@ static void Navigate(const std::string& rawUrl, bool push = true) {
     Navigate(g_activeTab, rawUrl, push);
 }
 
+static void ShowDownloadsPage(bool pushHistory = true) {
+    Tab& tab = CurTab();
+    const std::string url = "vertex://downloads";
+    tab.page.reset(new Page{ url, ParseHtml(DownloadsPageHtml()), {} });
+    tab.url = url;
+    tab.title = "Downloads";
+    tab.loading = false;
+    tab.scrollY = 0.f;
+    tab.pendingFragment.clear();
+    tab.fragmentScrollPending = false;
+    if (pushHistory) TabPushHistory(tab, url);
+    EnableWindow(g_hwndStop, FALSE);
+    EnableWindow(g_hwndRefr, TRUE);
+    SetUrlBar(url);
+    UpdateTitle();
+    g_renderer.InvalidateLayout();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static void StartDownload(const std::string& url, const std::string& downloadName = "") {
+    if (url.empty()) return;
+    SetStatus("Downloading " + url);
+    SetTimer(g_hwnd, 1, 16, NULL);
+    FetchResourceAsync(url, 256 * 1024 * 1024, ResourceKind::Other,
+        [url, downloadName](FetchResult res) {
+            auto record = vertex::downloads::SaveFetchedBody(url, res, downloadName);
+            g_downloads.push_back(record);
+            SetStatus(record.success ? ("Saved " + record.filename)
+                                     : ("Download failed: " + record.error));
+            if (CurTab().url == "vertex://downloads")
+                ShowDownloadsPage(false);
+        });
+}
+
 static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     if (tabIdx < 0 || tabIdx >= (int)g_tabs.size()) return;
     Tab& tab = g_tabs[tabIdx];
@@ -471,6 +550,11 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
             UpdateScrollbar();
             InvalidateRect(g_hwnd, NULL, FALSE);
         }
+        return;
+    }
+
+    if (url == "vertex://downloads") {
+        ShowDownloadsPage(pushHistory);
         return;
     }
 
@@ -1257,7 +1341,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_formState.blur();
             }
             std::string href = g_renderer.HitTest((float)px, (float)py);
-            if (!href.empty()) Navigate(href);
+            if (!href.empty()) {
+                if (g_renderer.LastHitWasDownload())
+                    StartDownload(href, g_renderer.LastHitDownloadName());
+                else
+                    Navigate(href);
+            }
         }
         return 0;
     }
@@ -1272,6 +1361,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 AppendMenuW(menu, MF_STRING, 9001, L"Open Link");
                 AppendMenuW(menu, MF_STRING, 9002, L"Open Link in New Tab");
                 AppendMenuW(menu, MF_STRING, 9003, L"Copy Link");
+                AppendMenuW(menu, MF_STRING, 9004, L"Save Link As");
                 AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
             }
             AppendMenuW(menu, MF_STRING, 9010, L"Back");
@@ -1297,6 +1387,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                     break;
                 }
+                case 9004: StartDownload(href); break;
                 case 9010: GoBack(); break;
                 case 9011: GoForward(); break;
                 case 9012: if (!CurTab().loading) Navigate(CurTab().url, false); break;
