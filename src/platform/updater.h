@@ -1,19 +1,12 @@
 #pragma once
 //
-// updater.h — auto-update check + download for Vertex.
+// updater.h - auto-update check + download for Vertex.
 //
-// On startup:
-//   1. applyPendingUpdate() swaps a previously-downloaded update into place.
-//   2. checkForUpdateAsync() runs in a background thread:
-//      - Fetches the latest release tag from the GitHub API.
-//      - If newer than VERTEX_VERSION, downloads the platform binary and saves
-//        it next to the running executable as "Vertex-update" (+ extension).
-//      - Sets updateAvailable / updateVersion so the shell can show a banner.
-//      - The update is applied on the NEXT launch by applyPendingUpdate().
-//
-// On Windows, a running .exe can be renamed (but not overwritten), so:
-//   startup: rename Vertex-update.exe -> Vertex.exe (after renaming running exe out of the way)
-//   On Linux/macOS the binary isn't locked, so a simple rename works.
+// Vertex checks GitHub releases in the background. When a newer release exists,
+// it downloads the platform portable binary next to the running executable as
+// "Vertex-update" plus the platform extension. Pressing F12 launches the small
+// VertexUpdater helper, exits Vertex, lets the helper replace the executable,
+// and then restarts Vertex.
 //
 
 #include "platform/version.h"
@@ -25,6 +18,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <tuple>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -40,12 +35,8 @@ struct Updater {
     std::string statusMessage;
     std::function<void()> onStatusChanged;
 
-    // Apply the update and relaunch in one step. Call when the user clicks
-    // "restart to update" or from a menu action. Returns false if no update
-    // is staged or the swap fails.
     static bool restartToUpdate(const std::string& exePath) {
         std::string updatePath = pendingPath(exePath);
-        std::string oldPath = exePath + ".old";
 
         FILE* f = fopen(updatePath.c_str(), "rb");
         if (!f) return false;
@@ -54,75 +45,69 @@ struct Updater {
         fclose(f);
         if (sz < 500 * 1024) { std::remove(updatePath.c_str()); return false; }
 
-        // Clean up any previous .old file.
-        std::remove(oldPath.c_str());
+        std::string helper = helperPath(exePath);
+        if (!fileExists(helper)) return false;
 
 #ifdef _WIN32
-        // Rename running exe → .old (Windows allows renaming a running exe).
-        if (!MoveFileA(exePath.c_str(), oldPath.c_str())) return false;
-        // Move update → original name.
-        if (!MoveFileA(updatePath.c_str(), exePath.c_str())) {
-            MoveFileA(oldPath.c_str(), exePath.c_str()); // rollback
-            return false;
-        }
-        // Launch the new exe and exit.
-        STARTUPINFOA si = { sizeof(si) };
+        std::string command =
+            quoteArg(helper)
+            + " --pid " + std::to_string(GetCurrentProcessId())
+            + " --target " + quoteArg(exePath)
+            + " --update " + quoteArg(updatePath)
+            + " --restart";
+        std::vector<char> mutableCommand(command.begin(), command.end());
+        mutableCommand.push_back('\0');
+
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
-        if (CreateProcessA(exePath.c_str(), NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
+        if (!CreateProcessA(helper.c_str(), mutableCommand.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+            return false;
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
         ExitProcess(0);
 #else
-        std::rename(updatePath.c_str(), exePath.c_str());
-        // Fork and exec the new binary.
-        if (fork() == 0) {
-            execl(exePath.c_str(), exePath.c_str(), nullptr);
-            _exit(1);
-        }
+        std::string pid = std::to_string(getpid());
+        if (fork() == 0)
+            execl(helper.c_str(), helper.c_str(),
+                "--pid", pid.c_str(),
+                "--target", exePath.c_str(),
+                "--update", updatePath.c_str(),
+                "--restart",
+                nullptr);
         _exit(0);
 #endif
-        return true; // unreachable
+        return true;
     }
 
-    // Call on startup BEFORE showing the window. Swaps a staged update binary
-    // into place (from a previous session's download).
     static void applyPendingUpdate(const std::string& exePath) {
         std::string updatePath = pendingPath(exePath);
         std::string oldPath = exePath + ".old";
 
-        // Clean up old backup from a previous update.
         std::remove(oldPath.c_str());
 
         FILE* f = fopen(updatePath.c_str(), "rb");
-        if (!f) return;  // no pending update
+        if (!f) return;
         fseek(f, 0, SEEK_END);
         long updateSize = ftell(f);
         fclose(f);
-        // Sanity: update must be at least 500 KB to be a real binary.
         if (updateSize < 500 * 1024) {
             std::remove(updatePath.c_str());
             return;
         }
 
 #ifdef _WIN32
-        // Windows: rename running exe out of the way, move update in.
         if (MoveFileA(exePath.c_str(), oldPath.c_str())) {
-            if (!MoveFileA(updatePath.c_str(), exePath.c_str())) {
-                // Rollback if the move fails.
+            if (!MoveFileA(updatePath.c_str(), exePath.c_str()))
                 MoveFileA(oldPath.c_str(), exePath.c_str());
-            }
         }
 #else
-        // Linux/macOS: just rename over (binary isn't locked).
         std::rename(updatePath.c_str(), exePath.c_str());
 #endif
     }
 
-    // Run in a background thread. Checks GitHub for a newer release and
-    // downloads the platform binary if one exists.
     void checkForUpdateAsync(const std::string& exePath) {
-        if (checking.exchange(true)) return;  // already running
+        if (checking.exchange(true)) return;
         std::string exe = exePath;
         std::thread([this, exe]() {
             checkAndDownload(exe);
@@ -145,7 +130,6 @@ private:
             return;
         }
 
-        // Minimal JSON parsing: find "tag_name": "vX.Y.Z"
         std::string tag;
         {
             size_t pos = res.body.find("\"tag_name\"");
@@ -156,7 +140,6 @@ private:
             tag = res.body.substr(q1 + 1, q2 - q1 - 1);
         }
 
-        // Strip leading 'v' for comparison.
         std::string remote = tag;
         if (!remote.empty() && remote[0] == 'v') remote = remote.substr(1);
         std::string local = VERTEX_VERSION;
@@ -166,17 +149,15 @@ private:
             return;
         }
 
-        // Find the download URL for the current platform's asset.
         std::string assetName;
 #ifdef _WIN32
-        assetName = "Vertex-windows.exe";
+        assetName = "Vertex-windows-portable.exe";
 #elif defined(__APPLE__)
-        assetName = "Vertex-macos.zip";
+        assetName = "Vertex-macos-portable";
 #else
-        assetName = "Vertex-linux";
+        assetName = "Vertex-linux-portable";
 #endif
 
-        // Find the browser_download_url that contains our asset name.
         std::string downloadUrl;
         {
             std::string needle = "\"browser_download_url\"";
@@ -206,7 +187,6 @@ private:
             return;
         }
 
-        // Write to the staging path.
         std::string updatePath = pendingPath(exePath);
         {
             std::ofstream out(updatePath, std::ios::binary);
@@ -215,18 +195,16 @@ private:
         }
 
 #ifndef _WIN32
-        // Make the downloaded binary executable on Linux/macOS.
         chmod(updatePath.c_str(), 0755);
 #endif
 
         updateVersion = tag;
         updateAvailable = true;
-        setStatus("Vertex " + tag + " ready. Press F12 to update now.");
+        setStatus("Vertex " + tag + " ready. Press F12 to install.");
     }
 
     static std::string pendingPath(const std::string& exePath) {
 #ifdef _WIN32
-        // Replace .exe with -update.exe
         size_t dot = exePath.rfind('.');
         if (dot != std::string::npos)
             return exePath.substr(0, dot) + "-update" + exePath.substr(dot);
@@ -236,7 +214,33 @@ private:
 #endif
     }
 
-    // Simple semver comparison: returns true if remote > local.
+    static bool fileExists(const std::string& path) {
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) return false;
+        fclose(f);
+        return true;
+    }
+
+    static std::string helperPath(const std::string& exePath) {
+        size_t slash = exePath.find_last_of("/\\");
+        std::string dir = slash == std::string::npos ? std::string() : exePath.substr(0, slash + 1);
+#ifdef _WIN32
+        return dir + "VertexUpdater.exe";
+#else
+        return dir + "VertexUpdater";
+#endif
+    }
+
+    static std::string quoteArg(const std::string& arg) {
+        std::string out = "\"";
+        for (char c : arg) {
+            if (c == '"' || c == '\\') out.push_back('\\');
+            out.push_back(c);
+        }
+        out.push_back('"');
+        return out;
+    }
+
     static bool isNewer(const std::string& remote, const std::string& local) {
         auto parse = [](const std::string& s) -> std::tuple<int,int,int> {
             int major = 0, minor = 0, patch = 0;

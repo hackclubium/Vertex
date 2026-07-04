@@ -87,6 +87,27 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string cmake = ReadTextFile(root / "CMakeLists.txt");
+        std::string workflow = ReadTextFile(root / ".github/workflows/release.yml");
+        std::string updater = ReadTextFile(root / "src/platform/updater.h");
+        const bool helperUpdater =
+            cmake.find("add_executable(VertexUpdater") != std::string::npos
+            && cmake.find("src/platform/updater_helper.cpp") != std::string::npos
+            && cmake.find("install(TARGETS VertexUpdater") != std::string::npos
+            && workflow.find("vertex-windows-portable") != std::string::npos
+            && workflow.find("Vertex-windows-portable.exe") != std::string::npos
+            && updater.find("Vertex-windows-portable.exe") != std::string::npos
+            && updater.find("VertexUpdater") != std::string::npos
+            && updater.find("--update") != std::string::npos
+            && updater.find("--target") != std::string::npos;
+        ExpectEqual("paint/updater-uses-helper-and-portable-assets",
+            helperUpdater ? "helper-updater\n" : "direct-swap\n",
+            "helper-updater\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         const bool taskbarIdentity =
             mainWin.find("SetCurrentProcessExplicitAppUserModelID") != std::string::npos

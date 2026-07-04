@@ -62,6 +62,13 @@ jobs:
           name: vertex-windows-installer
           path: Vertex-*.exe
 
+      - name: Upload portable app (Windows)
+        if: matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vertex-windows-portable
+          path: build/Release/Vertex.exe
+
       - name: Upload artifact (macOS)
         if: matrix.name == 'macos'
         uses: actions/upload-artifact@v4
@@ -69,12 +76,26 @@ jobs:
           name: vertex-macos-installer
           path: Vertex-*.dmg
 
+      - name: Upload portable app (macOS)
+        if: matrix.name == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vertex-macos-portable
+          path: build/Vertex.app/Contents/MacOS/Vertex
+
       - name: Upload artifact (Linux)
         if: matrix.name == 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: vertex-linux-installer
           path: Vertex-*.tar.gz
+
+      - name: Upload portable app (Linux)
+        if: matrix.name == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vertex-linux-portable
+          path: build/Vertex
 
   release:
     needs: build
@@ -91,6 +112,9 @@ jobs:
           mv vertex-windows-installer/Vertex-*.exe Vertex-windows-installer.exe || true
           mv vertex-macos-installer/Vertex-*.dmg Vertex-macos-installer.dmg || true
           mv vertex-linux-installer/Vertex-*.tar.gz Vertex-linux-installer.tar.gz || true
+          mv vertex-windows-portable/Vertex.exe Vertex-windows-portable.exe || true
+          mv vertex-macos-portable/Vertex Vertex-macos-portable || true
+          mv vertex-linux-portable/Vertex Vertex-linux-portable || true
 
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 && \
             gh release upload "$tag" Vertex-* --repo "$GITHUB_REPOSITORY" --clobber || \

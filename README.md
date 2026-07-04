@@ -39,7 +39,7 @@ Vertex is already a usable experimental browser shell:
 | Platforms | Windows, macOS, and Linux native shells over one shared engine |
 | Pages | Loads real HTTP/HTTPS pages, images, CSS, scripts, SVGs, and local `vertex://` pages |
 | UI | Tabs, address bar, profile-backed history/bookmarks/downloads, reload/stop/home, zoom, find-in-page, status text |
-| Updates | GitHub release checking and background download, applied with `F12` |
+| Updates | GitHub release checking, background portable download, and helper-assisted install with `F12` |
 | Performance | Cached resources, cached stylesheets, cached selector parsing, dirty layout paths, and hover fast paths |
 | Profile | Per-user storage for settings, history, bookmarks, downloads, cookies, local storage, and session restore |
 | Testing | Dedicated HTML, CSS, layout, paint, JS, network, and layout-engine suites |
@@ -117,8 +117,17 @@ Release assets are produced by GitHub Actions whenever a tag is pushed:
 | macOS | `Vertex-macos-installer.dmg` |
 | Linux | `Vertex-linux-installer.tar.gz` |
 
-Vertex also checks for newer GitHub releases on startup. When an update is ready,
-press `F12` to apply it.
+Releases also include updater assets:
+
+| Platform | Updater Asset |
+|---|---|
+| Windows | `Vertex-windows-portable.exe` |
+| macOS | `Vertex-macos-portable` |
+| Linux | `Vertex-linux-portable` |
+
+Vertex checks for newer GitHub releases on startup. When an update is ready,
+press `F12`; Vertex launches `VertexUpdater`, exits, swaps in the portable
+binary, and restarts.
 
 ## Profile Data
 
@@ -182,7 +191,7 @@ cmake --build build
 | `Ctrl+G` / `Ctrl+Shift+G` | Next / previous match |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Alt+Left` / `Alt+Right` | Back / forward |
-| `F12` | Apply a downloaded update |
+| `F12` | Install a downloaded update |
 
 ## Test The Engine
 
