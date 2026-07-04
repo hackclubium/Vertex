@@ -253,6 +253,13 @@ if (WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
     set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "Vertex.exe")
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateDirectory '$SMPROGRAMS\\\\Vertex'\nCreateShortCut '$SMPROGRAMS\\\\Vertex\\\\Vertex.lnk' '$INSTDIR\\\\Vertex.exe'"
+    )
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete '$SMPROGRAMS\\\\Vertex\\\\Vertex.lnk'\nRMDir '$SMPROGRAMS\\\\Vertex'"
+    )
 elseif (APPLE)
     set(CPACK_GENERATOR "DragNDrop")
 else()

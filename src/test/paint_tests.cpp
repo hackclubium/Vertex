@@ -74,6 +74,9 @@ TestResult RunPaintTests() {
         const bool packagesInstallers =
             cmake.find("include(CPack)") != std::string::npos
             && workflow.find("cpack -G NSIS") != std::string::npos
+            && cmake.find("CreateShortCut") != std::string::npos
+            && cmake.find("$SMPROGRAMS") != std::string::npos
+            && cmake.find("Vertex.lnk") != std::string::npos
             && workflow.find("Vertex-windows.exe") == std::string::npos
             && workflow.find("Vertex-windows-installer") != std::string::npos;
         ExpectEqual("paint/release-workflow-packages-installers",
