@@ -1,8 +1,10 @@
 #include <windows.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "shell32.lib")
 
 #include "network/resource_cache.h"
 #include "network/url.h"
@@ -157,6 +159,8 @@ static void ApplyThemedWindowIcon(HWND hwnd) {
         SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g_appIconLarge);
     if (g_appIconSmall)
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g_appIconSmall);
+    if (g_appIconSmall)
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL2, (LPARAM)g_appIconSmall);
 }
 
 constexpr int TAB_H     = vertex::chrome_theme::TabHeight;
@@ -1691,6 +1695,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // ─── entry point ─────────────────────────────────────────────────────────────
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    SetCurrentProcessExplicitAppUserModelID(L"hackclubium.Vertex");
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     g_profilePaths = vertex::profile::DefaultPaths();

@@ -88,6 +88,19 @@ TestResult RunPaintTests() {
     {
         auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        const bool taskbarIdentity =
+            mainWin.find("SetCurrentProcessExplicitAppUserModelID") != std::string::npos
+            && mainWin.find("hackclubium.Vertex") != std::string::npos
+            && mainWin.find("ICON_SMALL2") != std::string::npos;
+        ExpectEqual("paint/windows-taskbar-icon-uses-themed-window-identity",
+            taskbarIdentity ? "stable-taskbar-icon\n" : "shortcut-fallback\n",
+            "stable-taskbar-icon\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
         std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
         std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
         std::string cmake = ReadTextFile(root / "CMakeLists.txt");
