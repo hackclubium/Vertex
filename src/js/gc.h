@@ -21,11 +21,15 @@ public:
         // Runaway-script guard: cheap periodic wall-clock check.
         if (g_jsDeadlineMs && (++m_allocCheck & 0x3FFF) == 0 && JsNowMs() > g_jsDeadlineMs)
             throw std::runtime_error("Script execution exceeded time limit");
+        // Collect *before* creating the new cell, never after: a cell created
+        // after the check isn't reachable from any root yet (the caller
+        // hasn't stored the returned pointer anywhere), so collecting after
+        // linking it in would immediately free it out from under the caller.
+        if (m_allocCount >= m_gcThreshold) collect();
         auto* p = new T(std::forward<Args>(args)...);
         p->gcNext = m_head;
         m_head    = p;
         m_allocCount++;
-        if (m_allocCount >= m_gcThreshold) collect();
         return p;
     }
 

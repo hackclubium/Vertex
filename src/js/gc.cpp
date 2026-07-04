@@ -310,9 +310,6 @@ void GC::collect() {
     for (auto& r : m_tempRoots)
         for (size_t i = 0; i < r.count; i++) markValue(r.base[i]);
 
-    // Mark string interning table entries (if they're also in the heap via m_head)
-    for (auto& [k, s] : m_strings) markString(s);
-
     // Sweep phase
     GcCell** pp = &m_head;
     while (*pp) {

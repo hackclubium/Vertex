@@ -22,7 +22,7 @@ struct CallFrame {
 class VM {
 public:
     explicit VM(GC& gc);
-    ~VM() = default;
+    ~VM();
 
     // Load a compiled program and execute it.
     JsValue execute(BytecodeFunction* fn, JsValue thisVal = JsValue::undefined());
@@ -107,6 +107,11 @@ public:
 private:
     GC&      m_gc;
     JsObject* m_globals;
+    // Keeps m_globals (and everything reachable from it: console, navigator,
+    // document, prototypes, ...) alive across collections. GET_GLOBAL/
+    // SET_GLOBAL read/write m_globals directly as a raw pointer, never via a
+    // register, so without this the GC has no way to see it's reachable.
+    JsValue  m_globalsRoot;
 
     // Value stack: all frames' registers live here.
     std::vector<JsValue> m_stack;

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <deque>
+#include <list>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -14,8 +15,13 @@
 
 namespace {
 
+// Cap total cached response bytes so long browsing sessions don't grow the
+// cache without bound. Least-recently-used entries are evicted first.
+constexpr size_t kMaxCacheBytes = 64 * 1024 * 1024;
+
 struct CachedResource {
     FetchResult result;
+    std::list<std::string>::iterator lruIt;
 };
 
 struct PendingCompletion {
@@ -32,7 +38,30 @@ struct AsyncRequest {
 
 std::mutex g_cacheMutex;
 std::unordered_map<std::string, CachedResource> g_cache;
+std::list<std::string> g_lru; // front = most recently used
+size_t g_cacheBytes = 0;
 ResourceCacheStats g_stats;
+
+// Move an entry to the front of the LRU list (most recently used).
+// Caller holds g_cacheMutex.
+void TouchLocked(CachedResource& entry) {
+    g_lru.splice(g_lru.begin(), g_lru, entry.lruIt);
+}
+
+// Evict least-recently-used entries until under budget. Caller holds
+// g_cacheMutex. Always keeps at least the most recently touched entry, even
+// if it alone exceeds the budget, so a single large resource can't thrash.
+void EvictIfNeededLocked() {
+    while (g_cacheBytes > kMaxCacheBytes && g_lru.size() > 1) {
+        const std::string& lruUrl = g_lru.back();
+        auto it = g_cache.find(lruUrl);
+        if (it != g_cache.end()) {
+            g_cacheBytes -= it->second.result.body.size();
+            g_cache.erase(it);
+        }
+        g_lru.pop_back();
+    }
+}
 
 std::mutex g_asyncMutex;
 std::condition_variable g_workerCv;
@@ -150,6 +179,7 @@ FetchResult ResourceCache::fetch(const std::string& url,
         auto it = g_cache.find(url);
         if (it != g_cache.end()) {
             ++g_stats.cacheHits;
+            TouchLocked(it->second);
             if (it->second.result.body.size() > maxResponseBytes)
                 return TooLargeFromCache(url, maxResponseBytes);
             return it->second.result;
@@ -167,7 +197,16 @@ FetchResult ResourceCache::fetch(const std::string& url,
     g_stats.fetchMs += elapsedMs;
     if (result.success) {
         g_stats.bytesFetched += static_cast<uint64_t>(result.body.size());
-        g_cache[url] = CachedResource{ result };
+        auto existing = g_cache.find(url);
+        if (existing != g_cache.end()) {
+            g_cacheBytes -= existing->second.result.body.size();
+            g_lru.erase(existing->second.lruIt);
+            g_cache.erase(existing);
+        }
+        g_lru.push_front(url);
+        g_cacheBytes += result.body.size();
+        g_cache[url] = CachedResource{ result, g_lru.begin() };
+        EvictIfNeededLocked();
     }
     return result;
 }
@@ -181,6 +220,8 @@ void ResourceCache::clearForTests() {
     {
         std::lock_guard<std::mutex> lock(g_cacheMutex);
         g_cache.clear();
+        g_lru.clear();
+        g_cacheBytes = 0;
         g_stats = ResourceCacheStats{};
     }
     {

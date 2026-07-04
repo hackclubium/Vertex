@@ -16,23 +16,30 @@ static constexpr long long kScriptBudgetMs = 4000;
 
 VM::VM(GC& gc) : m_gc(gc) {
     m_globals = m_gc.newObject(ObjKind::Plain);
+    m_globalsRoot = JsValue::object(m_globals);
+    m_gc.addRoot(&m_globalsRoot);
     m_stack.reserve(1024);
     m_frames.reserve(256);
+}
+
+VM::~VM() {
+    m_gc.removeRoot(&m_globalsRoot);
 }
 
 // ── Constant resolution ────────────────────────────────────────────────────────
 
 JsValue VM::resolveConst(BytecodeFunction* fn, uint16_t idx) {
     if (idx >= fn->consts.size()) return JsValue::undefined();
-    JsValue& c = fn->consts[idx];
     // String constants are stored as null placeholders with a parallel marker,
     // so an actual null constant and an empty string literal stay distinct.
-    if (c.isNull() && idx < fn->constStrings.size()
-        && idx < fn->constIsString.size() && fn->constIsString[idx]) {
-        auto* s = m_gc.internString(fn->constStrings[idx]);
-        c = JsValue::string(s); // cache in-place
-    }
-    return c;
+    // Re-intern on every load instead of caching the resolved JsString* back
+    // into consts[idx]: BytecodeFunction::consts outlives any single call and
+    // is not a GC root, so a cached pointer would dangle once the collector
+    // actually frees unreachable strings.
+    if (idx < fn->constStrings.size()
+        && idx < fn->constIsString.size() && fn->constIsString[idx])
+        return JsValue::string(m_gc.internString(fn->constStrings[idx]));
+    return fn->consts[idx];
 }
 
 // ── Global access ─────────────────────────────────────────────────────────────
