@@ -729,10 +729,15 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
     D2D1_COLOR_F bgF = (pageBg.valid && pageBg.a > 0.001f)
         ? ToD2D(pageBg)
         : D2D1::ColorF(1.f, 1.f, 1.f);
-    if (repaintChrome) {
-        m_rt->Clear(bgF);
-    } else {
-        const float fillTop = std::max(topInset, m_paintDirtyTop);
+    {
+        // Only fill the region actually being repainted this frame. A full
+        // Clear() here used to wipe the whole render target to the page
+        // background whenever repaintChrome was set (e.g. the URL bar frame
+        // being invalidated on focus/click), even though the dirty rect —
+        // and therefore the content repaint below — was confined to a thin
+        // strip inside the toolbar. That left previously-painted content
+        // erased with nothing redrawn over it: a blank page background.
+        const float fillTop = repaintChrome ? m_paintDirtyTop : std::max(topInset, m_paintDirtyTop);
         const float fillBottom = std::min((float)m_height, m_paintDirtyBottom);
         if (fillBottom > fillTop)
             m_rt->FillRectangle(D2D1::RectF(0, fillTop, (float)m_width, fillBottom), TempBrush(bgF));
