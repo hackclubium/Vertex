@@ -285,12 +285,18 @@ if (WIN32)
     )
     if (MAKENSIS_EXECUTABLE)
         set(VERTEX_INSTALLER_OUTPUT "${CMAKE_BINARY_DIR}/Vertex-${VERTEX_VERSION}-windows-installer.exe")
+        # NSIS's File command didn't accept CMake's forward-slash-style
+        # absolute paths from $<TARGET_FILE:...> ("no files found" even
+        # though the file existed) — build genuinely native (backslash)
+        # paths instead.
+        file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" VERTEX_BUILD_DIR_NATIVE)
+        file(TO_NATIVE_PATH "${VERTEX_INSTALLER_OUTPUT}" VERTEX_INSTALLER_OUTPUT_NATIVE)
         add_custom_command(
             OUTPUT "${VERTEX_INSTALLER_OUTPUT}"
             COMMAND ${MAKENSIS_EXECUTABLE}
-                "/DVERTEX_EXE_PATH=$<TARGET_FILE:Vertex>"
-                "/DVERTEX_UPDATER_EXE_PATH=$<TARGET_FILE:VertexUpdater>"
-                "/DVERTEX_INSTALLER_OUTPUT=${VERTEX_INSTALLER_OUTPUT}"
+                "/DVERTEX_EXE_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\Vertex.exe"
+                "/DVERTEX_UPDATER_EXE_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\VertexUpdater.exe"
+                "/DVERTEX_INSTALLER_OUTPUT=${VERTEX_INSTALLER_OUTPUT_NATIVE}"
                 "${CMAKE_BINARY_DIR}/vertex.nsi"
             DEPENDS Vertex VertexUpdater "${CMAKE_BINARY_DIR}/vertex.nsi"
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
