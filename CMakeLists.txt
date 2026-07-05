@@ -270,7 +270,12 @@ if (WIN32)
     # into its own install directory (ERROR_ACCESS_DENIED). A hand-written
     # script requesting no elevation at all avoids the whole problem — see
     # installer/windows/vertex.nsi.in.
-    find_program(MAKENSIS_EXECUTABLE makensis)
+    # choco's PATH update for `nsis` doesn't reliably reach this same CI job's
+    # later Configure step (a known chocolatey/PATH-refresh quirk), so also
+    # hint at NSIS's standard install locations rather than relying on PATH.
+    find_program(MAKENSIS_EXECUTABLE makensis
+        HINTS "C:/Program Files (x86)/NSIS" "C:/Program Files/NSIS"
+    )
     set(VERTEX_ICON_ICO "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
     set(VERTEX_LICENSE_FILE "${CMAKE_SOURCE_DIR}/LICENSE")
     configure_file(
