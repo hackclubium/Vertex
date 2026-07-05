@@ -1,0 +1,107 @@
+; Vertex Windows installer — hand-written NSIS script.
+;
+; Deliberately NOT using CPack's NSIS generator: CPack's bundled template
+; hardcodes "RequestExecutionLevel admin" with no override hook, and NSIS
+; only allows RequestExecutionLevel to be specified once. Requesting admin
+; forces "SetShellVarContext all", which redirects $LOCALAPPDATA to a
+; system-wide, admin-owned path instead of the real per-user one — so the
+; unelevated, running Vertex.exe can never write its own self-update into
+; its own install directory (ERROR_ACCESS_DENIED). Requesting no elevation
+; at all keeps $LOCALAPPDATA resolved as the true per-user path, matching
+; how per-user installers (VS Code, Discord, Slack, ...) avoid this class
+; of problem entirely.
+
+!include "MUI2.nsh"
+
+; VERTEX_EXE_PATH, VERTEX_UPDATER_EXE_PATH, VERTEX_INSTALLER_OUTPUT are
+; supplied via makensis /D command-line defines (see CMakeLists.txt) since
+; they depend on the build configuration (Release/Debug output folder),
+; which isn't known at CMake configure time on multi-config generators.
+
+Name "Vertex"
+OutFile "${VERTEX_INSTALLER_OUTPUT}"
+InstallDir "$LOCALAPPDATA\Programs\Vertex"
+InstallDirRegKey HKCU "Software\Vertex" "InstallDir"
+RequestExecutionLevel user
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "@VERTEX_ICON_ICO@"
+!define MUI_UNICON "@VERTEX_ICON_ICO@"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "@VERTEX_LICENSE_FILE@"
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+; ── uninstall a previous per-user install before installing fresh ──────────
+Function .onInit
+    ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "UninstallString"
+    StrCmp $0 "" done
+
+    ; UninstallString is written wrapped in quotes (see Section "Install"
+    ; below); strip them before re-quoting for ExecWait, or the resulting
+    ; command line ends up double-quoted and fails.
+    StrCpy $2 $0 1 0
+    StrCmp $2 "$\"" 0 +2
+        StrCpy $0 $0 "" 1
+    StrCpy $2 $0 1 -1
+    StrCmp $2 "$\"" 0 +2
+        StrCpy $0 $0 -1
+
+    IfFileExists "$0" 0 done
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+        "An existing version of Vertex is installed. Uninstall it first?" \
+        IDYES uninst IDNO done
+
+    uninst:
+        ClearErrors
+        ExecWait '"$0" /S _?=$INSTDIR'
+        IfErrors 0 done
+        MessageBox MB_OK|MB_ICONSTOP "Uninstall of the previous version failed."
+
+    done:
+FunctionEnd
+
+Section "Install"
+    SetOutPath "$INSTDIR"
+    File "${VERTEX_EXE_PATH}"
+    File "${VERTEX_UPDATER_EXE_PATH}"
+    WriteUninstaller "$INSTDIR\Uninstall.exe"
+
+    WriteRegStr HKCU "Software\Vertex" "InstallDir" "$INSTDIR"
+
+    CreateDirectory "$SMPROGRAMS\Vertex"
+    CreateShortCut "$SMPROGRAMS\Vertex\Vertex.lnk" "$INSTDIR\Vertex.exe"
+
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "DisplayName" "Vertex"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "DisplayVersion" "@VERTEX_VERSION@"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "DisplayIcon" "$INSTDIR\Vertex.exe"
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "Publisher" "hackclubium"
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "NoModify" 1
+    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex" "NoRepair" 1
+SectionEnd
+
+Section "Uninstall"
+    Delete "$INSTDIR\Vertex.exe"
+    Delete "$INSTDIR\Vertex-update.exe"
+    Delete "$INSTDIR\Vertex.exe.old"
+    Delete "$INSTDIR\VertexUpdater.exe"
+    Delete "$INSTDIR\vertex_updater.log"
+    Delete "$INSTDIR\Uninstall.exe"
+    RMDir "$INSTDIR"
+
+    Delete "$SMPROGRAMS\Vertex\Vertex.lnk"
+    RMDir "$SMPROGRAMS\Vertex"
+
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Vertex"
+    DeleteRegKey HKCU "Software\Vertex"
+SectionEnd

@@ -261,25 +261,41 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_FILE_NAME "Vertex-${VERTEX_VERSION}-${CMAKE_SYSTEM_NAME}")
 
 if (WIN32)
-    set(CPACK_GENERATOR "NSIS")
-    # Install per-user under %LOCALAPPDATA% (like the Vertex profile data
-    # already does) instead of Program Files. Program Files needs admin
-    # rights to write to, which broke the self-updater: the unelevated,
-    # running Vertex.exe couldn't write its own downloaded update next to
-    # itself and failed with "Failed to write update."
-    set(CPACK_NSIS_INSTALL_ROOT "$LOCALAPPDATA\\\\Programs")
-    set(CPACK_NSIS_DISPLAY_NAME "Vertex")
-    set(CPACK_NSIS_PACKAGE_NAME "Vertex")
-    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-    set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
-    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
-    set(CPACK_NSIS_INSTALLED_ICON_NAME "Vertex.exe")
-    set(CPACK_NSIS_CREATE_ICONS_EXTRA
-        "CreateDirectory '$SMPROGRAMS\\\\Vertex'\nCreateShortCut '$SMPROGRAMS\\\\Vertex\\\\Vertex.lnk' '$INSTDIR\\\\Vertex.exe'"
+    # Windows packaging bypasses CPack's NSIS generator entirely — its bundled
+    # template hardcodes "RequestExecutionLevel admin" with no CMake variable
+    # to override it, and NSIS only allows that directive once. Requesting
+    # admin forces "SetShellVarContext all", which redirects $LOCALAPPDATA to
+    # a system-wide, admin-owned path instead of the true per-user one, so the
+    # unelevated, running Vertex.exe could never write its own self-update
+    # into its own install directory (ERROR_ACCESS_DENIED). A hand-written
+    # script requesting no elevation at all avoids the whole problem — see
+    # installer/windows/vertex.nsi.in.
+    find_program(MAKENSIS_EXECUTABLE makensis)
+    set(VERTEX_ICON_ICO "${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.ico")
+    set(VERTEX_LICENSE_FILE "${CMAKE_SOURCE_DIR}/LICENSE")
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/installer/windows/vertex.nsi.in"
+        "${CMAKE_BINARY_DIR}/vertex.nsi"
+        @ONLY
     )
-    set(CPACK_NSIS_DELETE_ICONS_EXTRA
-        "Delete '$SMPROGRAMS\\\\Vertex\\\\Vertex.lnk'\nRMDir '$SMPROGRAMS\\\\Vertex'"
-    )
+    if (MAKENSIS_EXECUTABLE)
+        set(VERTEX_INSTALLER_OUTPUT "${CMAKE_BINARY_DIR}/Vertex-${VERTEX_VERSION}-windows-installer.exe")
+        add_custom_command(
+            OUTPUT "${VERTEX_INSTALLER_OUTPUT}"
+            COMMAND ${MAKENSIS_EXECUTABLE}
+                "/DVERTEX_EXE_PATH=$<TARGET_FILE:Vertex>"
+                "/DVERTEX_UPDATER_EXE_PATH=$<TARGET_FILE:VertexUpdater>"
+                "/DVERTEX_INSTALLER_OUTPUT=${VERTEX_INSTALLER_OUTPUT}"
+                "${CMAKE_BINARY_DIR}/vertex.nsi"
+            DEPENDS Vertex VertexUpdater "${CMAKE_BINARY_DIR}/vertex.nsi"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+            COMMENT "Building Vertex Windows installer with NSIS"
+            VERBATIM
+        )
+        add_custom_target(windows_installer DEPENDS "${VERTEX_INSTALLER_OUTPUT}")
+    else()
+        message(STATUS "makensis not found — 'windows_installer' target unavailable (install NSIS to build the Windows installer)")
+    endif()
 elseif (APPLE)
     set(CPACK_GENERATOR "DragNDrop")
 else()

@@ -71,12 +71,15 @@ TestResult RunPaintTests() {
         auto root = FindRepoRoot();
         std::string cmake = ReadTextFile(root / "CMakeLists.txt");
         std::string workflow = ReadTextFile(root / ".github/workflows/release.yml");
+        // Windows packaging is a hand-written NSIS script (installer/windows/vertex.nsi.in),
+        // not CPack's NSIS generator — see CMakeLists.txt for why.
+        std::string nsiScript = ReadTextFile(root / "installer/windows/vertex.nsi.in");
         const bool packagesInstallers =
             cmake.find("include(CPack)") != std::string::npos
-            && workflow.find("cpack -G NSIS") != std::string::npos
-            && cmake.find("CreateShortCut") != std::string::npos
-            && cmake.find("$SMPROGRAMS") != std::string::npos
-            && cmake.find("Vertex.lnk") != std::string::npos
+            && workflow.find("--target windows_installer") != std::string::npos
+            && nsiScript.find("CreateShortCut") != std::string::npos
+            && nsiScript.find("$SMPROGRAMS") != std::string::npos
+            && nsiScript.find("Vertex.lnk") != std::string::npos
             && workflow.find("Vertex-windows.exe") == std::string::npos
             && workflow.find("Vertex-windows-installer") != std::string::npos;
         ExpectEqual("paint/release-workflow-packages-installers",

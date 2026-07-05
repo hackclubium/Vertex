@@ -45,7 +45,7 @@ jobs:
 
       - name: Package Windows installer
         if: matrix.name == 'windows'
-        run: cpack -G NSIS -C Release --config build/CPackConfig.cmake
+        run: cmake --build build --config Release --target windows_installer
 
       - name: Package macOS disk image
         if: matrix.name == 'macos'
@@ -60,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vertex-windows-installer
-          path: Vertex-*.exe
+          path: build/Vertex-*.exe
 
       - name: Upload portable app (Windows)
         if: matrix.name == 'windows'
