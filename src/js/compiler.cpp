@@ -65,6 +65,13 @@ void Compiler::freeReg(uint8_t r) {
     m_freeRegs.push_back(r);
 }
 
+uint8_t Compiler::allocRegRun(int count) {
+    uint8_t first = m_nextReg;
+    m_nextReg = (uint8_t)(m_nextReg + count);
+    if (m_nextReg > m_fn->regCount) m_fn->regCount = m_nextReg;
+    return first;
+}
+
 uint8_t Compiler::loadConstString(const std::string& value, int line) {
     uint8_t dst = allocReg();
     uint16_t idx = m_fn->addConstString(value);
@@ -739,9 +746,20 @@ uint8_t Compiler::compileMember(const MemberExpr& e, int hint) {
 
 uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
     uint8_t dst = (hint >= 0) ? (uint8_t)hint : allocReg();
-    // Determine this and fn
     uint8_t thisReg = allocReg();
-    uint8_t fnReg   = allocReg();
+
+    // fnReg and every argument register must be strictly contiguous
+    // (fnReg, fnReg+1, ..., fnReg+argc): OP_CALL/OP_NEW read arguments as
+    // REG(fnReg+1..fnReg+argc). Reserve that whole run up front via
+    // allocRegRun() rather than allocReg() per slot — allocReg() can return
+    // registers out of the general free-list, which are not guaranteed to
+    // be adjacent once anything earlier in the function has been freed
+    // out of stack order, silently scrambling argument order/values.
+    size_t argc = e.args.size();
+    uint8_t fnReg = allocRegRun((int)(1 + argc));
+    std::vector<uint8_t> argRegs;
+    argRegs.reserve(argc);
+    for (size_t i = 0; i < argc; ++i) argRegs.push_back((uint8_t)(fnReg + 1 + i));
 
     if (e.callee->is<MemberExpr>()) {
         auto& m = e.callee->as<MemberExpr>();
@@ -764,11 +782,10 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
         emit(OP_MOVE, fnReg, fn); freeReg(fn);
     }
 
-    // Compile args
-    uint8_t argc = 0;
-    std::vector<uint8_t> argRegs;
-    for (auto& a : e.args) {
-        uint8_t ar = allocReg();
+    // Compile args directly into their reserved contiguous registers.
+    for (size_t i = 0; i < argc; ++i) {
+        auto& a = e.args[i];
+        uint8_t ar = argRegs[i];
         if (a->is<SpreadExpr>()) {
             uint8_t spread = compileExpr(*a->as<SpreadExpr>().expr);
             emit(OP_SPREAD_CALL, ar, spread); freeReg(spread);
@@ -776,8 +793,6 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
             uint8_t av = compileExpr(*a);
             emit(OP_MOVE, ar, av); freeReg(av);
         }
-        argRegs.push_back(ar);
-        argc++;
     }
 
     if (e.isNew) {
@@ -787,8 +802,11 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
         emit(OP_NOP, (uint8_t)argc); // argc follows call
     }
 
-    for (auto ar : argRegs) freeReg(ar);
-    freeReg(fnReg); freeReg(thisReg);
+    // Free the fnReg+args run in reverse allocation order so registers at
+    // the current stack top get reclaimed via the bump-pointer fast path.
+    for (size_t i = argc; i-- > 0; ) freeReg(argRegs[i]);
+    freeReg(fnReg);
+    freeReg(thisReg);
     return dst;
 }
 

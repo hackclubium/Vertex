@@ -178,6 +178,12 @@ private:
 
     uint8_t  allocReg();
     void     freeReg(uint8_t r);
+    // Allocates `count` strictly consecutive registers, bypassing the
+    // free-list. Needed for call argument registers: OP_CALL/OP_NEW read
+    // arguments as REG(fnReg+1..fnReg+argc), assuming they immediately
+    // follow fnReg — allocReg() alone can't guarantee that once the
+    // free-list holds non-contiguous holes from earlier frees.
+    uint8_t  allocRegRun(int count);
     uint8_t  peekReg() const { return m_nextReg; }
 
     void     pushScope(bool isFn = false);
