@@ -21,6 +21,21 @@
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
+// Records a paint-time exception so a malformed page's failure mode is
+// diagnosable instead of just silently blanking the content area. The old
+// hardcoded "C:/tmp/vertex_crash.txt" doesn't exist on a normal Windows
+// install, so fopen() failed silently and nothing was ever actually logged.
+static void LogPaintCrash(const char* message) {
+    char tempDir[MAX_PATH];
+    DWORD len = GetTempPathA(MAX_PATH, tempDir);
+    if (len == 0 || len >= MAX_PATH) return;
+    std::string path = std::string(tempDir) + "vertex_crash.txt";
+    FILE* f = fopen(path.c_str(), "a");
+    if (!f) return;
+    fprintf(f, "%s\n", message);
+    fclose(f);
+}
+
 static D2D1_COLOR_F ToD2D(const CssColor& c) { return { c.r, c.g, c.b, c.a }; }
 static D2D1_COLOR_F ThemeColor(vertex::chrome_theme::Rgb c, float a = 1.f) {
     return D2D1::ColorF(c.r / 255.f, c.g / 255.f, c.b / 255.f, a);
@@ -840,7 +855,17 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                     m_rt->PushAxisAlignedClip(
                         D2D1::RectF(0, clipTop, (float)m_width, clipBottom),
                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    PaintBox(*m_layoutRoot, scrollY, topInset, false);
+                    // PopAxisAlignedClip must run even if PaintBox throws — Direct2D
+                    // requires every Push to be balanced by a Pop before EndDraw, or
+                    // the render target's clip stack stays corrupted for every frame
+                    // painted afterward (a single bad page can then blank out every
+                    // page painted from then on, until the target is recreated).
+                    try {
+                        PaintBox(*m_layoutRoot, scrollY, topInset, false);
+                    } catch (...) {
+                        m_rt->PopAxisAlignedClip();
+                        throw;
+                    }
                     m_rt->PopAxisAlignedClip();
                 }
                 docH = m_layoutRoot->contentH + 32.f;
@@ -849,11 +874,9 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                     InvalidateRect(m_hwnd, nullptr, FALSE);
             }
         } catch (const std::exception& ex) {
-            FILE* f = fopen("C:/tmp/vertex_crash.txt", "a");
-            if (f) { fprintf(f, "LAYOUT/PAINT exception: %s\n", ex.what()); fclose(f); }
+            LogPaintCrash(("LAYOUT/PAINT exception: " + std::string(ex.what())).c_str());
         } catch (...) {
-            FILE* f = fopen("C:/tmp/vertex_crash.txt", "a");
-            if (f) { fprintf(f, "LAYOUT/PAINT unknown exception\n"); fclose(f); }
+            LogPaintCrash("LAYOUT/PAINT unknown exception");
         }
 
         HRESULT hr = m_rt->EndDraw();
