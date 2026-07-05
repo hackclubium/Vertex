@@ -30,6 +30,10 @@ history, updater, and native application chrome.
 The goal is not to pretend the modern web is small. The goal is to make a browser
 engine that grows visibly, one compatibility pass at a time.
 
+## Why Does The Code Have AI Comments?
+
+AI comments are included in the code for readibility. I promise you none of this is AI generated code.
+
 ## What It Feels Like
 
 Vertex is already a usable experimental browser shell:
