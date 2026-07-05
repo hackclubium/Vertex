@@ -275,9 +275,8 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
     std::string cookies = CookieJar::instance().cookieHeader(url);
     if (!cookies.empty())
         curl_easy_setopt(curl, CURLOPT_COOKIE, cookies.c_str());
-    // Accept self-signed certs in v0.1 (matches the old WinINet behavior).
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
     CURLcode res = curl_easy_perform(curl);
 

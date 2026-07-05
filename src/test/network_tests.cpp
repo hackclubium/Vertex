@@ -169,6 +169,23 @@ TestResult RunNetworkTests() {
     }
 
     {
+        // TLS verification must stay on — a live bad-cert fetch would be
+        // slow/flaky/offline-hostile in CI, so this asserts the curl options
+        // directly rather than hitting a real MITM-able endpoint.
+        auto root = FindRepoRoot();
+        std::string source = ReadTextFile(root / "src/network/fetcher.cpp");
+        const bool verifiesPeer = source.find("CURLOPT_SSL_VERIFYPEER, 1L") != std::string::npos;
+        const bool verifiesHost = source.find("CURLOPT_SSL_VERIFYHOST, 2L") != std::string::npos;
+        const bool disablesPeer = source.find("CURLOPT_SSL_VERIFYPEER, 0L") != std::string::npos;
+        const bool disablesHost = source.find("CURLOPT_SSL_VERIFYHOST, 0L") != std::string::npos;
+        ExpectEqual("network/https-fetches-verify-peer-and-host",
+            std::string(verifiesPeer && !disablesPeer ? "verify-peer " : "no-verify-peer ")
+                + (verifiesHost && !disablesHost ? "verify-host\n" : "no-verify-host\n"),
+            "verify-peer verify-host\n",
+            result);
+    }
+
+    {
         auto document = ParseHtml(
             "<html><head><script id=\"classic\" "
             "src=\"data:text/javascript,window.answer%3D42%3B\"></script></head></html>");
