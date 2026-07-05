@@ -17,6 +17,7 @@
 #include <functional>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <fstream>
 #include <tuple>
 #include <vector>
@@ -83,6 +84,23 @@ struct Updater {
         return true;
     }
 
+#ifndef _WIN32
+    // Minimal diagnostic log for a failed self-update apply (non-Windows
+    // only — the Windows branch above already checks/rolls back inline).
+    // Deliberately written to a system temp dir rather than next to the
+    // target exePath (unlike updater_helper.cpp's LogPath()/LogMsg(), which
+    // log beside the target) — the whole point of this log is to record
+    // failures caused by exePath's directory not being writable, so logging
+    // into that same directory would silently fail for the exact case it's
+    // meant to catch.
+    static void LogUpdaterEvent(const std::string& exePath, const std::string& msg) {
+        FILE* f = std::fopen("/tmp/vertex_updater_apply.log", "a");
+        if (!f) return;
+        std::fprintf(f, "%s (target=%s)\n", msg.c_str(), exePath.c_str());
+        std::fclose(f);
+    }
+#endif
+
     static void applyPendingUpdate(const std::string& exePath) {
         std::string updatePath = pendingPath(exePath);
         std::string oldPath = exePath + ".old";
@@ -105,7 +123,16 @@ struct Updater {
                 MoveFileA(oldPath.c_str(), exePath.c_str());
         }
 #else
-        std::rename(updatePath.c_str(), exePath.c_str());
+        // Previously unchecked: a failed rename (e.g. no write permission on
+        // the install directory) used to fail completely silently, leaving
+        // the user on the old binary forever with zero indication anything
+        // was wrong. std::rename() is atomic on POSIX — a failure here
+        // leaves exePath untouched, so unlike the Windows branch above there
+        // is nothing to roll back, but it's still worth logging so a stuck
+        // update is diagnosable instead of invisible.
+        if (std::rename(updatePath.c_str(), exePath.c_str()) != 0) {
+            LogUpdaterEvent(exePath, "applyPendingUpdate: rename failed, errno=" + std::to_string(errno));
+        }
 #endif
     }
 
