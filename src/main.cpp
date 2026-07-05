@@ -13,6 +13,7 @@
 #include "network/text_decode.h"
 #include "layout/scroll.h"
 #include "render/renderer.h"
+#include "render/canvas_renderer.h"
 #include "platform/form_state.h"
 #include "platform/resource.h"
 #include "platform/updater.h"
@@ -1304,6 +1305,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     ClampScroll();
                     UpdateScrollbar();
                     InvalidateContent();
+                };
+                callbacks.getCanvasSurface = [](Node* n) {
+                    return g_renderer.GetOrCreateCanvasSurface(n);
                 };
                 callbacks.scrollIntoView = [idx](Node* target) {
                     if (idx != g_activeTab || !target) return;

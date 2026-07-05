@@ -991,5 +991,42 @@ TestResult RunLayoutEngineTests() {
             "paint-order\n",
             result);
     }
+
+    // Canvas's width/height attributes set its drawing-buffer (intrinsic)
+    // size, defaulting to 300x150 when absent, and it composites via the
+    // "__canvas__" replacedUrl marker rather than an image fetch.
+    {
+        auto cdom = ParseHtml(
+            "<html><body>"
+            "<canvas id=\"plain\"></canvas>"
+            "<canvas id=\"sized\" width=\"640\" height=\"480\" style=\"width:100px\"></canvas>"
+            "</body></html>");
+        auto csheet = ParseStylesheet("body{margin:0;}");
+        LayoutInput cin; cin.document = cdom.get(); cin.sheet = &csheet;
+        cin.measure = &measure; cin.viewportW = 400.f; cin.viewportH = 300.f;
+        auto cl = LayoutDocument(cin);
+        auto* plain = FindEngineBoxById(cl.get(), "plain");
+        auto* sized = FindEngineBoxById(cl.get(), "sized");
+        std::string actual;
+        if (plain) {
+            actual += (plain->kind == BoxKind::Replaced ? "replaced " : "other ");
+            actual += plain->replacedUrl + " ";
+            actual += std::to_string((int)plain->intrinsicW) + "x"
+                + std::to_string((int)plain->intrinsicH) + "\n";
+        } else {
+            actual += "missing\n";
+        }
+        if (sized) {
+            actual += std::to_string((int)(sized->contentW + 0.5f)) + "x"
+                + std::to_string((int)(sized->contentH + 0.5f)) + "\n";
+        } else {
+            actual += "missing\n";
+        }
+        ExpectEqual("layout-engine/canvas-intrinsic-size-and-replaced-marker",
+            actual,
+            "replaced __canvas__ 300x150\n"
+            "100x75\n",
+            result);
+    }
     return result;
 }

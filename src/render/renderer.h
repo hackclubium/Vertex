@@ -2,6 +2,7 @@
 #include "html/dom.h"
 #include "css/stylesheet.h"
 #include "layout/box.h"
+#include "js/canvas_surface.h"
 #include <windows.h>
 #include <d2d1.h>
 #include <dwrite.h>
@@ -11,7 +12,13 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <memory>
 #include <functional>
+
+// Defined in render/canvas_renderer.h; only used here as unique_ptr<> storage,
+// so a forward declaration keeps D2D-specific canvas internals out of this
+// header (renderer.cpp includes the full definition).
+class D2DCanvasSurface;
 
 // HitRegion is defined in platform/platform.h (shared across all platforms).
 #include "platform/platform.h"
@@ -65,6 +72,14 @@ public:
     void ReceiveImage(const std::string& url, const std::vector<uint8_t>& bytes);
     void SetPaintDirtyRect(const RECT& rect);
 
+    // Canvas 2D backend (see js/canvas_surface.h). Lazily creates a per-node
+    // off-screen D2D surface sized from the node's width/height attributes.
+    // Returns nullptr if there's no live render target yet.
+    ICanvasSurface* GetOrCreateCanvasSurface(Node* canvasNode);
+    // Looks up an already-decoded image bitmap by URL (used by canvas
+    // drawImage()); nullptr if not cached (not loaded / failed / unknown).
+    ID2D1Bitmap* FindCachedImageBitmap(const std::string& url) const;
+
     void SetImageRequestCallback(std::function<void(std::string)> cb) {
         m_imageRequestCb = std::move(cb);
     }
@@ -115,6 +130,8 @@ private:
     std::set<std::string>               m_failedImages;
     const Node*                         m_imageDocKey = nullptr;
     std::function<void(std::string)>    m_imageRequestCb;
+
+    std::map<const Node*, std::unique_ptr<D2DCanvasSurface>> m_canvasSurfaces;
 
     std::vector<ID2D1SolidColorBrush*>  m_tempBrushes;
     std::map<unsigned int, ID2D1SolidColorBrush*> m_tempBrushCache;

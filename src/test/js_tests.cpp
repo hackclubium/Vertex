@@ -122,6 +122,58 @@ static std::string RunDomReflectionSnapshot() {
          + " text=" + text + "\n";
 }
 
+// Exercises the canvas 2D JS surface with no ICanvasSurface wired up (the
+// default test harness leaves DomBridgeCallbacks::getCanvasSurface unset) —
+// proves the API shape is right and that draw calls no-op safely rather than
+// crashing when there's no backing renderer, which is the real situation for
+// every non-Windows build target right now.
+static std::string RunCanvasContext2DSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml(
+        "<html><body>"
+        "<canvas id=\"plain\"></canvas>"
+        "<canvas id=\"sized\" width=\"640\" height=\"480\"></canvas>"
+        "</body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "var plain = document.getElementById('plain');\n"
+        "var sized = document.getElementById('sized');\n"
+        "var ctx = plain.getContext('2d');\n"
+        "var methods = ['fillRect','strokeRect','clearRect','beginPath','closePath',\n"
+        "  'moveTo','lineTo','rect','arc','bezierCurveTo','quadraticCurveTo',\n"
+        "  'fill','stroke','save','restore','translate','scale','rotate','drawImage'];\n"
+        "var allFns = methods.every(function(m) { return typeof ctx[m] === 'function'; });\n"
+        "var webgl = plain.getContext('webgl');\n"
+        "ctx.fillStyle = 'red';\n"
+        "ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(10,10); ctx.fill(); ctx.stroke();\n"
+        "ctx.fillRect(1,2,3,4); ctx.save(); ctx.translate(1,1); ctx.restore();\n"
+        "plain.setAttribute('data-result',\n"
+        "  allFns + ':' + (webgl === null) + ':' + plain.width + 'x' + plain.height\n"
+        "  + ':' + sized.width + 'x' + sized.height);\n",
+        "canvas-context-2d");
+    if (!ok) return "script failed\n";
+    Node* plain = FindById(dom.get(), "plain");
+    return plain ? plain->attr("data-result") + "\n" : "missing plain\n";
+}
+
+// canvas.width/height writes must reflect back onto the attribute (and, per
+// spec, would reset the backing bitmap — verified separately via the pixel
+// probe since no ICanvasSurface exists in this harness).
+static std::string RunCanvasResizeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><canvas id=\"c\"></canvas></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "var c = document.getElementById('c');\n"
+        "c.width = 500;\n"
+        "c.height = 400;\n",
+        "canvas-resize");
+    if (!ok) return "script failed\n";
+    Node* c = FindById(dom.get(), "c");
+    if (!c) return "missing c\n";
+    return c->attr("width") + "x" + c->attr("height") + "\n";
+}
+
 static std::string RunDomCssomGeometrySnapshot() {
     JsEngine engine;
     auto dom = ParseHtml(
@@ -1489,6 +1541,42 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "compiler/call-args-stay-in-order-after-a-void-call",
+        // Regression test: a call whose result is discarded (obj.noop()),
+        // immediately followed by a multi-arg call, used to scramble the
+        // second call's arguments. The compiler allocated argument registers
+        // via the general free-list (allocReg()), which can return
+        // non-contiguous registers once anything has been freed out of
+        // stack order — but the VM's OP_CALL/OP_NEW opcodes read arguments
+        // as REG(fnReg+1..fnReg+argc), assuming strict contiguity with
+        // fnReg. Enough "clutter" from prior statements broke that
+        // assumption, silently reading the wrong register for an argument
+        // (observed as swapped values for a 2-arg call). Fixed by reserving
+        // fnReg + all argument registers as one contiguous run
+        // (allocRegRun) instead of allocating them one at a time.
+        "var obj = {\n"
+        "  noop: function() { return undefined; },\n"
+        "  two: function(a, b) { return a + ':' + b; }\n"
+        "};\n"
+        "var obj = {\n"
+        "  style: '',\n"
+        "  fourArg: function(a,b,c,d) { return undefined; },\n"
+        "  noop: function() { return undefined; },\n"
+        "  sixArg: function(a,b,c,d,e,f) { return undefined; },\n"
+        "  two: function(a, b) { return a + ':' + b; }\n"
+        "};\n"
+        "obj.style = 'red';\n"
+        "obj.fourArg(10, 10, 50, 50);\n"
+        "obj.noop();\n"
+        "obj.style = 'blue';\n"
+        "obj.sixArg(80, 80, 15, 0, 6, false);\n"
+        "obj.noop();\n"
+        "obj.noop();\n"
+        "__result = obj.two(60, 5);\n",
+        "string: 60:5\n",
+        result);
+
+    ExpectJsResult(
         "generator/basic-next-shape",
         "function* values() { yield 7; }\n"
         "var iter = values();\n"
@@ -1519,6 +1607,18 @@ TestResult RunJsTests() {
         "js/engine/deep-dom-registration-does-not-overflow",
         RunEngineDeepDomRegistrationSnapshot(),
         "registered\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/canvas-getcontext-2d-surface-and-no-op-without-backend",
+        RunCanvasContext2DSnapshot(),
+        "true:true:300x150:640x480\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/canvas-width-height-writes-reflect-to-attributes",
+        RunCanvasResizeSnapshot(),
+        "500x400\n",
         result);
 
     return result;

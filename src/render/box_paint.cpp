@@ -3,6 +3,7 @@
 #include "render/renderer.h"
 #include "layout/layout_engine.h"
 #include "render/transition.h"
+#include "render/canvas_renderer.h"
 
 #include <d2d1.h>
 #include <dwrite.h>
@@ -11,6 +12,7 @@
 #include <functional>
 #include <cctype>
 #include <cmath>
+#include <memory>
 
 static D2D1_COLOR_F ToD2Dc(const CssColor& c) { return { c.r, c.g, c.b, c.a }; }
 static constexpr size_t kMaxMeasuredTextChars = 16 * 1024;
@@ -192,6 +194,32 @@ void Renderer::RequestImage(const std::string& url) {
     if (m_imageRequestCb) m_imageRequestCb(url);
 }
 
+ID2D1Bitmap* Renderer::FindCachedImageBitmap(const std::string& url) const {
+    auto it = m_images.find(url);
+    return (it != m_images.end()) ? it->second : nullptr;
+}
+
+// ─── canvas 2D backend (js/canvas_surface.h) ─────────────────────────────────
+
+ICanvasSurface* Renderer::GetOrCreateCanvasSurface(Node* canvasNode) {
+    if (!canvasNode || !m_rt) return nullptr;
+    auto it = m_canvasSurfaces.find(canvasNode);
+    if (it != m_canvasSurfaces.end()) return it->second.get();
+
+    auto parseIntAttr = [&](const char* a, int def) -> int {
+        std::string v = canvasNode->attr(a);
+        if (v.empty()) return def;
+        try { return std::max(0, std::stoi(v)); } catch (...) { return def; }
+    };
+    int w = parseIntAttr("width", 300);
+    int h = parseIntAttr("height", 150);
+
+    auto surface = std::make_unique<D2DCanvasSurface>(*this, m_factory, m_rt, w, h);
+    ICanvasSurface* raw = surface.get();
+    m_canvasSurfaces[canvasNode] = std::move(surface);
+    return raw;
+}
+
 // ─── anchors ──────────────────────────────────────────────────────────────────
 
 void Renderer::CollectAnchors(const LayoutBox& box) {
@@ -338,14 +366,22 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
         }
     }
 
-    // Replaced image content.
+    // Replaced image content — including <canvas>, whose "bitmap" is its
+    // live off-screen D2D canvas surface rather than a decoded network image.
     if (box.kind == BoxKind::Replaced && !box.replacedUrl.empty()) {
-        auto it = m_images.find(box.replacedUrl);
-        if (it != m_images.end() && it->second) {
+        ID2D1Bitmap* bmp = nullptr;
+        if (box.replacedUrl == "__canvas__") {
+            auto csIt = m_canvasSurfaces.find(box.node);
+            if (csIt != m_canvasSurfaces.end() && csIt->second) bmp = csIt->second->GetBitmap();
+        } else {
+            auto it = m_images.find(box.replacedUrl);
+            if (it != m_images.end()) bmp = it->second;
+        }
+        if (bmp) {
             float cx = box.contentX();
             float cy = box.contentY() - scrollY + topInset;
             float bw2 = box.contentW, bh2 = box.contentH;
-            D2D1_SIZE_F isz = it->second->GetSize();
+            D2D1_SIZE_F isz = bmp->GetSize();
             float iw = isz.width, ih = isz.height;
             int fit = box.style.objectFit;
             if (fit != 0 && iw > 0 && ih > 0 && bw2 > 0 && bh2 > 0) {
@@ -367,10 +403,10 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
                 bool clip = (dw > bw2 + 0.5f || dh > bh2 + 0.5f);
                 if (clip) m_rt->PushAxisAlignedClip(
                     D2D1::RectF(cx, cy, cx + bw2, cy + bh2), D2D1_ANTIALIAS_MODE_ALIASED);
-                m_rt->DrawBitmap(it->second, D2D1::RectF(ox, oy, ox + dw, oy + dh));
+                m_rt->DrawBitmap(bmp, D2D1::RectF(ox, oy, ox + dw, oy + dh));
                 if (clip) m_rt->PopAxisAlignedClip();
             } else {
-                m_rt->DrawBitmap(it->second, D2D1::RectF(cx, cy, cx + bw2, cy + bh2));
+                m_rt->DrawBitmap(bmp, D2D1::RectF(cx, cy, cx + bw2, cy + bh2));
             }
         }
     }

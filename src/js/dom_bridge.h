@@ -1,5 +1,6 @@
 #pragma once
 #include "js/vm.h"
+#include "js/canvas_surface.h"
 #include "html/dom.h"
 #include <memory>
 #include <functional>
@@ -11,6 +12,10 @@ struct DomBridgeCallbacks {
     std::function<void(float dx, float dy)> scrollBy;
     std::function<void(Node* target)> scrollIntoView;
     std::function<void()> repaintOnly;
+    // Returns (creating if needed) the drawing surface backing a <canvas>
+    // element's 2D context. Unset (nullptr) on platforms without a canvas
+    // backend yet — canvas draw calls then safely no-op.
+    std::function<ICanvasSurface*(Node*)> getCanvasSurface;
 };
 
 // Wraps a Node* into a JsObject (Element/Text/Document).
@@ -37,3 +42,8 @@ void notifyDomDirtyCoalesced(VM& vm, bool affectsLayout = true);
 
 // Reset DOM dirty coalescing — call from platform timer tick.
 void resetDomDirtyCoalesce();
+
+// Canvas 2D support (implemented in dom_bridge.cpp, consumed by canvas_bridge.cpp
+// since the registered DomBridgeCallbacks are file-local to dom_bridge.cpp).
+ICanvasSurface* GetCanvasSurfaceForNode(Node* n);
+void MarkCanvasDirty(VM& vm, Node* n);

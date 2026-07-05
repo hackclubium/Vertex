@@ -1,4 +1,5 @@
 #include "js/dom_bridge.h"
+#include "js/canvas_bridge.h"
 #include "css/stylesheet.h"
 #include "html/parser.h"
 #include "network/resource_cache.h"
@@ -756,6 +757,7 @@ static void setWindowScrollTo(VM& vm, float x, float y) {
 }
 
 static bool IsPaintOnlyDirtyType(const std::string& type) {
+    if (type == "canvas:draw") return true;
     if (type.rfind("style:", 0) != 0) return false;
     std::string prop = type.substr(6);
     for (char& c : prop) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -788,6 +790,14 @@ void notifyDomDirtyCoalesced(VM& vm, bool affectsLayout) {
 static void markDomDirty(VM& vm, Node* target, const std::string& type) {
     notifyMutationObservers(vm, target, type);
     notifyDomDirtyCoalesced(vm, !IsPaintOnlyDirtyType(type));
+}
+
+ICanvasSurface* GetCanvasSurfaceForNode(Node* n) {
+    return g_domCallbacks.getCanvasSurface ? g_domCallbacks.getCanvasSurface(n) : nullptr;
+}
+
+void MarkCanvasDirty(VM& vm, Node* n) {
+    markDomDirty(vm, n, "canvas:draw");
 }
 
 // Call this from the platform timer to reset coalescing for the next batch.
@@ -2162,6 +2172,18 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     obj->setProp("type",    vm.str(node->attr("type")));
     obj->setProp("name",    vm.str(node->attr("name")));
 
+    if (raw->tagName == "canvas") {
+        obj->setProp("width",  JsValue::integer((int)parseFloatOr(raw->attr("width"), 300.f)));
+        obj->setProp("height", JsValue::integer((int)parseFloatOr(raw->attr("height"), 150.f)));
+        addNativeM("getContext", NATIVE("getContext") {
+            Node* n = unwrapNode(thisVal);
+            if (!n) return JsValue::null();
+            std::string kind = ARG_STR(0);
+            if (kind != "2d") return JsValue::null();  // webgl/bitmaprenderer: not supported
+            return MakeCanvasRenderingContext2D(vm, n);
+        });
+    }
+
     g_readyWrappers.insert(obj);
     vm.gc().removeRoot(&objValue);
     return objValue;
@@ -2971,6 +2993,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         } else if (key == "disabled") {
             if (val.toBool()) n->attrs["disabled"] = "disabled";
             else n->attrs.erase("disabled");
+        } else if ((key == "width" || key == "height") && n->tagName == "canvas") {
+            // Per spec, setting a canvas's width/height resets its bitmap
+            // (clears all drawing state), in addition to changing layout size.
+            n->attrs[key] = std::to_string(std::max(0, val.toInt32()));
+            if (ICanvasSurface* surf = GetCanvasSurfaceForNode(n)) {
+                int w = (int)parseFloatOr(n->attr("width"), 300.f);
+                int h = (int)parseFloatOr(n->attr("height"), 150.f);
+                surf->Resize(w, h);
+            }
         }
         else if (key == "textContent" || key == "innerText") {
             n->children.clear();

@@ -6,6 +6,7 @@
 #include "network/url.h"
 #include "platform/chrome_theme.h"
 #include "render/svg.h"
+#include "render/canvas_renderer.h"
 #include "third_party/stb_image.h"
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
@@ -217,6 +218,10 @@ void Renderer::ReleaseTarget() {
     m_tempBrushCache.clear();
     for (auto& [url, bmp] : m_images) if (bmp) bmp->Release();
     m_images.clear();
+    // Off-screen canvas surfaces are compatible render targets created
+    // against m_rt's device — they can't outlive it, so drop them here too.
+    // GetOrCreateCanvasSurface() lazily recreates on the next draw call.
+    m_canvasSurfaces.clear();
     if (m_rt) { m_rt->Release(); m_rt = nullptr; }
 }
 

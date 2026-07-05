@@ -96,6 +96,7 @@ add_library(vertex_engine STATIC
     src/js/vm.cpp
     src/js/runtime.cpp
     src/js/dom_bridge.cpp
+    src/js/canvas_bridge.cpp
     src/js/engine.cpp
     src/third_party/stb_image_impl.cpp
 )
@@ -123,6 +124,7 @@ if (WIN32)
         src/platform/vertex.rc
         src/render/renderer.cpp
         src/render/box_paint.cpp
+        src/render/canvas_renderer.cpp
         src/platform/platform_win32.cpp
     )
     target_include_directories(Vertex PRIVATE src)

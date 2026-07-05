@@ -554,6 +554,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     bool replaced = TagIsReplacedImage(node, bc.baseUrl, imgUrl);
     bool formControl = (tag == "input" || tag == "textarea" || tag == "select"
                      || (tag == "button" && !HasElementChild(node)));
+    bool isCanvas = (tag == "canvas");
 
     auto box = std::make_unique<LayoutBox>();
     box->node = node;
@@ -567,7 +568,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
         return box;
     }
 
-    if (replaced || formControl) {
+    if (replaced || formControl || isCanvas) {
         // Atomic replaced box. inline-block if not display:block.
         box->kind = (disp == 1) ? BoxKind::InlineBlock : BoxKind::Replaced;
         if (disp == 1) box->kind = BoxKind::InlineBlock; // atomic, block-positioned handled by flow
@@ -640,6 +641,19 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
             if (w > 0) box->intrinsicW = w;
             if (h > 0) box->intrinsicH = h;
             box->replacedUrl = "__svg__";
+        }
+        if (isCanvas) {
+            // Canvas's width/height attributes are its drawing-buffer size
+            // in device pixels, not CSS sizing — distinct from every other
+            // replaced element here. Default is 300x150 per spec when unset.
+            auto attrInt = [&](const char* a, int def) -> int {
+                std::string v = node->attr(a);
+                if (v.empty()) return def;
+                try { return std::max(0, std::stoi(v)); } catch (...) { return def; }
+            };
+            box->intrinsicW = (float)attrInt("width", 300);
+            box->intrinsicH = (float)attrInt("height", 150);
+            box->replacedUrl = "__canvas__";
         }
         return box;
     }
