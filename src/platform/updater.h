@@ -61,7 +61,10 @@ struct Updater {
         STARTUPINFOA si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
-        if (!CreateProcessA(helper.c_str(), mutableCommand.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        // VertexUpdater is a console-subsystem helper; without CREATE_NO_WINDOW
+        // it flashes a visible console window on every update.
+        if (!CreateProcessA(helper.c_str(), mutableCommand.data(), NULL, NULL, FALSE,
+                             CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
             return false;
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
@@ -231,12 +234,28 @@ private:
 #endif
     }
 
+    // Windows command-line quoting: a backslash is only special immediately
+    // before a '"' (where N backslashes + '"' becomes N/2 backslashes + an
+    // escaped quote). Backslashes elsewhere — the overwhelming majority in a
+    // Windows path like "C:\Users\...\Vertex.exe" — must NOT be doubled, or
+    // CommandLineToArgvW-style parsing reconstructs a mangled path.
     static std::string quoteArg(const std::string& arg) {
         std::string out = "\"";
+        int backslashes = 0;
         for (char c : arg) {
-            if (c == '"' || c == '\\') out.push_back('\\');
-            out.push_back(c);
+            if (c == '\\') {
+                ++backslashes;
+            } else if (c == '"') {
+                out.append(backslashes * 2 + 1, '\\');
+                out.push_back('"');
+                backslashes = 0;
+            } else {
+                out.append(backslashes, '\\');
+                backslashes = 0;
+                out.push_back(c);
+            }
         }
+        out.append(backslashes * 2, '\\'); // trailing backslashes must double before the closing quote
         out.push_back('"');
         return out;
     }

@@ -15,6 +15,23 @@
 #include <unistd.h>
 #endif
 
+// Minimal diagnostic trail: this helper runs invisibly (no console window)
+// and its own process exits within seconds either way, so without a log file
+// a failed update leaves absolutely no trace of what went wrong.
+static std::string LogPath(const std::string& targetPath) {
+    size_t slash = targetPath.find_last_of("/\\");
+    std::string dir = slash == std::string::npos ? std::string() : targetPath.substr(0, slash + 1);
+    return dir + "vertex_updater.log";
+}
+
+static void LogMsg(const std::string& logPath, const std::string& msg) {
+    if (logPath.empty()) return;
+    FILE* f = std::fopen(logPath.c_str(), "a");
+    if (!f) return;
+    std::fprintf(f, "%s\n", msg.c_str());
+    std::fclose(f);
+}
+
 static std::string argValue(int argc, char** argv, const char* name) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::strcmp(argv[i], name) == 0)
@@ -61,7 +78,8 @@ static void waitForProcessExit(const std::string& pidText) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
-static bool replaceFileWithRetry(const std::string& updatePath, const std::string& targetPath) {
+static bool replaceFileWithRetry(const std::string& updatePath, const std::string& targetPath,
+                                  const std::string& logPath) {
     const std::string backupPath = targetPath + ".old";
     std::remove(backupPath.c_str());
 
@@ -73,18 +91,29 @@ static bool replaceFileWithRetry(const std::string& updatePath, const std::strin
         if (std::rename(targetPath.c_str(), backupPath.c_str()) == 0)
             break;
 #endif
-        if (i == 79) return false;
+        if (i == 79) {
+#ifdef _WIN32
+            LogMsg(logPath, "rename target->backup failed after retries, GetLastError=" + std::to_string(GetLastError()));
+#else
+            LogMsg(logPath, "rename target->backup failed after retries, errno=" + std::to_string(errno));
+#endif
+            return false;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
 
 #ifdef _WIN32
     if (!MoveFileA(updatePath.c_str(), targetPath.c_str())) {
+        DWORD err = GetLastError();
         MoveFileA(backupPath.c_str(), targetPath.c_str());
+        LogMsg(logPath, "rename update->target failed, GetLastError=" + std::to_string(err) + " (rolled back)");
         return false;
     }
 #else
     if (std::rename(updatePath.c_str(), targetPath.c_str()) != 0) {
+        int err = errno;
         std::rename(backupPath.c_str(), targetPath.c_str());
+        LogMsg(logPath, "rename update->target failed, errno=" + std::to_string(err) + " (rolled back)");
         return false;
     }
     chmod(targetPath.c_str(), 0755);
@@ -114,13 +143,19 @@ static void restartTarget(const std::string& targetPath) {
 int main(int argc, char** argv) {
     std::string targetPath = argValue(argc, argv, "--target");
     std::string updatePath = argValue(argc, argv, "--update");
-    if (targetPath.empty() || updatePath.empty() || !fileLooksUsable(updatePath))
+    std::string logPath = LogPath(targetPath);
+    LogMsg(logPath, "--- update start: target=" + targetPath + " update=" + updatePath + " ---");
+
+    if (targetPath.empty() || updatePath.empty() || !fileLooksUsable(updatePath)) {
+        LogMsg(logPath, "aborting: missing --target/--update or update file not usable");
         return 2;
+    }
 
     waitForProcessExit(argValue(argc, argv, "--pid"));
-    if (!replaceFileWithRetry(updatePath, targetPath))
+    if (!replaceFileWithRetry(updatePath, targetPath, logPath))
         return 3;
 
+    LogMsg(logPath, "update applied successfully");
     if (hasFlag(argc, argv, "--restart"))
         restartTarget(targetPath);
     return 0;
