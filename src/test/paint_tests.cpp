@@ -319,13 +319,20 @@ TestResult RunPaintTests() {
     {
         auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string chromeH = ReadTextFile(root / "src/platform/chrome.h");
         std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
         std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
         const bool timerBudgetsWork =
             mainWin.find("kMaxResourceCompletionsPerTimerTick") != std::string::npos
             && mainWin.find("DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick)") != std::string::npos
             && mainWin.find("g_js.runMacrotasks(kMaxMacrotasksPerTimerTick)") != std::string::npos
-            && linuxMain.find("g_js.runMacrotasks(8)") != std::string::npos
+            // Linux delegates its timer tick to BrowserChrome::pumpJs() (chrome.h),
+            // a shared implementation of the same resource/script/macrotask
+            // budgeting Windows does inline — not a duplicate reimplementation.
+            && chromeH.find("kMaxResourceCompletionsPerTimerTick") != std::string::npos
+            && chromeH.find("DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick)") != std::string::npos
+            && chromeH.find("state.js.runMacrotasks(kMaxMacrotasksPerTimerTick)") != std::string::npos
+            && linuxMain.find("g_chrome.pumpJs()") != std::string::npos
             && macMain.find("g_js.runMacrotasks(8)") != std::string::npos;
         ExpectEqual("paint/platform-timers-budget-resource-and-js-work",
             timerBudgetsWork ? "budgeted\n" : "unbounded\n",

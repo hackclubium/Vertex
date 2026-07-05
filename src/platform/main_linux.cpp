@@ -13,8 +13,11 @@
 #include "platform/plat_text_measure.h"
 #include "network/resource_cache.h"
 #include "render/svg.h"
+#include "render/canvas_cairo.h"
 #include "third_party/stb_image.h"
 #include <set>
+#include <map>
+#include <memory>
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
@@ -91,6 +94,35 @@ static std::map<std::string, PlatBitmap> g_images;
 static std::set<std::string> g_loadingImages;
 static std::set<std::string> g_failedImages;
 static std::map<std::string, PlatFont> g_fontCache;
+
+// <canvas> 2D backend. Owns each canvas element's Cairo surface (content
+// persists across repaints, unlike PaintState which is rebuilt per frame);
+// g_canvasBitmaps mirrors the current PlatBitmap for each, rebuilt right
+// before painting since Resize() (canvas.width/height writes) swaps in a
+// new cairo_surface_t* that this cache would otherwise go stale against.
+static std::map<const Node*, std::unique_ptr<CairoCanvasSurface>> g_canvasSurfaces;
+static std::map<const Node*, PlatBitmap> g_canvasBitmaps;
+
+static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
+    if (!n) return nullptr;
+    auto it = g_canvasSurfaces.find(n);
+    if (it != g_canvasSurfaces.end()) return it->second.get();
+    auto parseIntAttr = [&](const char* a, int def) -> int {
+        std::string v = n->attr(a);
+        if (v.empty()) return def;
+        try { return std::max(0, std::stoi(v)); } catch (...) { return def; }
+    };
+    int w = parseIntAttr("width", 300);
+    int h = parseIntAttr("height", 150);
+    auto surface = std::make_unique<CairoCanvasSurface>(w, h,
+        [](const std::string& url) -> cairo_surface_t* {
+            auto imgIt = g_images.find(url);
+            return imgIt != g_images.end() ? (cairo_surface_t*)imgIt->second : nullptr;
+        });
+    ICanvasSurface* raw = surface.get();
+    g_canvasSurfaces[n] = std::move(surface);
+    return raw;
+}
 
 static Tab& CurTab() { return g_tabs[g_activeTab]; }
 
@@ -336,6 +368,14 @@ static gboolean on_draw(GtkWidget* widget, cairo_t* cr, gpointer data) {
             ps.topInset = 0;
             ps.baseUrl = tab.page->url;
             ps.images = &g_images;
+            // Rebuild from the live surfaces (not cached) since Resize()
+            // (canvas.width/height writes) swaps in a new cairo_surface_t*
+            // each time — reading it fresh here avoids ever compositing a
+            // stale/dangling pointer.
+            g_canvasBitmaps.clear();
+            for (auto& [node, surface] : g_canvasSurfaces)
+                g_canvasBitmaps[node] = surface->GetSurface();
+            ps.canvasSurfaces = &g_canvasBitmaps;
             ps.hits = &hits;
             ps.fontCache = &g_fontCache;
             ps.form = &g_formState;
@@ -530,10 +570,15 @@ int main(int argc, char* argv[]) {
     gtk_widget_set_margin_top(toolbar, 0);
     gtk_widget_set_margin_bottom(toolbar, 0);
 
-    GtkWidget* backBtn   = gtk_button_new_with_label("←");
-    GtkWidget* fwdBtn    = gtk_button_new_with_label("→");
-    GtkWidget* reloadBtn = gtk_button_new_with_label("↻");
-    GtkWidget* homeBtn   = gtk_button_new_with_label("⌂");
+    // Adwaita symbolic icons — GTK's native icon theme, matching the same
+    // "use the OS's own icon system" approach as Windows' Segoe MDL2 Assets
+    // toolbar glyphs. Symbolic icons recolor to the widget's CSS `color`
+    // automatically, so .vertex-command's existing hover/active/disabled
+    // theming (main_linux.cpp:174-192) applies unchanged.
+    GtkWidget* backBtn   = gtk_button_new_from_icon_name("go-previous-symbolic", GTK_ICON_SIZE_SMALL_TOOLBAR);
+    GtkWidget* fwdBtn    = gtk_button_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_SMALL_TOOLBAR);
+    GtkWidget* reloadBtn = gtk_button_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_SMALL_TOOLBAR);
+    GtkWidget* homeBtn   = gtk_button_new_from_icon_name("go-home-symbolic", GTK_ICON_SIZE_SMALL_TOOLBAR);
     g_signal_connect(backBtn,   "clicked", G_CALLBACK(on_back), NULL);
     g_signal_connect(fwdBtn,    "clicked", G_CALLBACK(on_forward), NULL);
     g_signal_connect(reloadBtn, "clicked", G_CALLBACK(on_reload), NULL);
@@ -583,6 +628,27 @@ int main(int argc, char* argv[]) {
         SetUrlBadge(u);
     };
     g_chrome.cb.setStatusText = [](const std::string& s) { if (g_statusLabel) gtk_label_set_text(GTK_LABEL(g_statusLabel), s.c_str()); };
+    g_chrome.cb.getCanvasSurface = [](Node* n) { return GetOrCreateCanvasSurface(n); };
+    g_chrome.cb.scrollIntoView = [](Node* target) {
+        if (!target || !g_layoutRoot) return;
+        std::function<bool(const LayoutBox*, float&)> findBox =
+            [&](const LayoutBox* box, float& y) -> bool {
+                if (!box) return false;
+                if (box->node == target) { y = box->y; return true; }
+                for (const auto& child : box->kids)
+                    if (findBox(child.get(), y)) return true;
+                for (const auto& line : box->lines) {
+                    for (const auto& frag : line.frags) {
+                        if (frag.src && frag.src->node == target) { y = frag.y; return true; }
+                    }
+                }
+                return false;
+            };
+        float y = 0.f;
+        if (!findBox(g_layoutRoot.get(), y)) return;
+        CurTab().scrollY = std::max(0.f, y - 16.f);
+        if (g_drawingArea) gtk_widget_queue_draw(g_drawingArea);
+    };
     g_chrome.onNavigateRequested = platformFetch;
     g_chrome.init();
 
@@ -595,11 +661,7 @@ int main(int argc, char* argv[]) {
         return G_SOURCE_REMOVE;
     }, g_window);
     g_timeout_add(16, [](gpointer) -> gboolean {
-        resetDomDirtyCoalesce();
-        try {
-            g_js.runMacrotasks(8);
-        } catch (...) {
-        }
+        g_chrome.pumpJs();
         return G_SOURCE_CONTINUE;
     }, nullptr);
     gtk_main();

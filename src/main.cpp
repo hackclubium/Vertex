@@ -68,18 +68,11 @@ static auto& g_formState = g_chrome.state.form;
 static auto& g_updater   = g_chrome.state.updater;
 static auto& g_js        = g_chrome.state.js;
 
-struct PendingPageScript {
-    int tabIdx = -1;
-    std::string pageUrl;
-    std::string source;
-    std::string filename;
-    bool dispatchLoadEvents = false;
-    bool fetchBeforeRun = false;
-};
-
-static constexpr size_t kMaxScriptsPerTimerTick = 2;
-static constexpr size_t kMaxResourceCompletionsPerTimerTick = 8;
-static constexpr size_t kMaxMacrotasksPerTimerTick = 8;
+// PendingPageScript and the kMax*PerTimerTick budget constants now live in
+// platform/chrome.h (shared with Linux/macOS's BrowserChrome::pumpJs()) —
+// Windows still runs its own independent pipeline below (doesn't call
+// BrowserChrome::onPageReady/pumpJs), just reusing the same type/constants
+// rather than redeclaring them.
 static std::deque<PendingPageScript> g_pendingPageScripts;
 
 static HCURSOR  g_cursorArrow, g_cursorHand;

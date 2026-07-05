@@ -33,6 +33,11 @@ struct PaintState {
     float topInset = 0;
     std::string baseUrl;
     std::map<std::string, PlatBitmap>* images = nullptr;
+    // <canvas> elements' backing drawing surfaces, keyed by Node* (not URL —
+    // canvas content is per-element mutable state, not a content-addressed
+    // network resource like `images`). See the "__canvas__" replacedUrl
+    // marker branch in PaintBoxDecorations below.
+    std::map<const Node*, PlatBitmap>* canvasSurfaces = nullptr;
     std::vector<HitRegion>* hits = nullptr;
     std::map<std::string, PlatFont>* fontCache = nullptr;
     FormState* form = nullptr;
@@ -259,6 +264,15 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
                     ps.r->DrawBitmap(bmp, cx, cy, box.contentW, box.contentH);
                     ps.r->ReleaseBitmap(bmp);
                 }
+            }
+        } else if (box.replacedUrl == "__canvas__" && box.node && ps.canvasSurfaces) {
+            // <canvas>'s backing surface is owned/persisted by the platform
+            // adapter (not per-frame like inline SVG above) — content must
+            // survive across repaints since JS draws into it once, not every
+            // frame. Composited exactly like a decoded <img> bitmap.
+            auto it = ps.canvasSurfaces->find(box.node);
+            if (it != ps.canvasSurfaces->end() && it->second) {
+                ps.r->DrawBitmap(it->second, cx, cy, box.contentW, box.contentH);
             }
         } else if (ps.images) {
             auto it = ps.images->find(box.replacedUrl);
@@ -517,10 +531,23 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
             }
             return;
         }
-        if (box.establishesInline) {
-            if (!hidden) PaintLines(ps, box);
-        } else {
-            for (auto& k : box.kids) PaintBoxTree(ps, *k);
+        // A PushClip above must always be matched by PopClip before this
+        // function returns, or the clip stack stays corrupted for every
+        // frame painted afterward — one bad subtree could then blank out
+        // every page painted from then on. Cairo's per-frame-fresh cairo_t
+        // limits the blast radius to a single frame today (unlike D2D's
+        // long-lived render target, where the equivalent bug was real), but
+        // this stays correct if that ever changes (e.g. longer-lived canvas
+        // contexts).
+        try {
+            if (box.establishesInline) {
+                if (!hidden) PaintLines(ps, box);
+            } else {
+                for (auto& k : box.kids) PaintBoxTree(ps, *k);
+            }
+        } catch (...) {
+            if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
+            throw;
         }
         if (clipped) {
             ps.r->PopClip();
@@ -556,14 +583,20 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     std::stable_sort(negZ.begin(), negZ.end(), byZ);
     std::stable_sort(posZ.begin(), posZ.end(), byZ);
 
-    for (auto* k : negZ)   PaintBoxTree(ps, *k);
-    if (box.establishesInline) {
-        if (!hidden) PaintLines(ps, box);
-    } else {
-        for (auto* k : inflow) PaintBoxTree(ps, *k);
+    // Same exception-safety rationale as the simple-children path above.
+    try {
+        for (auto* k : negZ)   PaintBoxTree(ps, *k);
+        if (box.establishesInline) {
+            if (!hidden) PaintLines(ps, box);
+        } else {
+            for (auto* k : inflow) PaintBoxTree(ps, *k);
+        }
+        for (auto* k : floats) PaintBoxTree(ps, *k);
+        for (auto* k : posZ)   PaintBoxTree(ps, *k);
+    } catch (...) {
+        if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
+        throw;
     }
-    for (auto* k : floats) PaintBoxTree(ps, *k);
-    for (auto* k : posZ)   PaintBoxTree(ps, *k);
 
     if (clipped) {
         ps.r->PopClip();

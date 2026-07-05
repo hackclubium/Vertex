@@ -23,9 +23,33 @@
 #include "platform/form_state.h"
 #include "platform/updater.h"
 #include "js/engine.h"
+#include "js/dom_bridge.h"
+#include "network/resource_cache.h"
+#include "network/text_decode.h"
 #include <string>
 #include <vector>
+#include <deque>
 #include <functional>
+#include <algorithm>
+
+// ── Pending page scripts ────────────────────────────────────────────────────
+// A <script> tag queued to run on the timer tick rather than synchronously
+// during page-load, so a slow/huge script can't block the UI thread. Ported
+// from the Windows adapter's WM_PAGE_READY/WM_TIMER handling (src/main.cpp)
+// into this shared header so every platform adapter gets the same behavior
+// instead of reimplementing it per OS.
+struct PendingPageScript {
+    int tabIdx = -1;
+    std::string pageUrl;
+    std::string source;
+    std::string filename;
+    bool dispatchLoadEvents = false;
+    bool fetchBeforeRun = false;
+};
+
+static constexpr size_t kMaxScriptsPerTimerTick = 2;
+static constexpr size_t kMaxResourceCompletionsPerTimerTick = 8;
+static constexpr size_t kMaxMacrotasksPerTimerTick = 8;
 
 // ── Chrome layout constants ─────────────────────────────────────────────────
 
@@ -76,6 +100,7 @@ struct ChromeState {
     FormState form;
     JsEngine js;
     const Node* hoverNode = nullptr;
+    std::deque<PendingPageScript> pendingScripts;
 
     // Layout
     ChromeLayout layout;
@@ -142,6 +167,12 @@ struct ChromeCallbacks {
     std::function<void(bool)> setFindVisible;
     std::function<void()> focusAddress;
     std::function<void()> focusFind;
+    // Platform-specific DOM hooks that need the platform's own layout tree /
+    // rendering backend — forwarded as-is into DomBridgeCallbacks by
+    // onPageReady(). Unset is fine (matches DomBridgeCallbacks' own
+    // no-op-safe defaults).
+    std::function<void(Node* target)> scrollIntoView;
+    std::function<ICanvasSurface*(Node*)> getCanvasSurface;
 };
 
 // ── Chrome controller ───────────────────────────────────────────────────────
@@ -229,7 +260,30 @@ public:
             if (!t.empty()) tab.title = t;
         }
         updateTitle();
+
+        runPageScripts(tabIdx);
+
         if (cb.repaint) cb.repaint();
+    }
+
+    // Called periodically (~16ms) by the platform adapter's own timer
+    // mechanism (Win32 SetTimer / GTK g_timeout_add / Cocoa NSTimer) to pump
+    // pending page scripts, JS macrotasks, and async resource completions.
+    // Mirrors src/main.cpp's WM_TIMER handler, kept here so every platform
+    // adapter gets identical behavior instead of reimplementing it. Returns
+    // true if there's still pending work worth ticking again for.
+    bool pumpJs() {
+        resetDomDirtyCoalesce();
+        if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
+            if (cb.repaint) cb.repaint();
+        }
+        runPendingPageScripts();
+        try {
+            state.js.runMacrotasks(kMaxMacrotasksPerTimerTick);
+        } catch (...) {
+        }
+        return !state.pendingScripts.empty() || state.js.hasPendingMacrotasks()
+            || HasPendingResourceCompletions();
     }
 
     void back() {
@@ -297,5 +351,148 @@ private:
 
     void updateTitle() {
         if (cb.setTitle) cb.setTitle(state.title());
+    }
+
+    // ── JS execution (ported from src/main.cpp's WM_PAGE_READY/WM_TIMER) ────
+
+    void clearPendingScriptsForTab(int tabIdx) {
+        auto& q = state.pendingScripts;
+        q.erase(std::remove_if(q.begin(), q.end(),
+            [tabIdx](const PendingPageScript& job) { return job.tabIdx == tabIdx; }),
+            q.end());
+    }
+
+    bool pendingPageScriptStillCurrent(const PendingPageScript& job) const {
+        return job.tabIdx >= 0
+            && job.tabIdx < (int)state.tabs.size()
+            && state.tabs[job.tabIdx].page
+            && state.tabs[job.tabIdx].page->url == job.pageUrl;
+    }
+
+    static bool pendingPageScriptWaitingForFetch(const PendingPageScript& job) {
+        return job.fetchBeforeRun && job.source.empty() && !job.filename.empty();
+    }
+
+    void requeueFetchedPageScript(PendingPageScript job, FetchResult res) {
+        if (!pendingPageScriptStillCurrent(job)) return;
+        if (res.success && !res.body.empty())
+            job.source = DecodeTextToUtf8(res.body, res.contentType);
+        job.fetchBeforeRun = false;
+        state.pendingScripts.push_back(std::move(job));
+    }
+
+    void runPendingPageScripts() {
+        size_t ran = 0;
+        while (!state.pendingScripts.empty() && ran < kMaxScriptsPerTimerTick) {
+            PendingPageScript job = std::move(state.pendingScripts.front());
+            state.pendingScripts.pop_front();
+            if (!pendingPageScriptStillCurrent(job)) continue;
+            try {
+                if (job.dispatchLoadEvents) {
+                    state.js.dispatchDocumentEvent("DOMContentLoaded");
+                    state.js.dispatchWindowEvent("load");
+                } else if (pendingPageScriptWaitingForFetch(job)) {
+                    FetchResourceAsync(job.filename, 1024 * 1024, ResourceKind::Script,
+                        [this, job](FetchResult res) mutable {
+                            requeueFetchedPageScript(std::move(job), std::move(res));
+                        });
+                } else {
+                    std::string source = std::move(job.source);
+                    if (!source.empty())
+                        state.js.runScript(source, job.filename);
+                }
+            } catch (...) {
+            }
+            ++ran;
+        }
+    }
+
+    // Walks the loaded DOM for <script> tags, registers the DOM/window
+    // globals with the JS engine, and queues blocking/deferred scripts plus
+    // a final DOMContentLoaded/load dispatch — same shape as the Windows
+    // adapter's WM_PAGE_READY script-setup block (src/main.cpp).
+    void runPageScripts(int tabIdx) {
+        if (tabIdx < 0 || tabIdx >= (int)state.tabs.size()) return;
+        Tab& tab = state.tabs[tabIdx];
+        if (!tab.page || !tab.page->dom) return;
+        try {
+            auto repaint = [this]() { if (cb.repaint) cb.repaint(); };
+            DomBridgeCallbacks callbacks;
+            callbacks.repaintOnly = repaint;
+            callbacks.navigate = [this, tabIdx](const std::string& url, bool replace) {
+                if (tabIdx != state.activeTab) return;
+                navigate(state.activeTab, url, !replace);
+            };
+            callbacks.scrollTo = [this, tabIdx](float, float y) {
+                if (tabIdx != state.activeTab || tabIdx >= (int)state.tabs.size()) return;
+                state.tabs[tabIdx].scrollY = y;
+                if (cb.repaint) cb.repaint();
+            };
+            callbacks.scrollBy = [this, tabIdx](float, float dy) {
+                if (tabIdx != state.activeTab || tabIdx >= (int)state.tabs.size()) return;
+                state.tabs[tabIdx].scrollY += dy;
+                if (cb.repaint) cb.repaint();
+            };
+            callbacks.scrollIntoView = cb.scrollIntoView;
+            callbacks.getCanvasSurface = cb.getCanvasSurface;
+
+            state.js.setDocument(tab.page->dom, repaint, tab.page->url, std::move(callbacks));
+
+            struct ScriptEntry { std::string source; std::string filename; bool fetchBeforeRun = false; };
+            std::vector<ScriptEntry> deferred;
+            std::vector<ScriptEntry> blocking;
+            const std::string pageUrl = tab.page->url;
+            clearPendingScriptsForTab(tabIdx);
+            std::vector<const Node*> stack;
+            stack.push_back(tab.page->dom.get());
+            size_t scriptCount = 0;
+            size_t totalScriptBytes = 0;
+            while (!stack.empty()) {
+                const Node* n = stack.back();
+                stack.pop_back();
+                if (!n) continue;
+                if (n->type == NodeType::Element && n->tagName == "script") {
+                    std::string type = n->attr("type");
+                    bool skip = (!type.empty() && type != "text/javascript"
+                                 && type != "application/javascript" && type != "module");
+                    bool isDefer = !n->attr("defer").empty() || !n->attr("async").empty();
+                    std::string source;
+                    std::string srcUrl = n->attr("src");
+                    std::string filename = "inline";
+                    std::string preloadedFilename = n->attr("__vertex_script_filename");
+                    if (!preloadedFilename.empty() && !skip) {
+                        filename = preloadedFilename;
+                        for (auto& c : n->children)
+                            if (c->type == NodeType::Text) source += c->text;
+                    } else if (!srcUrl.empty() && !skip) {
+                        filename = ResolveUrlAgainstBase(srcUrl, pageUrl);
+                    } else {
+                        for (auto& c : n->children)
+                            if (c->type == NodeType::Text) source += c->text;
+                    }
+                    const bool fetchBeforeRun = !srcUrl.empty() && preloadedFilename.empty() && !skip;
+                    totalScriptBytes += source.size();
+                    if (!skip && (!source.empty() || fetchBeforeRun) && scriptCount < 192
+                        && totalScriptBytes <= 2 * 1024 * 1024) {
+                        if (isDefer && !srcUrl.empty())
+                            deferred.push_back({ source, filename, fetchBeforeRun });
+                        else
+                            blocking.push_back({ source, filename, fetchBeforeRun });
+                    }
+                    ++scriptCount;
+                }
+                for (auto it = n->children.rbegin(); it != n->children.rend(); ++it)
+                    stack.push_back(it->get());
+            }
+            for (auto& script : blocking)
+                state.pendingScripts.push_back({ tabIdx, pageUrl, std::move(script.source),
+                    std::move(script.filename), false, script.fetchBeforeRun });
+            for (auto& script : deferred)
+                state.pendingScripts.push_back({ tabIdx, pageUrl, std::move(script.source),
+                    std::move(script.filename), false, script.fetchBeforeRun });
+            state.pendingScripts.push_back({ tabIdx, pageUrl, {}, "__vertex_load_events__", true, false });
+        } catch (...) {
+            // Page script setup failed; continue without page scripts.
+        }
     }
 };

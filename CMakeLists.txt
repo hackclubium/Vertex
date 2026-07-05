@@ -165,6 +165,7 @@ elseif (UNIX)
     add_executable(Vertex
         src/platform/main_linux.cpp
         src/platform/platform_linux.cpp
+        src/render/canvas_cairo.cpp
     )
     target_include_directories(Vertex PRIVATE src ${GTK3_INCLUDE_DIRS})
     target_link_libraries(Vertex PRIVATE vertex_engine ${GTK3_LIBRARIES})
