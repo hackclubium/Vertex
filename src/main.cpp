@@ -83,6 +83,7 @@ static std::deque<PendingPageScript> g_pendingPageScripts;
 
 static HCURSOR  g_cursorArrow, g_cursorHand;
 static HFONT    g_uiFont = nullptr;
+static HFONT    g_iconFont = nullptr; // Segoe MDL2 Assets, for the nav toolbar glyphs
 static HFONT    g_urlFont = nullptr;
 static HBRUSH   g_toolbarBrush = nullptr;
 static HBRUSH   g_statusBrush = nullptr;
@@ -850,7 +851,7 @@ static void DrawChromeButton(const DRAWITEMSTRUCT* dis) {
     GetWindowTextW(dis->hwndItem, label, 16);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);
-    HFONT oldFont = g_uiFont ? (HFONT)SelectObject(dc, g_uiFont) : nullptr;
+    HFONT oldFont = g_iconFont ? (HFONT)SelectObject(dc, g_iconFont) : nullptr;
     if (pressed) OffsetRect(&r, 0, 1);
     DrawTextW(dc, label, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
     if (oldFont) SelectObject(dc, oldFont);
@@ -1071,11 +1072,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_OWNERDRAW,
                 0,0,0,0, hwnd, (HMENU)(intptr_t)id, hi, NULL);
         };
-        g_hwndBack = btn(L"\x2190", IDC_BACK);
-        g_hwndFwrd = btn(L"\x2192", IDC_FWRD);
-        g_hwndRefr = btn(L"\x21BB", IDC_REFR);
-        g_hwndStop = btn(L"\x2715", IDC_STOP);
-        g_hwndHome = btn(L"\x2302", IDC_HOME);
+        // Segoe MDL2 Assets glyphs (Windows' own native icon font — see g_iconFont).
+        g_hwndBack = btn(L"\xE72B", IDC_BACK);
+        g_hwndFwrd = btn(L"\xE72A", IDC_FWRD);
+        g_hwndRefr = btn(L"\xE72C", IDC_REFR);
+        g_hwndStop = btn(L"\xE711", IDC_STOP);
+        g_hwndHome = btn(L"\xE10F", IDC_HOME);
         SetWindowSubclass(g_hwndBack, ChromeButtonProc, 11, 0);
         SetWindowSubclass(g_hwndFwrd, ChromeButtonProc, 12, 0);
         SetWindowSubclass(g_hwndRefr, ChromeButtonProc, 13, 0);
@@ -1103,6 +1105,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_uiFont = CreateFontW(-14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        g_iconFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
         g_urlFont = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
@@ -1111,12 +1116,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_editBrush = CreateSolidBrush(kChromeActive);
         SendMessageW(g_hwndUrl, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
         SendMessageW(g_hwndFind, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(10, 10));
+        if (g_iconFont) {
+            SendMessageW(g_hwndBack, WM_SETFONT, (WPARAM)g_iconFont, TRUE);
+            SendMessageW(g_hwndFwrd, WM_SETFONT, (WPARAM)g_iconFont, TRUE);
+            SendMessageW(g_hwndRefr, WM_SETFONT, (WPARAM)g_iconFont, TRUE);
+            SendMessageW(g_hwndStop, WM_SETFONT, (WPARAM)g_iconFont, TRUE);
+            SendMessageW(g_hwndHome, WM_SETFONT, (WPARAM)g_iconFont, TRUE);
+        }
         if (g_uiFont) {
-            SendMessageW(g_hwndBack, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
-            SendMessageW(g_hwndFwrd, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
-            SendMessageW(g_hwndRefr, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
-            SendMessageW(g_hwndStop, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
-            SendMessageW(g_hwndHome, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
             SendMessageW(g_hwndUrlBadge, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
             SendMessageW(g_hwndStatus, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
         }
@@ -1632,6 +1639,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DESTROY:
         if (g_uiFont) { DeleteObject(g_uiFont); g_uiFont = nullptr; }
+        if (g_iconFont) { DeleteObject(g_iconFont); g_iconFont = nullptr; }
         if (g_urlFont) { DeleteObject(g_urlFont); g_urlFont = nullptr; }
         if (g_toolbarBrush) { DeleteObject(g_toolbarBrush); g_toolbarBrush = nullptr; }
         if (g_statusBrush) { DeleteObject(g_statusBrush); g_statusBrush = nullptr; }
