@@ -17,6 +17,7 @@
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
 #include "render/canvas_coregraphics.h"
+#include "render/webfont.h"
 #include <map>
 #include <memory>
 
@@ -186,6 +187,18 @@ static Stylesheet CollectCSS(const Node* root) {
     Tab& tab = CurTab();
     try {
         Stylesheet sheet = CollectCSS(tab.page->dom.get());
+        if (!sheet.fontFaces.empty()) {
+            // loadFonts() dedupes by resolved URL internally, so calling it
+            // every paint (this function has no doc-level style cache to
+            // gate it on, unlike Windows' Renderer) is cheap after the first
+            // frame. The download runs on a background thread; hop back to
+            // the main queue before touching g_view.
+            WebFontLoader::instance().loadFonts(sheet, tab.page->url, []() {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (g_view) [g_view setNeedsDisplay:YES];
+                });
+            });
+        }
         LayoutInput in;
         in.document = tab.page->dom.get();
         in.sheet = &sheet;

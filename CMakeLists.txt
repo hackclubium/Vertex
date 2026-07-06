@@ -163,14 +163,19 @@ elseif (APPLE)
 elseif (UNIX)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+    # fontconfig is a transitive dependency of GTK3/Pango already, but that
+    # doesn't guarantee -lfontconfig lands on the link line — webfont.h calls
+    # FcConfigAppFontAddFile/FcConfigGetCurrent directly, so it needs its own
+    # explicit pkg-config module.
+    pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
     add_executable(Vertex
         src/platform/main_linux.cpp
         src/platform/platform_linux.cpp
         src/render/canvas_cairo.cpp
     )
-    target_include_directories(Vertex PRIVATE src ${GTK3_INCLUDE_DIRS})
-    target_link_libraries(Vertex PRIVATE vertex_engine ${GTK3_LIBRARIES})
-    target_compile_options(Vertex PRIVATE ${GTK3_CFLAGS_OTHER})
+    target_include_directories(Vertex PRIVATE src ${GTK3_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
+    target_link_libraries(Vertex PRIVATE vertex_engine ${GTK3_LIBRARIES} ${FONTCONFIG_LIBRARIES})
+    target_compile_options(Vertex PRIVATE ${GTK3_CFLAGS_OTHER} ${FONTCONFIG_CFLAGS_OTHER})
     add_custom_command(TARGET Vertex POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png

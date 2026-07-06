@@ -14,9 +14,16 @@
 #include <set>
 #include <thread>
 #include <mutex>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <CoreText/CoreText.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <CoreFoundation/CoreFoundation.h>
+#else
+#include <fontconfig/fontconfig.h>
 #endif
 
 class WebFontLoader {
@@ -70,20 +77,43 @@ private:
             m_handles.push_back(h);
         }
 #elif defined(__APPLE__)
-        // macOS: write to temp file, register with CTFontManagerRegisterFontsForURL.
-        // Simplified: write to /tmp and hope CoreText picks it up.
-        std::string path = "/tmp/vertex_font_" + std::to_string(std::hash<std::string>{}(family)) + ".ttf";
-        FILE* f = fopen(path.c_str(), "wb");
-        if (f) { fwrite(data.data(), 1, data.size(), f); fclose(f); }
+        // Register entirely in-memory (mirrors AddFontMemResourceEx above) —
+        // no temp file, no permanent system font-list pollution, and the
+        // font is available for this process the instant this call returns.
+        CFDataRef cfData = CFDataCreate(kCFAllocatorDefault,
+            (const UInt8*)data.data(), (CFIndex)data.size());
+        if (cfData) {
+            CGDataProviderRef provider = CGDataProviderCreateWithCFData(cfData);
+            if (provider) {
+                CGFontRef font = CGFontCreateWithDataProvider(provider);
+                if (font) {
+                    CTFontManagerRegisterGraphicsFont(font, nullptr);
+                    CGFontRelease(font);
+                }
+                CGDataProviderRelease(provider);
+            }
+            CFRelease(cfData);
+        }
 #else
-        // Linux: write to ~/.local/share/fonts/ for fontconfig to find.
-        std::string dir = std::string(getenv("HOME") ? getenv("HOME") : "/tmp") + "/.local/share/fonts";
-        std::string cmd = "mkdir -p " + dir;
-        system(cmd.c_str());
-        std::string path = dir + "/vertex_" + std::to_string(std::hash<std::string>{}(family)) + ".ttf";
-        FILE* f = fopen(path.c_str(), "wb");
-        if (f) { fwrite(data.data(), 1, data.size(), f); fclose(f); }
-        system("fc-cache -f 2>/dev/null &");
+        // Linux: fontconfig has no from-memory registration API, so the bytes
+        // still need to land on disk — but into a scratch cache directory,
+        // not the user's real ~/.local/share/fonts (which would permanently
+        // pollute their system font list with every web font from every page
+        // ever visited). FcConfigAppFontAddFile registers the file with this
+        // process's fontconfig instance directly and takes effect
+        // immediately — no shelling out to fc-cache and racing its async,
+        // whole-system cache rebuild against the page finishing layout.
+        std::filesystem::path dir =
+            std::filesystem::path(getenv("HOME") ? getenv("HOME") : "/tmp") / ".cache/vertex-fonts";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::filesystem::path path = dir / ("vertex_" + std::to_string(std::hash<std::string>{}(family)) + ".ttf");
+        FILE* f = fopen(path.string().c_str(), "wb");
+        if (f) {
+            fwrite(data.data(), 1, data.size(), f);
+            fclose(f);
+            FcConfigAppFontAddFile(FcConfigGetCurrent(), (const FcChar8*)path.string().c_str());
+        }
 #endif
     }
 };

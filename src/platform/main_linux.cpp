@@ -14,6 +14,7 @@
 #include "network/resource_cache.h"
 #include "render/svg.h"
 #include "render/canvas_cairo.h"
+#include "render/webfont.h"
 #include "third_party/stb_image.h"
 #include <set>
 #include <map>
@@ -351,6 +352,19 @@ static gboolean on_draw(GtkWidget* widget, cairo_t* cr, gpointer data) {
     Tab& tab = CurTab();
     try {
         Stylesheet sheet = CollectCSS(tab.page->dom.get());
+        if (!sheet.fontFaces.empty()) {
+            // loadFonts() dedupes by resolved URL internally, so calling it
+            // every paint (this function has no doc-level style cache to
+            // gate it on, unlike Windows' Renderer) is cheap after the first
+            // frame. The download runs on a background thread; hop back to
+            // the GTK main loop before touching g_drawingArea.
+            WebFontLoader::instance().loadFonts(sheet, tab.page->url, []() {
+                g_idle_add([](gpointer) -> gboolean {
+                    if (g_drawingArea) gtk_widget_queue_draw(g_drawingArea);
+                    return G_SOURCE_REMOVE;
+                }, nullptr);
+            });
+        }
         LayoutInput in;
         in.document = tab.page->dom.get();
         in.sheet = &sheet;
