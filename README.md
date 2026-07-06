@@ -99,7 +99,9 @@ transport, decoding, and platform drawing:
 | stb\_image | PNG/JPEG/etc. decoding |
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
-| Cairo (Linux `<canvas>` only) | Linux `<canvas>` 2D drawing |
+
+Linux has none — windowing (XCB), 2D rendering, text, and `<canvas>` are all
+hand-rolled, no GTK/Cairo/Pango/fontconfig.
 
 ## Download
 
@@ -155,12 +157,11 @@ open build/Vertex.app
 
 ### Linux
 
-Requires XCB and Cairo development headers. No GTK, Pango, or fontconfig — Vertex
-does its own windowing, rasterizing, and text rendering on Linux. Cairo is kept only
-for `<canvas>`.
+Requires only XCB development headers. No GTK, Cairo, Pango, or fontconfig — Vertex
+does its own windowing, rasterizing, text rendering, and `<canvas>` on Linux.
 
 ```sh
-sudo apt-get install -y build-essential cmake libxcb1-dev libcairo2-dev libcurl4-openssl-dev pkg-config
+sudo apt-get install -y build-essential cmake libxcb1-dev libcurl4-openssl-dev pkg-config
 cmake -B build
 cmake --build build
 ./build/Vertex
