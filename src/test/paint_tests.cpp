@@ -141,9 +141,9 @@ TestResult RunPaintTests() {
             && mainWin.find("AppsUseLightTheme") != std::string::npos
             && mainWin.find("ApplyThemedWindowIcon") != std::string::npos
             && mainWin.find("WM_SETTINGCHANGE") != std::string::npos
-            && linuxMain.find("gtk-application-prefer-dark-theme") != std::string::npos
+            && linuxMain.find("_XSETTINGS_SETTINGS") != std::string::npos
             && linuxMain.find("vertex_icon_light.png") != std::string::npos
-            && linuxMain.find("notify::gtk-application-prefer-dark-theme") != std::string::npos
+            && linuxMain.find("_NET_WM_ICON") != std::string::npos
             && cmake.find("src/platform/vertex_icon_light.icns") != std::string::npos
             && macMain.find("effectiveAppearance") != std::string::npos
             && macMain.find("vertex_icon_light.icns") != std::string::npos

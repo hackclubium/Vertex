@@ -6,7 +6,6 @@
 //
 #define _USE_MATH_DEFINES
 #include "platform/platform.h"
-#include <gtk/gtk.h>
 #include <cmath>
 #include <pango/pangocairo.h>
 #include <cstring>
@@ -34,7 +33,7 @@ public:
     ~LinuxRenderer() override = default;
 
     bool Init(void* nativeWindow) override {
-        m_widget = (GtkWidget*)nativeWindow;
+        m_widget = nativeWindow;
         return m_widget != nullptr;
     }
 
@@ -207,7 +206,7 @@ public:
     int Height() const override { return m_height; }
 
 private:
-    GtkWidget* m_widget = nullptr;
+    void* m_widget = nullptr;
     cairo_t* m_cr = nullptr;
     int m_width = 800, m_height = 600;
 };

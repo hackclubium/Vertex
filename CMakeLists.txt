@@ -204,20 +204,25 @@ elseif (APPLE)
     )
 elseif (UNIX)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
-    # fontconfig is a transitive dependency of GTK3/Pango already, but that
-    # doesn't guarantee -lfontconfig lands on the link line — webfont.h calls
-    # FcConfigAppFontAddFile/FcConfigGetCurrent directly, so it needs its own
-    # explicit pkg-config module.
+    # GTK3 is gone (phase 1 of the Linux windowing rewrite: raw XCB replaces
+    # GTK's window/widget toolkit — see main_linux.cpp). Cairo/Pango/
+    # fontconfig are still used directly (via cairo-xcb) until later phases
+    # replace them with a hand-rolled rasterizer/font engine.
+    pkg_check_modules(XCB REQUIRED xcb)
+    pkg_check_modules(CAIRO_XCB REQUIRED cairo-xcb)
+    pkg_check_modules(PANGOCAIRO REQUIRED pangocairo)
     pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
     add_executable(Vertex
         src/platform/main_linux.cpp
         src/platform/platform_linux.cpp
         src/render/canvas_cairo.cpp
     )
-    target_include_directories(Vertex PRIVATE src ${GTK3_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
-    target_link_libraries(Vertex PRIVATE vertex_engine ${GTK3_LIBRARIES} ${FONTCONFIG_LIBRARIES})
-    target_compile_options(Vertex PRIVATE ${GTK3_CFLAGS_OTHER} ${FONTCONFIG_CFLAGS_OTHER})
+    target_include_directories(Vertex PRIVATE src
+        ${XCB_INCLUDE_DIRS} ${CAIRO_XCB_INCLUDE_DIRS} ${PANGOCAIRO_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
+    target_link_libraries(Vertex PRIVATE vertex_engine
+        ${XCB_LIBRARIES} ${CAIRO_XCB_LIBRARIES} ${PANGOCAIRO_LIBRARIES} ${FONTCONFIG_LIBRARIES})
+    target_compile_options(Vertex PRIVATE
+        ${XCB_CFLAGS_OTHER} ${CAIRO_XCB_CFLAGS_OTHER} ${PANGOCAIRO_CFLAGS_OTHER} ${FONTCONFIG_CFLAGS_OTHER})
     add_custom_command(TARGET Vertex POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png
