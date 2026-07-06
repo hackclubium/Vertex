@@ -11,7 +11,7 @@ static int Finish(const TestResult& result) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        std::cout << "Usage: vertex-tests <html|css|layout|paint|js|network>\n";
+        std::cout << "Usage: vertex-tests <html|css|layout|paint|js|network|codec>\n";
         return 2;
     }
 
@@ -22,6 +22,7 @@ int main(int argc, char** argv) {
     if (suite == "paint") return Finish(RunPaintTests());
     if (suite == "js") return Finish(RunJsTests());
     if (suite == "network") return Finish(RunNetworkTests());
+    if (suite == "codec") return Finish(RunCodecTests());
 
     std::cout << "Unknown suite: " << suite << "\n";
     return 2;

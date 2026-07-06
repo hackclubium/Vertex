@@ -75,6 +75,7 @@ if (MSVC)
 endif()
 
 add_library(vertex_engine STATIC
+    src/codec/inflate.cpp
     src/network/fetcher.cpp
     src/network/resource_cache.cpp
     src/network/text_decode.cpp
@@ -200,6 +201,7 @@ add_executable(vertex-tests
     src/test/paint_tests.cpp
     src/test/js_tests.cpp
     src/test/network_tests.cpp
+    src/test/codec_tests.cpp
 )
 
 target_include_directories(vertex-tests PRIVATE src)
