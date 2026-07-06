@@ -27,6 +27,8 @@ repository.
 If you want to understand how a browser actually works, Vertex is the kind of project
 you can open, read, and tinker with.
 
+Comments in the codebase are intentionally detailed to aid readability.
+
 ## Status
 
 Vertex loads real pages and has enough of the platform to be useful as an everyday
