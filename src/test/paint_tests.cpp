@@ -333,7 +333,7 @@ TestResult RunPaintTests() {
             && chromeH.find("DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick)") != std::string::npos
             && chromeH.find("state.js.runMacrotasks(kMaxMacrotasksPerTimerTick)") != std::string::npos
             && linuxMain.find("g_chrome.pumpJs()") != std::string::npos
-            && macMain.find("g_js.runMacrotasks(8)") != std::string::npos;
+            && macMain.find("g_chrome.pumpJs()") != std::string::npos;
         ExpectEqual("paint/platform-timers-budget-resource-and-js-work",
             timerBudgetsWork ? "budgeted\n" : "unbounded\n",
             "budgeted\n",

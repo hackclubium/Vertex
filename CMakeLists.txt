@@ -144,6 +144,7 @@ elseif (APPLE)
     add_executable(Vertex MACOSX_BUNDLE
         src/platform/main_macos.mm
         src/platform/platform_macos.mm
+        src/render/canvas_coregraphics.cpp
         src/platform/vertex_icon.icns
         src/platform/vertex_icon_light.icns
     )

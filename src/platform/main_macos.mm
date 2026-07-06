@@ -6,6 +6,7 @@
 // NSView for rendering, and drives the browser core (tabs, navigation, etc.).
 //
 #import <Cocoa/Cocoa.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include "platform/platform.h"
 #include "platform/chrome.h"
 #include "platform/chrome_theme.h"
@@ -15,6 +16,9 @@
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
+#include "render/canvas_coregraphics.h"
+#include <map>
+#include <memory>
 
 // ── forward declarations ─────────────────────────────────────────────────────
 
@@ -42,6 +46,36 @@ static std::unique_ptr<PlatTextMeasure> g_measure;
 static std::unique_ptr<LayoutBox> g_layoutRoot;
 static std::map<std::string, PlatBitmap> g_images;
 static std::map<std::string, PlatFont> g_fontCache;
+
+// <canvas> 2D backend. Owns each canvas element's CoreGraphics bitmap
+// context (content persists across repaints, unlike PaintState which is
+// rebuilt per frame); g_canvasBitmaps mirrors a fresh CGImageRef snapshot
+// for each, rebuilt right before painting since CGImageRef is immutable
+// (unlike Linux's cairo_surface_t*, which can be composited live) — the old
+// snapshots must be released each time or they'd leak.
+static std::map<const Node*, std::unique_ptr<CoreGraphicsCanvasSurface>> g_canvasSurfaces;
+static std::map<const Node*, PlatBitmap> g_canvasBitmaps;
+
+static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
+    if (!n) return nullptr;
+    auto it = g_canvasSurfaces.find(n);
+    if (it != g_canvasSurfaces.end()) return it->second.get();
+    auto parseIntAttr = [&](const char* a, int def) -> int {
+        std::string v = n->attr(a);
+        if (v.empty()) return def;
+        try { return std::max(0, std::stoi(v)); } catch (...) { return def; }
+    };
+    int w = parseIntAttr("width", 300);
+    int h = parseIntAttr("height", 150);
+    auto surface = std::make_unique<CoreGraphicsCanvasSurface>(w, h,
+        [](const std::string& url) -> CGImageRef {
+            auto imgIt = g_images.find(url);
+            return imgIt != g_images.end() ? (CGImageRef)imgIt->second : nullptr;
+        });
+    ICanvasSurface* raw = surface.get();
+    g_canvasSurfaces[n] = std::move(surface);
+    return raw;
+}
 
 static Tab& CurTab() { return g_tabs[g_activeTab]; }
 
@@ -169,6 +203,15 @@ static Stylesheet CollectCSS(const Node* root) {
             ps.topInset = 0;
             ps.baseUrl = tab.page->url;
             ps.images = &g_images;
+            // Rebuild from fresh snapshots each frame — CGImageRef is
+            // immutable, so last frame's images must be released before
+            // creating new ones, unlike Linux's live cairo_surface_t* cache.
+            for (auto& [node, bmp] : g_canvasBitmaps)
+                if (bmp) CGImageRelease((CGImageRef)bmp);
+            g_canvasBitmaps.clear();
+            for (auto& [node, surface] : g_canvasSurfaces)
+                g_canvasBitmaps[node] = surface->CreateSnapshot();
+            ps.canvasSurfaces = &g_canvasBitmaps;
             ps.hits = &hits;
             ps.fontCache = &g_fontCache;
             ps.form = &g_formState;
@@ -451,6 +494,27 @@ int main(int argc, const char* argv[]) {
         g_chrome.cb.setStatusText = [](const std::string& s) {
             if (g_statusField) [g_statusField setStringValue:[NSString stringWithUTF8String:s.c_str()]];
         };
+        g_chrome.cb.getCanvasSurface = [](Node* n) { return GetOrCreateCanvasSurface(n); };
+        g_chrome.cb.scrollIntoView = [](Node* target) {
+            if (!target || !g_layoutRoot) return;
+            std::function<bool(const LayoutBox*, float&)> findBox =
+                [&](const LayoutBox* box, float& y) -> bool {
+                    if (!box) return false;
+                    if (box->node == target) { y = box->y; return true; }
+                    for (const auto& child : box->kids)
+                        if (findBox(child.get(), y)) return true;
+                    for (const auto& line : box->lines) {
+                        for (const auto& frag : line.frags) {
+                            if (frag.src && frag.src->node == target) { y = frag.y; return true; }
+                        }
+                    }
+                    return false;
+                };
+            float y = 0.f;
+            if (!findBox(g_layoutRoot.get(), y)) return;
+            CurTab().scrollY = std::max(0.f, y - 16.f);
+            if (g_view) [g_view setNeedsDisplay:YES];
+        };
         g_chrome.onNavigateRequested = [](int tabIdx, const std::string& url) {
             // macOS platform-owned fetch.
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -471,11 +535,7 @@ int main(int argc, const char* argv[]) {
         };
         g_chrome.init();
         [NSTimer scheduledTimerWithTimeInterval:0.016 repeats:YES block:^(NSTimer*) {
-            resetDomDirtyCoalesce();
-            try {
-                g_js.runMacrotasks(8);
-            } catch (...) {
-            }
+            g_chrome.pumpJs();
         }];
 
         [g_window makeKeyAndOrderFront:nil];
