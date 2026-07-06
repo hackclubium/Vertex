@@ -60,6 +60,29 @@ else ()
     FetchContent_MakeAvailable(curl)
 endif ()
 
+# ── mbedTLS (Linux-only TLS backend) ──────────────────────────────────────────
+# Windows and macOS get real OS-native TLS (SChannel / Secure Transport —
+# see src/network/tls_windows.cpp / tls_macos.cpp), zero third-party
+# dependency. Linux has no OS-provided TLS stack at all, so it gets one
+# small, bundled library instead (see src/network/tls_linux.cpp) — a
+# deliberate, scoped exception, not a full third-party HTTP/TLS engine.
+if (UNIX AND NOT APPLE)
+    include(FetchContent)
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+    # A plain release tarball is missing the "framework" git submodule
+    # mbedTLS 3.6.x's build needs — clone via git instead, which pulls
+    # submodules along with it.
+    FetchContent_Declare(mbedtls
+        GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
+        GIT_TAG v3.6.2
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(mbedtls)
+endif ()
+
 # Use /EHa everywhere so catch(...) also catches structured exceptions
 # (access violations etc.) — a faulting page must never kill the browser.
 # Strip the default /EHsc first so it doesn't override /EHa on any target.
@@ -86,6 +109,9 @@ add_library(vertex_engine STATIC
     src/network/websocket.cpp
     src/network/socket.cpp
     src/network/http_client.cpp
+    src/network/tls_windows.cpp
+    src/network/tls_linux.cpp
+    src/network/tls_macos.cpp
     src/platform/downloads.cpp
     src/platform/profile.cpp
     src/html/tokenizer.cpp
@@ -119,6 +145,15 @@ endif()
 if (MSVC)
     # /EHa: catch SEH exceptions (stack overflow, access violation) in catch(...)
     target_compile_options(vertex_engine PUBLIC /EHa)
+endif()
+
+# TLS backend per platform — see src/network/tls_socket.h.
+if (WIN32)
+    target_link_libraries(vertex_engine PUBLIC secur32 crypt32)
+elseif (APPLE)
+    target_link_libraries(vertex_engine PUBLIC "-framework Security" "-framework CoreFoundation")
+elseif (UNIX)
+    target_link_libraries(vertex_engine PUBLIC mbedtls mbedx509 mbedcrypto)
 endif()
 
 # ── platform backends ─────────────────────────────────────────────────────────
@@ -244,6 +279,7 @@ target_link_libraries(dump_js PRIVATE vertex_engine)
 add_executable(test_url tools/test_url.cpp)
 target_include_directories(test_url PRIVATE src)
 target_link_libraries(test_url PRIVATE vertex_engine)
+
 if (MSVC)
     target_link_options(dump_js PRIVATE /DYNAMICBASE:NO /MAP)
 endif()

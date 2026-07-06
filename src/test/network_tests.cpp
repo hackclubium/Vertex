@@ -449,6 +449,31 @@ TestResult RunNetworkTests() {
     }
 
     {
+        // Same reasoning as above, for the hand-rolled TLS backends
+        // (tls_windows.cpp/tls_linux.cpp/tls_macos.cpp) — assert the
+        // certificate-validation posture directly rather than hitting a
+        // real MITM-able endpoint in the automated suite. (Manually
+        // verified end-to-end against real HTTPS servers during
+        // development — see commit history/memory, not repeatable here.)
+        auto root = FindRepoRoot();
+        std::string win = ReadTextFile(root / "src/network/tls_windows.cpp");
+        std::string linux_ = ReadTextFile(root / "src/network/tls_linux.cpp");
+        const bool windowsValidates =
+            win.find("SCH_CRED_AUTO_CRED_VALIDATION") != std::string::npos &&
+            win.find("SCH_CRED_MANUAL_CRED_VALIDATION") == std::string::npos &&
+            win.find("SCH_CRED_IGNORE_NO_REVOCATION_CHECK") == std::string::npos;
+        const bool linuxValidates =
+            linux_.find("MBEDTLS_SSL_VERIFY_REQUIRED") != std::string::npos &&
+            linux_.find("MBEDTLS_SSL_VERIFY_NONE") == std::string::npos &&
+            linux_.find("mbedtls_ssl_get_verify_result") != std::string::npos;
+        ExpectEqual("network/hand-rolled-tls-verifies-certificates",
+            std::string(windowsValidates ? "windows-verifies " : "windows-no-verify ") +
+                (linuxValidates ? "linux-verifies\n" : "linux-no-verify\n"),
+            "windows-verifies linux-verifies\n",
+            result);
+    }
+
+    {
         auto document = ParseHtml(
             "<html><head><script id=\"classic\" "
             "src=\"data:text/javascript,window.answer%3D42%3B\"></script></head></html>");

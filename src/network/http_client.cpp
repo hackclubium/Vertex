@@ -1,5 +1,6 @@
 #include "network/http_client.h"
 #include "network/socket.h"
+#include "network/tls_socket.h"
 #include "network/cookies.h"
 #include "network/url.h"
 #include "codec/inflate.h"
@@ -9,14 +10,17 @@
 namespace {
 
 struct HttpUrl {
+    bool secure = false;
     std::string host;
     int port = 80;
     std::string path = "/";
 };
 
 bool ParseHttpUrl(const std::string& url, HttpUrl& out) {
-    if (url.rfind("http://", 0) != 0) return false;
-    std::string rest = url.substr(7);
+    std::string rest;
+    if (url.rfind("https://", 0) == 0)     { out.secure = true;  out.port = 443; rest = url.substr(8); }
+    else if (url.rfind("http://", 0) == 0) { out.secure = false; out.port = 80;  rest = url.substr(7); }
+    else return false;
     if (rest.empty()) return false;
 
     size_t slash = rest.find('/');
@@ -76,8 +80,14 @@ constexpr size_t kMaxHeaderBytes = 256 * 1024;
 // Reads from the socket, accumulating into `buf`, until "\r\n\r\n" is seen
 // (the end of the header block). Returns false on error/timeout/oversized
 // headers. Any bytes read past the terminator are left in `buf` past
-// `headerEnd` for the caller to treat as the start of the body.
-bool ReadHeaders(TcpSocket& sock, std::string& buf, size_t& headerEnd) {
+// `headerEnd` for the caller to treat as the start of the body. Templated
+// so the exact same logic drives both the plain-TCP (http://) and TLS
+// (https://) transports, which share an identical Recv()/SendAll() shape
+// but aren't polymorphic (no virtual base — that overhead isn't needed
+// since the transport choice is a one-time decision per request, not a
+// runtime-varying one within a single call).
+template <typename Sock>
+bool ReadHeaders(Sock& sock, std::string& buf, size_t& headerEnd) {
     char chunk[4096];
     for (;;) {
         size_t pos = buf.find("\r\n\r\n");
@@ -92,7 +102,8 @@ bool ReadHeaders(TcpSocket& sock, std::string& buf, size_t& headerEnd) {
 // Decodes a chunked-transfer-encoding body. `body` already holds whatever
 // bytes were read past the header terminator; more are pulled from the
 // socket as needed. Returns false on a malformed chunk or exceeding the cap.
-bool ReadChunkedBody(TcpSocket& sock, std::string& body, std::string& out, size_t maxBytes) {
+template <typename Sock>
+bool ReadChunkedBody(Sock& sock, std::string& body, std::string& out, size_t maxBytes) {
     char chunk[4096];
     auto fillTo = [&](size_t n) -> bool {
         while (body.size() < n) {
@@ -106,8 +117,7 @@ bool ReadChunkedBody(TcpSocket& sock, std::string& body, std::string& out, size_
     for (;;) {
         size_t lineEnd;
         for (;;) {
-            size_t searchFrom = pos;
-            std::string::size_type found = body.find("\r\n", searchFrom);
+            std::string::size_type found = body.find("\r\n", pos);
             if (found != std::string::npos) { lineEnd = found; break; }
             int r = sock.Recv(chunk, sizeof(chunk));
             if (r <= 0) return false;
@@ -132,6 +142,76 @@ bool ReadChunkedBody(TcpSocket& sock, std::string& body, std::string& out, size_
     }
 }
 
+// Runs one full request/response over an already-connected socket (plain or
+// TLS). Returns false only for hard transport failures (r.error is set);
+// HTTP-level outcomes (redirects, 4xx/5xx) are reported via `r` itself.
+template <typename Sock>
+bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& currentUrl,
+                     size_t maxResponseBytes, FetchResult& r,
+                     std::string& outBody, std::vector<HeaderLine>& headers) {
+    std::string cookieHeader = CookieJar::instance().cookieHeader(currentUrl);
+    std::string request =
+        "GET " + parsed.path + " HTTP/1.1\r\n"
+        "Host: " + parsed.host + "\r\n"
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Vertex/0.1 (+https://github.com/vertex-browser)\r\n"
+        "Accept-Encoding: gzip\r\n"
+        "Connection: close\r\n";
+    if (!cookieHeader.empty()) request += "Cookie: " + cookieHeader + "\r\n";
+    request += "\r\n";
+
+    if (!sock.SendAll(request.data(), request.size())) { r.error = "Failed to send request"; return false; }
+
+    std::string buf;
+    size_t headerEnd = 0;
+    if (!ReadHeaders(sock, buf, headerEnd)) { r.error = "Failed to read response headers"; return false; }
+
+    std::string headerBlock = buf.substr(0, headerEnd);
+    std::string body = buf.substr(headerEnd + 4); // bytes already read past the header terminator
+
+    size_t firstLineEnd = headerBlock.find("\r\n");
+    if (firstLineEnd == std::string::npos) { r.error = "Malformed status line"; return false; }
+    std::string statusLine = headerBlock.substr(0, firstLineEnd);
+    size_t sp1 = statusLine.find(' ');
+    if (sp1 == std::string::npos) { r.error = "Malformed status line"; return false; }
+    try { r.status = std::stoi(statusLine.substr(sp1 + 1, 3)); }
+    catch (...) { r.error = "Malformed status line"; return false; }
+
+    headers = ParseHeaderLines(headerBlock.substr(firstLineEnd + 2));
+
+    std::string transferEncoding = ToLower(FindHeader(headers, "transfer-encoding"));
+    std::string contentLengthStr = FindHeader(headers, "content-length");
+
+    if (transferEncoding.find("chunked") != std::string::npos) {
+        if (!ReadChunkedBody(sock, body, outBody, maxResponseBytes)) {
+            r.error = "Malformed chunked response or size limit exceeded";
+            return false;
+        }
+    } else if (!contentLengthStr.empty()) {
+        size_t contentLength = 0;
+        try { contentLength = std::stoul(contentLengthStr); }
+        catch (...) { r.error = "Malformed Content-Length"; return false; }
+        if (contentLength > maxResponseBytes) { r.error = "Response exceeds size limit"; return false; }
+        char chunk[8192];
+        while (body.size() < contentLength) {
+            int n = sock.Recv(chunk, sizeof(chunk));
+            if (n <= 0) break; // peer closed early — treat what we have as final (matches lenient real-world behavior)
+            body.append(chunk, n);
+        }
+        outBody = body.substr(0, std::min(body.size(), contentLength));
+    } else {
+        // No framing header — read until the connection closes.
+        outBody = std::move(body);
+        char chunk[8192];
+        for (;;) {
+            int n = sock.Recv(chunk, sizeof(chunk));
+            if (n <= 0) break;
+            if (outBody.size() + (size_t)n > maxResponseBytes) { r.error = "Response exceeds size limit"; return false; }
+            outBody.append(chunk, n);
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
@@ -142,68 +222,19 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
         HttpUrl parsed;
         if (!ParseHttpUrl(currentUrl, parsed)) { r.error = "Unsupported or malformed URL"; return r; }
 
-        TcpSocket sock;
-        if (!sock.Connect(parsed.host, parsed.port)) { r.error = "Connection failed"; return r; }
-
-        std::string cookieHeader = CookieJar::instance().cookieHeader(currentUrl);
-        std::string request =
-            "GET " + parsed.path + " HTTP/1.1\r\n"
-            "Host: " + parsed.host + "\r\n"
-            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Vertex/0.1 (+https://github.com/vertex-browser)\r\n"
-            "Accept-Encoding: gzip\r\n"
-            "Connection: close\r\n";
-        if (!cookieHeader.empty()) request += "Cookie: " + cookieHeader + "\r\n";
-        request += "\r\n";
-
-        if (!sock.SendAll(request.data(), request.size())) { r.error = "Failed to send request"; return r; }
-
-        std::string buf;
-        size_t headerEnd = 0;
-        if (!ReadHeaders(sock, buf, headerEnd)) { r.error = "Failed to read response headers"; return r; }
-
-        std::string headerBlock = buf.substr(0, headerEnd);
-        std::string body = buf.substr(headerEnd + 4); // bytes already read past the header terminator
-
-        size_t firstLineEnd = headerBlock.find("\r\n");
-        if (firstLineEnd == std::string::npos) { r.error = "Malformed status line"; return r; }
-        std::string statusLine = headerBlock.substr(0, firstLineEnd);
-        size_t sp1 = statusLine.find(' ');
-        if (sp1 == std::string::npos) { r.error = "Malformed status line"; return r; }
-        try { r.status = std::stoi(statusLine.substr(sp1 + 1, 3)); } catch (...) { r.error = "Malformed status line"; return r; }
-
-        auto headers = ParseHeaderLines(headerBlock.substr(firstLineEnd + 2));
-
         std::string outBody;
-        std::string transferEncoding = ToLower(FindHeader(headers, "transfer-encoding"));
-        std::string contentLengthStr = FindHeader(headers, "content-length");
-
-        if (transferEncoding.find("chunked") != std::string::npos) {
-            if (!ReadChunkedBody(sock, body, outBody, maxResponseBytes)) {
-                r.error = "Malformed chunked response or size limit exceeded";
-                return r;
-            }
-        } else if (!contentLengthStr.empty()) {
-            size_t contentLength = 0;
-            try { contentLength = std::stoul(contentLengthStr); } catch (...) { r.error = "Malformed Content-Length"; return r; }
-            if (contentLength > maxResponseBytes) { r.error = "Response exceeds size limit"; return r; }
-            char chunk[8192];
-            while (body.size() < contentLength) {
-                int n = sock.Recv(chunk, sizeof(chunk));
-                if (n <= 0) break; // peer closed early — treat what we have as final (matches lenient real-world behavior)
-                body.append(chunk, n);
-            }
-            outBody = body.substr(0, std::min(body.size(), contentLength));
+        std::vector<HeaderLine> headers;
+        bool ok;
+        if (parsed.secure) {
+            TlsConnection tls;
+            if (!tls.Connect(parsed.host, parsed.port)) { r.error = "TLS connection failed"; return r; }
+            ok = PerformRequest(tls, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
         } else {
-            // No framing header — read until the connection closes.
-            outBody = std::move(body);
-            char chunk[8192];
-            for (;;) {
-                int n = sock.Recv(chunk, sizeof(chunk));
-                if (n <= 0) break;
-                if (outBody.size() + (size_t)n > maxResponseBytes) { r.error = "Response exceeds size limit"; return r; }
-                outBody.append(chunk, n);
-            }
+            TcpSocket sock;
+            if (!sock.Connect(parsed.host, parsed.port)) { r.error = "Connection failed"; return r; }
+            ok = PerformRequest(sock, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
         }
+        if (!ok) return r;
 
         std::string contentEncoding = ToLower(FindHeader(headers, "content-encoding"));
         if (contentEncoding == "gzip") {
