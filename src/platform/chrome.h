@@ -26,6 +26,7 @@
 #include "js/dom_bridge.h"
 #include "network/resource_cache.h"
 #include "network/text_decode.h"
+#include "network/websocket.h"
 #include <string>
 #include <vector>
 #include <deque>
@@ -50,6 +51,7 @@ struct PendingPageScript {
 static constexpr size_t kMaxScriptsPerTimerTick = 2;
 static constexpr size_t kMaxResourceCompletionsPerTimerTick = 8;
 static constexpr size_t kMaxMacrotasksPerTimerTick = 8;
+static constexpr size_t kMaxWebSocketEventsPerTimerTick = 16;
 
 // ── Chrome layout constants ─────────────────────────────────────────────────
 
@@ -277,13 +279,14 @@ public:
         if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
             if (cb.repaint) cb.repaint();
         }
+        DrainWebSocketEvents(kMaxWebSocketEventsPerTimerTick);
         runPendingPageScripts();
         try {
             state.js.runMacrotasks(kMaxMacrotasksPerTimerTick);
         } catch (...) {
         }
         return !state.pendingScripts.empty() || state.js.hasPendingMacrotasks()
-            || HasPendingResourceCompletions();
+            || HasPendingResourceCompletions() || HasOpenWebSockets();
     }
 
     void back() {

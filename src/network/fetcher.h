@@ -16,3 +16,10 @@ struct FetchResult {
 // Follows redirects automatically.
 FetchResult FetchUrl(const std::string& url,
                      size_t maxResponseBytes = 12 * 1024 * 1024);
+
+// Thread-safe, idempotent libcurl global init (curl_global_init() itself is
+// documented as unsafe to call concurrently the first time). Every
+// translation unit that touches curl directly — fetcher.cpp and
+// network/websocket.cpp — must call this (not roll its own guard) so they
+// all share the one std::once_flag inside it.
+void EnsureCurlInit();

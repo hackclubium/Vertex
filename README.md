@@ -83,7 +83,9 @@ what the page means, where boxes go, what scripts can touch, and what gets paint
   custom properties, logical properties, transforms, gradients, flex, grid, tables,
   floats, positioning, form styling, and viewport/math functions.
 - JavaScript lexer, parser, compiler, VM, native DOM bindings, timers, events,
-  promises, async fetch surface, storage, DOM selectors, geometry APIs, and
+  promises, async fetch surface, a hand-rolled WebSocket client (handshake,
+  framing, and masking implemented from scratch — curl is used only as a raw
+  encrypted byte pipe for wss://), storage, DOM selectors, geometry APIs, and
   observer APIs.
 - Layout engine for block, inline, line boxes, floats, tables, flex, grid, replaced
   elements, positioned boxes, scrolling, and dirty-layout invalidation.

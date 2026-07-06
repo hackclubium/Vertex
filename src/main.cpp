@@ -7,6 +7,7 @@
 #pragma comment(lib, "shell32.lib")
 
 #include "network/resource_cache.h"
+#include "network/websocket.h"
 #include "network/url.h"
 #include "html/parser.h"
 #include "html/resources.h"
@@ -1609,6 +1610,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
             InvalidateContent();
         }
+        DrainWebSocketEvents(kMaxWebSocketEventsPerTimerTick);
         RunPendingPageScripts(hwnd);
         try {
             g_js.runMacrotasks(kMaxMacrotasksPerTimerTick);
@@ -1621,7 +1623,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             GetClientRect(hwnd, &rc);
             rc.bottom = TOP_INSET;
             InvalidateRect(hwnd, &rc, FALSE);
-        } else if (g_pendingPageScripts.empty() && !g_js.hasPendingMacrotasks() && !HasPendingResourceCompletions()) {
+        } else if (g_pendingPageScripts.empty() && !g_js.hasPendingMacrotasks()
+                   && !HasPendingResourceCompletions() && !HasOpenWebSockets()) {
             KillTimer(hwnd, 1);
         }
         return 0;

@@ -156,6 +156,27 @@ static std::string RunCanvasContext2DSnapshot() {
     return plain ? plain->attr("data-result") + "\n" : "missing plain\n";
 }
 
+// Structural shape only — a real open/message/close round trip is covered
+// by network_tests.cpp's raw-socket integration tests, which have a real
+// server to talk to. The URL here (a normally-closed local port) fails fast
+// in the background and is never drained, so this stays a fast, offline,
+// deterministic unit test.
+static std::string RunWebSocketShapeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "var ws = new WebSocket('ws://127.0.0.1:9/');\n"
+        "var methods = ['send', 'close'].every(function(m) { return typeof ws[m] === 'function'; });\n"
+        "var constants = ws.CONNECTING === 0 && ws.OPEN === 1 && ws.CLOSING === 2 && ws.CLOSED === 3;\n"
+        "document.getElementsByTagName('body')[0].setAttribute('data-result',\n"
+        "  methods + ':' + constants + ':' + ws.readyState + ':' + ws.url);\n",
+        "websocket-shape");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 // canvas.width/height writes must reflect back onto the attribute (and, per
 // spec, would reset the backing bitmap — verified separately via the pixel
 // probe since no ICanvasSurface exists in this harness).
@@ -1619,6 +1640,12 @@ TestResult RunJsTests() {
         "js/dom/canvas-width-height-writes-reflect-to-attributes",
         RunCanvasResizeSnapshot(),
         "500x400\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/websocket-constructor-shape-and-constants",
+        RunWebSocketShapeSnapshot(),
+        "true:true:0:ws://127.0.0.1:9/\n",
         result);
 
     return result;

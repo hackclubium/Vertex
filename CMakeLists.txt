@@ -79,6 +79,7 @@ add_library(vertex_engine STATIC
     src/network/resource_cache.cpp
     src/network/text_decode.cpp
     src/network/url.cpp
+    src/network/websocket.cpp
     src/platform/downloads.cpp
     src/platform/profile.cpp
     src/html/tokenizer.cpp
@@ -206,6 +207,12 @@ target_include_directories(vertex-tests PRIVATE src)
 target_link_libraries(vertex-tests PRIVATE
     vertex_engine
 )
+if (WIN32)
+    # network_tests.cpp spins up a raw-socket WebSocket test server directly
+    # (WSAStartup/socket/bind/...), independent of vertex_engine's own
+    # (transitive, via curl) Winsock usage.
+    target_link_libraries(vertex-tests PRIVATE ws2_32)
+endif()
 
 add_executable(vertex-layout-engine-tests
     src/test/layout_engine_main.cpp

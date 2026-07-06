@@ -4,15 +4,169 @@
 #include "network/resource_cache.h"
 #include "network/text_decode.h"
 #include "network/url.h"
+#include "network/websocket.h"
 #include "platform/downloads.h"
 #include "platform/profile.h"
 #include "html/parser.h"
 #include "html/resources.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#define closesocket close
+#endif
+
+namespace {
+
+#ifdef _WIN32
+using SockFd = SOCKET;
+constexpr SockFd kInvalidSock = INVALID_SOCKET;
+#else
+using SockFd = int;
+constexpr SockFd kInvalidSock = -1;
+#endif
+
+std::string ExtractHeaderValue(const std::string& headers, const std::string& name) {
+    std::string lower = headers;
+    for (auto& c : lower) c = (char)tolower((unsigned char)c);
+    std::string needle = name;
+    for (auto& c : needle) c = (char)tolower((unsigned char)c);
+    size_t pos = lower.find(needle);
+    if (pos == std::string::npos) return "";
+    size_t colon = headers.find(':', pos);
+    if (colon == std::string::npos) return "";
+    size_t lineEnd = headers.find("\r\n", colon);
+    if (lineEnd == std::string::npos) lineEnd = headers.size();
+    std::string val = headers.substr(colon + 1, lineEnd - colon - 1);
+    size_t start = val.find_first_not_of(" \t");
+    if (start == std::string::npos) return "";
+    size_t end = val.find_last_not_of(" \t");
+    return val.substr(start, end - start + 1);
+}
+
+// Encodes an unmasked server-to-client frame. Short payloads only (<=125
+// bytes) — this test server only ever talks to Vertex's own WebSocket
+// client in a controlled test, never a real browser, so the 126/127
+// extended-length cases aren't needed here (they're already covered by
+// websocket.cpp's own frame codec, which this integration test exercises
+// from the client side regardless).
+std::string ServerEncodeFrame(uint8_t opcode, const std::string& payload) {
+    std::string out;
+    out.push_back((char)(0x80 | opcode));
+    out.push_back((char)payload.size());
+    out += payload;
+    return out;
+}
+
+// Minimal single-connection RFC 6455 test server: completes the handshake
+// (via the same ComputeWebSocketAccept() Vertex's real client uses to
+// validate a server's response), echoes back whatever text it receives, and
+// answers "__SERVER_CLOSE__" with a server-initiated close — giving this
+// suite a real socket to drive OpenWebSocket()/SendWebSocketText()/
+// CloseWebSocket() against without any external server or network access.
+struct TestWsServer {
+    int port = 0;
+    std::thread serverThread;
+
+    void start() {
+#ifdef _WIN32
+        static bool wsaInited = [] { WSADATA wsa; return WSAStartup(MAKEWORD(2, 2), &wsa) == 0; }();
+        (void)wsaInited;
+#endif
+        SockFd listenSock = (SockFd)socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0; // ephemeral — avoids port collisions between test runs
+        bind(listenSock, (sockaddr*)&addr, sizeof(addr));
+        listen(listenSock, 1);
+        socklen_t len = sizeof(addr);
+        getsockname(listenSock, (sockaddr*)&addr, &len);
+        port = ntohs(addr.sin_port);
+
+        serverThread = std::thread([listenSock]() {
+            SockFd clientSock = accept(listenSock, nullptr, nullptr);
+            closesocket(listenSock);
+            if (clientSock == kInvalidSock) return;
+
+            std::string buf;
+            char tmp[2048];
+            auto recvMore = [&]() -> bool {
+                int n = recv(clientSock, tmp, sizeof(tmp), 0);
+                if (n <= 0) return false;
+                buf.append(tmp, n);
+                return true;
+            };
+
+            while (buf.find("\r\n\r\n") == std::string::npos)
+                if (!recvMore()) { closesocket(clientSock); return; }
+            size_t headerEnd = buf.find("\r\n\r\n");
+            std::string headers = buf.substr(0, headerEnd);
+            buf.erase(0, headerEnd + 4);
+
+            std::string key = ExtractHeaderValue(headers, "sec-websocket-key");
+            std::string accept = ComputeWebSocketAccept(key);
+            std::string resp =
+                "HTTP/1.1 101 Switching Protocols\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
+            send(clientSock, resp.data(), (int)resp.size(), 0);
+
+            for (;;) {
+                while (buf.size() < 2)
+                    if (!recvMore()) { closesocket(clientSock); return; }
+                uint8_t b1 = (uint8_t)buf[1];
+                uint8_t opcode = (uint8_t)buf[0] & 0x0F;
+                uint64_t plen = b1 & 0x7F; // client frames in this test never exceed 125 bytes
+                size_t pos = 2;
+                while (buf.size() < pos + 4 + plen)
+                    if (!recvMore()) { closesocket(clientSock); return; }
+                uint8_t maskKey[4];
+                memcpy(maskKey, buf.data() + pos, 4);
+                pos += 4;
+                std::string payload = buf.substr(pos, (size_t)plen);
+                for (size_t i = 0; i < payload.size(); i++)
+                    payload[i] = (char)((uint8_t)payload[i] ^ maskKey[i % 4]);
+                buf.erase(0, pos + (size_t)plen);
+
+                if (opcode == 0x8) {
+                    std::string echoClose = ServerEncodeFrame(0x8, payload);
+                    send(clientSock, echoClose.data(), (int)echoClose.size(), 0);
+                    closesocket(clientSock);
+                    return;
+                }
+                if (payload == "__SERVER_CLOSE__") {
+                    std::string closePayload;
+                    closePayload.push_back((char)0x03);
+                    closePayload.push_back((char)0xE8); // 1000
+                    std::string closeResp = ServerEncodeFrame(0x8, closePayload);
+                    send(clientSock, closeResp.data(), (int)closeResp.size(), 0);
+                    closesocket(clientSock);
+                    return;
+                }
+                std::string echoResp = ServerEncodeFrame(opcode, payload);
+                send(clientSock, echoResp.data(), (int)echoResp.size(), 0);
+            }
+        });
+    }
+
+    void join() { if (serverThread.joinable()) serverThread.join(); }
+};
+
+} // namespace
 
 static Node* FindScriptById(Node* root, const std::string& id) {
     if (!root) return nullptr;
@@ -256,6 +410,96 @@ TestResult RunNetworkTests() {
             std::string(boundedWorkers ? "pool " : "thread-per-fetch ")
                 + (dedupesInflight ? "dedupe\n" : "duplicates\n"),
             "pool dedupe\n",
+            result);
+    }
+
+    {
+        // RFC 6455 §1.3's own worked example — a fixed, well-known input
+        // and expected output, so this needs no live server at all.
+        ExpectEqual("network/websocket/accept-matches-rfc6455-worked-example",
+            ComputeWebSocketAccept("dGhlIHNhbXBsZSBub25jZQ==") + "\n",
+            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\n",
+            result);
+    }
+
+    {
+        TestWsServer server;
+        server.start();
+        std::string actual;
+        std::atomic<int> events{0};
+        std::string lastMessage;
+        int lastCloseCode = 0;
+        bool lastCloseClean = false;
+
+        int handle = OpenWebSocket("ws://127.0.0.1:" + std::to_string(server.port) + "/",
+            [&](WsEvent ev) {
+                switch (ev.kind) {
+                case WsEventKind::Open:    actual += "open;"; break;
+                case WsEventKind::Message: lastMessage = ev.data; actual += "message;"; break;
+                case WsEventKind::Close:
+                    lastCloseCode = ev.code;
+                    lastCloseClean = ev.wasClean;
+                    actual += "close;";
+                    break;
+                case WsEventKind::Error:   actual += "error;"; break;
+                }
+                ++events;
+            });
+
+        auto waitForEvents = [&](int count) {
+            for (int i = 0; i < 500 && events.load() < count; ++i) {
+                DrainWebSocketEvents();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            DrainWebSocketEvents();
+        };
+
+        waitForEvents(1); // open
+        SendWebSocketText(handle, "hello vertex");
+        waitForEvents(2); // + message
+        CloseWebSocket(handle, 1000, "bye");
+        waitForEvents(3); // + close
+        server.join();
+
+        actual += lastMessage + ";";
+        actual += std::to_string(lastCloseCode) + ";";
+        actual += (lastCloseClean ? "clean" : "unclean");
+        actual += "\n";
+
+        ExpectEqual("network/websocket/open-echo-and-clean-close-round-trip",
+            actual,
+            "open;message;close;hello vertex;1000;clean\n",
+            result);
+    }
+
+    {
+        TestWsServer server;
+        server.start();
+        std::atomic<int> events{0};
+        int closeCode = 0;
+
+        int handle = OpenWebSocket("ws://127.0.0.1:" + std::to_string(server.port) + "/",
+            [&](WsEvent ev) {
+                if (ev.kind == WsEventKind::Close) closeCode = ev.code;
+                ++events;
+            });
+
+        for (int i = 0; i < 500 && events.load() < 1; ++i) {
+            DrainWebSocketEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        DrainWebSocketEvents();
+        SendWebSocketText(handle, "__SERVER_CLOSE__");
+        for (int i = 0; i < 500 && events.load() < 2; ++i) {
+            DrainWebSocketEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        DrainWebSocketEvents();
+        server.join();
+
+        ExpectEqual("network/websocket/server-initiated-close-is-handled",
+            std::to_string(closeCode) + "\n",
+            "1000\n",
             result);
     }
 

@@ -117,7 +117,7 @@ static std::filesystem::path FileUrlToPath(const std::string& url) {
 
 // ── libcurl global init (once, thread-safe) ──────────────────────────────────
 
-static void EnsureCurlInit() {
+void EnsureCurlInit() {
     static std::once_flag flag;
     std::call_once(flag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 }

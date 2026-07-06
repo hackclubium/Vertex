@@ -5,6 +5,7 @@
 #include "network/resource_cache.h"
 #include "network/cookies.h"
 #include "network/url.h"
+#include "network/websocket.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -92,6 +93,14 @@ static std::vector<EventListener> g_windowEventListeners;
 // use-after-return bug). Cleared per document in registerDom().
 static std::vector<std::unique_ptr<JsValue>> g_wrapperRoots;
 static std::vector<std::unique_ptr<JsValue>> g_observerRoots;
+// Keeps each `new WebSocket(...)` object alive independent of script-level
+// reachability — a real WebSocket keeps firing events even if the script
+// drops its only reference, and OpenWebSocket()'s callback only ever holds a
+// raw JsValue (see registerDom()'s "fetch"/"WebSocket" globals), not a GC
+// root by itself. Cleared alongside g_observerRoots on navigation; not
+// removed per-connection-close (same coarse per-page lifetime the observer
+// roots already use, not per-object precision).
+static std::vector<std::unique_ptr<JsValue>> g_wsRoots;
 
 struct MutationObserverEntry {
     JsObject* observer = nullptr;
@@ -3167,6 +3176,8 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     for (auto& r : g_observerRoots) vm.gc().removeRoot(r.get());
     g_observerRoots.clear();
     g_mutationObservers.clear();
+    for (auto& r : g_wsRoots) vm.gc().removeRoot(r.get());
+    g_wsRoots.clear();
 
     JsValue docVal = wrapNode(vm, docNode);
     vm.setGlobal("document", docVal);
@@ -3777,6 +3788,91 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 });
             return JsValue::object(promise);
         }, "fetch")));
+
+    vm.setGlobal("WebSocket", JsValue::object(vm.gc().newNativeFunction(
+        NATIVE("WebSocket") {
+            std::string url = ARG_STR(0);
+            auto* ws = vm.gc().newObject(ObjKind::Plain);
+            ws->setProp("url", vm.str(url));
+            ws->setProp("readyState", JsValue::number(0)); // CONNECTING
+            ws->setProp("onopen", JsValue::undefined());
+            ws->setProp("onmessage", JsValue::undefined());
+            ws->setProp("onclose", JsValue::undefined());
+            ws->setProp("onerror", JsValue::undefined());
+            ws->setProp("CONNECTING", JsValue::number(0));
+            ws->setProp("OPEN", JsValue::number(1));
+            ws->setProp("CLOSING", JsValue::number(2));
+            ws->setProp("CLOSED", JsValue::number(3));
+            installEventMethods(vm, ws);
+
+            g_wsRoots.push_back(std::make_unique<JsValue>(JsValue::object(ws)));
+            vm.gc().addRoot(g_wsRoots.back().get());
+            JsValue wsVal = *g_wsRoots.back();
+
+            VM* vmPtr = &vm;
+            auto alive = vm.lifetimeToken();
+            int handle = OpenWebSocket(url, [vmPtr, alive, wsVal](WsEvent wsEv) {
+                if (alive.expired()) return;
+                VM& vm2 = *vmPtr;
+                JsObject* wsObj = wsVal.asObject();
+
+                auto* ev = vm2.gc().newObject(ObjKind::Plain);
+                ev->setProp("target", wsVal);
+                ev->setProp("currentTarget", wsVal);
+                ev->setProp("bubbles", JsValue::boolean(false));
+                ev->setProp("cancelable", JsValue::boolean(false));
+                ev->setProp("defaultPrevented", JsValue::boolean(false));
+                installEventMethods(vm2, ev);
+                std::string eventName;
+
+                switch (wsEv.kind) {
+                case WsEventKind::Open:
+                    wsObj->setProp("readyState", JsValue::number(1));
+                    eventName = "open";
+                    break;
+                case WsEventKind::Message:
+                    eventName = "message";
+                    // Binary frames are handed over as their raw bytes in a
+                    // string for now (no ArrayBuffer/Blob for incoming
+                    // binary yet) — same "start simple, defer extras"
+                    // scoping already used for Canvas 2D's deferred features.
+                    ev->setProp("data", vm2.str(wsEv.data));
+                    break;
+                case WsEventKind::Close:
+                    wsObj->setProp("readyState", JsValue::number(3));
+                    eventName = "close";
+                    ev->setProp("code", JsValue::number(wsEv.code));
+                    ev->setProp("reason", vm2.str(wsEv.reason));
+                    ev->setProp("wasClean", JsValue::boolean(wsEv.wasClean));
+                    break;
+                case WsEventKind::Error:
+                    eventName = "error";
+                    ev->setProp("message", vm2.str(wsEv.data));
+                    break;
+                }
+                ev->setProp("type", vm2.str(eventName));
+
+                JsValue handler = wsObj->getProp("on" + eventName);
+                if (handler.isCallable()) {
+                    try { vm2.call(handler, wsVal, { JsValue::object(ev) }); } catch (...) {}
+                }
+                vm2.drainMicrotasks();
+            });
+
+            addNative(vm, ws, "send", [handle](VM&, JsValue, std::vector<JsValue> sendArgs) -> JsValue {
+                if (!sendArgs.empty()) SendWebSocketText(handle, sendArgs[0].toString());
+                return JsValue::undefined();
+            });
+            addNative(vm, ws, "close", [handle](VM&, JsValue thisVal, std::vector<JsValue> closeArgs) -> JsValue {
+                int code = closeArgs.size() > 0 ? (int)closeArgs[0].toNumber() : 1000;
+                std::string reason = closeArgs.size() > 1 ? closeArgs[1].toString() : "";
+                if (thisVal.isObject()) thisVal.asObject()->setProp("readyState", JsValue::number(2)); // CLOSING
+                CloseWebSocket(handle, code, reason);
+                return JsValue::undefined();
+            });
+
+            return wsVal;
+        }, "WebSocket")));
 
     // window.addEventListener / removeEventListener
     vm.setGlobal("addEventListener", JsValue::object(vm.gc().newNativeFunction(
