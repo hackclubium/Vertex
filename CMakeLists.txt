@@ -102,6 +102,7 @@ add_library(vertex_engine STATIC
     src/codec/crc32.cpp
     src/codec/png.cpp
     src/codec/jpeg.cpp
+    src/render/rasterizer.cpp
     src/network/fetcher.cpp
     src/network/resource_cache.cpp
     src/network/text_decode.cpp
@@ -204,13 +205,16 @@ elseif (APPLE)
     )
 elseif (UNIX)
     find_package(PkgConfig REQUIRED)
-    # GTK3 is gone (phase 1 of the Linux windowing rewrite: raw XCB replaces
-    # GTK's window/widget toolkit — see main_linux.cpp). Cairo/Pango/
-    # fontconfig are still used directly (via cairo-xcb) until later phases
-    # replace them with a hand-rolled rasterizer/font engine.
+    # GTK3 is gone (phase 1: raw XCB replaces GTK's window/widget toolkit).
+    # Cairo is gone from the main renderer too (phase 2: src/render/rasterizer
+    # replaces it; presentation is a raw xcb_put_image blit) — Cairo is only
+    # still linked for canvas_cairo.cpp's <canvas> 2D backend, cut in phase 4.
+    # Pango stays for text (deferred to phase 3's font engine) but via its
+    # FreeType2 backend (pangoft2) instead of pangocairo, since it no longer
+    # has a Cairo surface to draw into.
     pkg_check_modules(XCB REQUIRED xcb)
-    pkg_check_modules(CAIRO_XCB REQUIRED cairo-xcb)
-    pkg_check_modules(PANGOCAIRO REQUIRED pangocairo)
+    pkg_check_modules(CAIRO REQUIRED cairo)
+    pkg_check_modules(PANGOFT2 REQUIRED pangoft2)
     pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
     add_executable(Vertex
         src/platform/main_linux.cpp
@@ -218,11 +222,11 @@ elseif (UNIX)
         src/render/canvas_cairo.cpp
     )
     target_include_directories(Vertex PRIVATE src
-        ${XCB_INCLUDE_DIRS} ${CAIRO_XCB_INCLUDE_DIRS} ${PANGOCAIRO_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
+        ${XCB_INCLUDE_DIRS} ${CAIRO_INCLUDE_DIRS} ${PANGOFT2_INCLUDE_DIRS} ${FONTCONFIG_INCLUDE_DIRS})
     target_link_libraries(Vertex PRIVATE vertex_engine
-        ${XCB_LIBRARIES} ${CAIRO_XCB_LIBRARIES} ${PANGOCAIRO_LIBRARIES} ${FONTCONFIG_LIBRARIES})
+        ${XCB_LIBRARIES} ${CAIRO_LIBRARIES} ${PANGOFT2_LIBRARIES} ${FONTCONFIG_LIBRARIES})
     target_compile_options(Vertex PRIVATE
-        ${XCB_CFLAGS_OTHER} ${CAIRO_XCB_CFLAGS_OTHER} ${PANGOCAIRO_CFLAGS_OTHER} ${FONTCONFIG_CFLAGS_OTHER})
+        ${XCB_CFLAGS_OTHER} ${CAIRO_CFLAGS_OTHER} ${PANGOFT2_CFLAGS_OTHER} ${FONTCONFIG_CFLAGS_OTHER})
     add_custom_command(TARGET Vertex POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png

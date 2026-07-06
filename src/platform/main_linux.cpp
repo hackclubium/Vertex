@@ -7,14 +7,14 @@
 // built-in widget toolkit, so this file hand-draws the toolbar (back/
 // forward/reload/home buttons, URL entry, status label) and hand-tests
 // clicks/keystrokes against it, the same way the box-tree painter already
-// hand-draws page content. Drawing itself still goes through Cairo/Pango
-// (via a cairo_xcb_surface_t bound to the XCB window) — those get replaced
-// in a later phase of the zero-third-party-dependency push; this phase only
-// cuts GTK3.
+// hand-draws page content. Phase 2 of the windowing rewrite: drawing now
+// goes through Vertex's own software rasterizer (src/render/rasterizer.h)
+// and presents via a raw xcb_put_image blit — no Cairo. Pango (text
+// shaping, via its FreeType2 backend now instead of pangocairo) is the last
+// dependency this phase leaves in place, deferred to phase 3's from-scratch
+// font engine.
 //
 #include <xcb/xcb.h>
-#include <cairo/cairo-xcb.h>
-#include <pango/pangocairo.h>
 #include <sys/eventfd.h>
 #include <poll.h>
 #include <unistd.h>
@@ -27,6 +27,7 @@
 #include "network/resource_cache.h"
 #include "render/svg.h"
 #include "render/canvas_cairo.h"
+#include "render/rasterizer.h"
 #include "render/webfont.h"
 #include "third_party/stb_image.h"
 #include "codec/png.h"
@@ -64,13 +65,15 @@ constexpr xcb_keysym_t XK_Right     = 0xFF53;
 constexpr xcb_keysym_t XK_End       = 0xFF57;
 // Keysyms 0x20..0x7E map directly onto ASCII/Latin-1 by protocol definition.
 
-// ── XCB / Cairo window state ─────────────────────────────────────────────────
+// ── XCB window state ─────────────────────────────────────────────────────────
 
 static xcb_connection_t* g_conn = nullptr;
 static xcb_screen_t*     g_screen = nullptr;
 static xcb_window_t      g_win = 0;
 static xcb_visualtype_t* g_visual = nullptr;
-static cairo_surface_t*  g_surface = nullptr;
+static xcb_gcontext_t    g_gc = 0;
+static uint8_t           g_depth = 24;
+static raster::Framebuffer g_fb;
 static xcb_atom_t        g_wmDeleteWindow = XCB_ATOM_NONE;
 static int               g_width = 1280, g_height = 800;
 static bool              g_running = true;
@@ -327,11 +330,13 @@ static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
     };
     int w = parseIntAttr("width", 300);
     int h = parseIntAttr("height", 150);
+    // g_images now holds RasterBitmap* (the new rasterizer's PlatBitmap), not
+    // cairo_surface_t* — canvas.drawImage(<already-decoded img>) is a no-op
+    // until phase 4 rebuilds the canvas backend on the same rasterizer.
+    // <canvas> itself and drawImage(<canvas>) both still work fine (unaffected —
+    // CairoCanvasSurface owns its own surface independent of g_images).
     auto surface = std::make_unique<CairoCanvasSurface>(w, h,
-        [](const std::string& url) -> cairo_surface_t* {
-            auto imgIt = g_images.find(url);
-            return imgIt != g_images.end() ? (cairo_surface_t*)imgIt->second : nullptr;
-        });
+        [](const std::string&) -> cairo_surface_t* { return nullptr; });
     ICanvasSurface* raw = surface.get();
     g_canvasSurfaces[n] = std::move(surface);
     return raw;
@@ -413,7 +418,9 @@ static void ProcessImage(const std::string& url, const std::vector<uint8_t>& byt
         fromStbi = true;
     }
     if (!pixels || w <= 0 || h <= 0) { if (stbiPixels) stbi_image_free(stbiPixels); g_failedImages.insert(url); return; }
-    // stb_image outputs RGBA; Cairo wants ARGB32 (BGRA premultiplied on little-endian).
+    // stb_image outputs straight RGBA; the rasterizer's blit expects
+    // premultiplied BGRA (matching this project's established convention —
+    // originally for Cairo's ARGB32, now shared by rasterizer.h's BlitBitmap).
     for (int i = 0; i < w * h; ++i) {
         unsigned char* p = pixels + i * 4;
         unsigned char r = p[0], g = p[1], b = p[2], a = p[3];
@@ -483,10 +490,9 @@ static Rect g_btnRects[4];
 static Rect g_urlBadgeRect;
 static Rect g_urlEntryRect;
 
-static void DrawToolbar(cairo_t* cr) {
+static void DrawToolbar() {
     using namespace vertex::chrome_theme;
     if (!g_renderer) return;
-    g_renderer->SetNativeContext(cr);
     g_renderer->FillRect(0, 0, (float)g_width, (float)ToolbarHeight, RgbToPlat(Panel));
 
     float x = (float)Margin;
@@ -528,10 +534,9 @@ static void DrawToolbar(cairo_t* cr) {
     g_renderer->ReleaseFont(urlFont);
 }
 
-static void DrawStatusBar(cairo_t* cr) {
+static void DrawStatusBar() {
     using namespace vertex::chrome_theme;
     if (!g_renderer) return;
-    g_renderer->SetNativeContext(cr);
     float y = (float)(g_height - StatusHeight);
     g_renderer->FillRect(0, y, (float)g_width, (float)StatusHeight, RgbToPlat(Rail));
     if (!g_statusText.empty()) {
@@ -544,13 +549,16 @@ static void DrawStatusBar(cairo_t* cr) {
 
 // ── drawing ──────────────────────────────────────────────────────────────────
 
-static void DoDraw() {
-    if (!g_surface) return;
-    using namespace vertex::chrome_theme;
+static void Present() {
+    if (!g_conn || !g_win || !g_gc || g_fb.pixels.empty()) return;
+    xcb_put_image(g_conn, XCB_IMAGE_FORMAT_Z_PIXMAP, g_win, g_gc,
+        (uint16_t)g_fb.width, (uint16_t)g_fb.height, 0, 0, 0, g_depth,
+        (uint32_t)g_fb.pixels.size(), g_fb.pixels.data());
+    xcb_flush(g_conn);
+}
 
-    cairo_t* cr = cairo_create(g_surface);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_paint(cr);
+static void DoDraw() {
+    using namespace vertex::chrome_theme;
 
     if (!g_renderer) {
         g_renderer = CreatePlatformRenderer();
@@ -559,28 +567,30 @@ static void DoDraw() {
         g_measure->onImageRequest = FetchImageAsync;
     }
 
-    DrawToolbar(cr);
-    DrawStatusBar(cr);
+    g_fb.Resize(g_width, g_height);
+    g_renderer->Resize(g_width, g_height);
+    g_renderer->SetNativeContext(&g_fb);
+    g_renderer->Clear({1, 1, 1, 1});
+
+    DrawToolbar();
+    DrawStatusBar();
 
     int contentH = std::max(0, g_height - ToolbarHeight - StatusHeight);
-    cairo_save(cr);
-    cairo_rectangle(cr, 0, ToolbarHeight, g_width, contentH);
-    cairo_clip(cr);
-    cairo_translate(cr, 0, ToolbarHeight);
-
-    g_renderer->Resize(g_width, contentH);
-    g_renderer->SetNativeContext(cr);
-    g_renderer->Clear({1, 1, 1, 1});
+    // Mirrors what cairo_translate(0, ToolbarHeight) + cairo_clip used to do:
+    // topInset shifts every content y-coordinate down past the toolbar
+    // (box_painter.h already supports this — it's the same field Windows
+    // uses for its tab-strip offset), and PushClip guarantees content never
+    // paints over the toolbar/status bar regardless of the culling logic's
+    // own (slightly more permissive) bounds check against Height().
+    g_renderer->PushClip(0, (float)ToolbarHeight, (float)g_width, (float)contentH);
 
     if (g_tabs.empty() || !CurTab().page || !CurTab().page->dom) {
         PlatFont font = g_renderer->CreateFont(16, false, false, false, "");
         g_renderer->DrawText(CurTab().loading ? L"Loading..." : L"Navigate to a URL",
-                             20, 20, 800, 30, font, {0.5f, 0.5f, 0.5f, 1});
+                             20, (float)ToolbarHeight + 20, 800, 30, font, {0.5f, 0.5f, 0.5f, 1});
         g_renderer->ReleaseFont(font);
-        cairo_restore(cr);
-        cairo_destroy(cr);
-        cairo_surface_flush(g_surface);
-        xcb_flush(g_conn);
+        g_renderer->PopClip();
+        Present();
         return;
     }
 
@@ -606,7 +616,7 @@ static void DoDraw() {
             PaintState ps;
             ps.r = g_renderer.get();
             ps.scrollY = tab.scrollY;
-            ps.topInset = 0;
+            ps.topInset = (float)ToolbarHeight;
             ps.baseUrl = tab.page->url;
             ps.images = &g_images;
             g_canvasBitmaps.clear();
@@ -621,10 +631,8 @@ static void DoDraw() {
         }
     } catch (...) { /* keep the browser alive */ }
 
-    cairo_restore(cr);
-    cairo_destroy(cr);
-    cairo_surface_flush(g_surface);
-    xcb_flush(g_conn);
+    g_renderer->PopClip();
+    Present();
 }
 
 // ── navigation ───────────────────────────────────────────────────────────────
@@ -769,7 +777,6 @@ static void HandleEvent(xcb_generic_event_t* ev) {
         auto* cfg = (xcb_configure_notify_event_t*)ev;
         if (cfg->width != g_width || cfg->height != g_height) {
             g_width = cfg->width; g_height = cfg->height;
-            if (g_surface) cairo_xcb_surface_set_size(g_surface, g_width, g_height);
             RequestRedraw();
         }
         break;
@@ -815,6 +822,7 @@ static bool CreateXcbWindow(int width, int height) {
     if (!g_screen) return false;
     g_visual = FindVisual(g_screen);
     if (!g_visual) return false;
+    g_depth = g_screen->root_depth;
 
     g_win = xcb_generate_id(g_conn);
     uint32_t valueMask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
@@ -840,13 +848,14 @@ static bool CreateXcbWindow(int width, int height) {
             wmProtocols, XCB_ATOM_ATOM, 32, 1, &g_wmDeleteWindow);
     }
 
-    g_surface = cairo_xcb_surface_create(g_conn, g_win, g_visual, width, height);
+    g_gc = xcb_generate_id(g_conn);
+    xcb_create_gc(g_conn, g_gc, g_win, 0, nullptr);
 
     xcb_map_window(g_conn, g_win);
     xcb_flush(g_conn);
     LoadKeyboardMap();
     SetWindowIcon(ReadXSettingsPreferDark());
-    return g_surface != nullptr;
+    return true;
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -934,7 +943,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (g_surface) cairo_surface_destroy(g_surface);
     if (g_conn) xcb_disconnect(g_conn);
     return 0;
 }
