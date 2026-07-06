@@ -23,7 +23,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
 #else
-#include <fontconfig/fontconfig.h>
+#include "platform/linux_font_registry.h"
 #endif
 
 class WebFontLoader {
@@ -95,14 +95,14 @@ private:
             CFRelease(cfData);
         }
 #else
-        // Linux: fontconfig has no from-memory registration API, so the bytes
-        // still need to land on disk — but into a scratch cache directory,
-        // not the user's real ~/.local/share/fonts (which would permanently
-        // pollute their system font list with every web font from every page
-        // ever visited). FcConfigAppFontAddFile registers the file with this
-        // process's fontconfig instance directly and takes effect
-        // immediately — no shelling out to fc-cache and racing its async,
-        // whole-system cache rebuild against the page finishing layout.
+        // Linux: Vertex's own font engine (platform/linux_font_registry.h)
+        // has no from-memory registration API either — same as fontconfig
+        // before it — so the bytes still need to land on disk, but into a
+        // scratch cache directory, not the user's real ~/.local/share/fonts
+        // (which would permanently pollute their system font list with
+        // every web font from every page ever visited).
+        // RegisterLinuxWebFont() parses the file and adds it to the
+        // in-process font index directly, taking effect immediately.
         std::filesystem::path dir =
             std::filesystem::path(getenv("HOME") ? getenv("HOME") : "/tmp") / ".cache/vertex-fonts";
         std::error_code ec;
@@ -112,7 +112,7 @@ private:
         if (f) {
             fwrite(data.data(), 1, data.size(), f);
             fclose(f);
-            FcConfigAppFontAddFile(FcConfigGetCurrent(), (const FcChar8*)path.string().c_str());
+            RegisterLinuxWebFont(path.string());
         }
 #endif
     }

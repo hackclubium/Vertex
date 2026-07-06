@@ -1,39 +1,26 @@
 #ifdef __linux__
 //
-// platform_linux.cpp — Linux backend: hand-rolled rasterizer + Pango/FreeType2.
+// platform_linux.cpp — Linux backend: hand-rolled rasterizer + font engine.
 //
-// Phase 2 of the Linux windowing rewrite: geometric primitives now go
-// through Vertex's own software rasterizer (src/render/rasterizer.h)
-// instead of Cairo. Text still goes through Pango (deferred to phase 3's
-// from-scratch font engine) but via its FreeType2 backend (pangoft2)
-// instead of pangocairo, so this file no longer touches Cairo at all — a
-// PangoLayout is rendered straight to an 8-bit coverage bitmap via
-// pango_ft2_render_layout(), then alpha-composited onto the framebuffer
-// with the requested color.
+// Phase 3 of the Linux windowing rewrite: text now goes through Vertex's own
+// TrueType parser + glyph rasterizer (src/font/) instead of Pango, cutting
+// the last Cairo/Pango/fontconfig dependency from the main renderer (Cairo
+// is still linked for <canvas>'s own backend, deferred to phase 4). Font
+// discovery replaces fontconfig with a directory scan — see
+// BuildFontIndex() below.
 //
 #include "platform/platform.h"
+#include "platform/linux_font_registry.h"
 #include "render/rasterizer.h"
-#include <pango/pangoft2.h>
+#include "font/font_face.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
-#include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <map>
 #include <memory>
 #include <vector>
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-static std::string WideToUtf8(const std::wstring& w) {
-    std::string out;
-    for (wchar_t c : w) {
-        if (c < 0x80) out += (char)c;
-        else if (c < 0x800) { out += (char)(0xC0 | (c >> 6)); out += (char)(0x80 | (c & 0x3F)); }
-        else if (c < 0x10000) { out += (char)(0xE0 | (c >> 12)); out += (char)(0x80 | ((c >> 6) & 0x3F));
-            out += (char)(0x80 | (c & 0x3F)); }
-        else { out += (char)(0xF0 | (c >> 18)); out += (char)(0x80 | ((c >> 12) & 0x3F));
-            out += (char)(0x80 | ((c >> 6) & 0x3F)); out += (char)(0x80 | (c & 0x3F)); }
-    }
-    return out;
-}
 
 // PlatBitmap backing store. main_linux.cpp's image pipeline already
 // premultiplies + swizzles decoded pixels to BGRA before calling
@@ -44,19 +31,144 @@ struct RasterBitmap {
     std::vector<uint8_t> bgra;
 };
 
-// ── Rasterizer + Pango/FreeType2 renderer ────────────────────────────────────
+// PlatFont backing store: a lightweight descriptor (mirrors what
+// PangoFontDescription used to be) — the actual parsed font file is
+// resolved+cached separately (see GetFontFace below), matching how Pango
+// itself kept a font map cache distinct from the lightweight description.
+struct PlatFontDesc {
+    float size = 12.f;
+    bool bold = false, italic = false, mono = false;
+    std::string family;
+};
+
+// ── font discovery (replaces fontconfig) ─────────────────────────────────────
+// Scans the standard Linux font directories once, indexing each TrueType
+// file's family/subfamily (read straight from its own 'name' table) so
+// CreateFont's (family, bold, italic) request can be resolved to a file
+// path without a fontconfig database.
+
+namespace {
+
+struct FontIndexEntry {
+    std::string path;
+    std::string familyLower;
+    bool bold = false;
+    bool italic = false;
+};
+
+std::vector<FontIndexEntry> g_fontIndex;
+bool g_fontIndexBuilt = false;
+
+std::string ToLower(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) out += (char)std::tolower((unsigned char)c);
+    return out;
+}
+
+void ScanFontDir(const std::string& dir, std::vector<std::string>& outFiles) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || ec) return;
+    fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    fs::recursive_directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        std::error_code fileEc;
+        if (!it->is_regular_file(fileEc) || fileEc) continue;
+        std::string path = it->path().string();
+        std::string lower = ToLower(path);
+        if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".ttf") == 0)
+            outFiles.push_back(path);
+    }
+}
+
+void BuildFontIndex() {
+    if (g_fontIndexBuilt) return;
+    g_fontIndexBuilt = true;
+
+    std::vector<std::string> files;
+    ScanFontDir("/usr/share/fonts", files);
+    ScanFontDir("/usr/local/share/fonts", files);
+    if (const char* home = getenv("HOME")) {
+        ScanFontDir(std::string(home) + "/.fonts", files);
+        ScanFontDir(std::string(home) + "/.local/share/fonts", files);
+    }
+
+    for (const auto& path : files) {
+        ttf::Font probe;
+        if (!probe.LoadFromFile(path)) continue;  // CFF/OTF, TTC, or corrupt — skip
+        if (probe.FamilyName().empty()) continue;
+        std::string subLower = ToLower(probe.SubfamilyName());
+        FontIndexEntry entry;
+        entry.path = path;
+        entry.familyLower = ToLower(probe.FamilyName());
+        entry.bold = subLower.find("bold") != std::string::npos;
+        entry.italic = subLower.find("italic") != std::string::npos || subLower.find("oblique") != std::string::npos;
+        g_fontIndex.push_back(std::move(entry));
+    }
+}
+
+const FontIndexEntry* BestMatchForFamily(const std::string& familyLower, bool bold, bool italic) {
+    const FontIndexEntry* best = nullptr;
+    int bestScore = -1;
+    for (const auto& e : g_fontIndex) {
+        if (e.familyLower != familyLower) continue;
+        int score = (e.bold == bold ? 2 : 0) + (e.italic == italic ? 1 : 0);
+        if (score > bestScore) { bestScore = score; best = &e; }
+    }
+    return best;
+}
+
+// Resolves a CreateFont() request to a concrete font file. `family` is
+// whatever the CSS cascade produced (src/css/stylesheet.cpp's font-family
+// handler already maps generic/Windows-flavored names like "sans-serif" ->
+// "Segoe UI" before this is ever called) — since none of those literal
+// names are installed on Linux, this always falls through to the DejaVu
+// family Vertex ships alongside every major distro's font set, the same
+// "at least render legible text" fallback Pango/fontconfig would have had
+// to do for the same unmatched names.
+std::string FindFontFile(const std::string& family, bool bold, bool italic, bool mono) {
+    BuildFontIndex();
+    if (!family.empty()) {
+        if (const FontIndexEntry* e = BestMatchForFamily(ToLower(family), bold, italic)) return e->path;
+    }
+    std::string fallback = mono ? "dejavu sans mono" : "dejavu sans";
+    if (const FontIndexEntry* e = BestMatchForFamily(fallback, bold, italic)) return e->path;
+    // Last resort: any font at all, ignoring bold/italic/family entirely.
+    return g_fontIndex.empty() ? std::string() : g_fontIndex.front().path;
+}
+
+std::map<std::string, std::shared_ptr<FontFace>> g_fontFaceCache;
+
+std::shared_ptr<FontFace> GetFontFace(const std::string& path) {
+    if (path.empty()) return nullptr;
+    auto it = g_fontFaceCache.find(path);
+    if (it != g_fontFaceCache.end()) return it->second;
+    auto face = std::make_shared<FontFace>();
+    if (!face->Load(path)) { g_fontFaceCache[path] = nullptr; return nullptr; }
+    g_fontFaceCache[path] = face;
+    return face;
+}
+
+}  // namespace
+
+void RegisterLinuxWebFont(const std::string& path) {
+    BuildFontIndex();  // ensure the static scan has already happened first
+    ttf::Font probe;
+    if (!probe.LoadFromFile(path) || probe.FamilyName().empty()) return;
+    std::string subLower = ToLower(probe.SubfamilyName());
+    FontIndexEntry entry;
+    entry.path = path;
+    entry.familyLower = ToLower(probe.FamilyName());
+    entry.bold = subLower.find("bold") != std::string::npos;
+    entry.italic = subLower.find("italic") != std::string::npos || subLower.find("oblique") != std::string::npos;
+    g_fontIndex.push_back(std::move(entry));
+}
+
+// ── Rasterizer + from-scratch font engine renderer ───────────────────────────
 
 class LinuxRenderer : public IPlatformRenderer {
 public:
-    LinuxRenderer() {
-        m_fontMap = pango_ft2_font_map_new();
-        m_pangoCtx = pango_font_map_create_context(PANGO_FONT_MAP(m_fontMap));
-    }
-    ~LinuxRenderer() override {
-        if (m_pangoCtx) g_object_unref(m_pangoCtx);
-        if (m_fontMap) g_object_unref(m_fontMap);
-    }
-
     bool Init(void* nativeWindow) override {
         m_widget = nativeWindow;
         return m_widget != nullptr;
@@ -107,73 +219,51 @@ public:
     }
 
     PlatFont CreateFont(float size, bool bold, bool italic, bool mono, const std::string& family) override {
-        PangoFontDescription* fd = pango_font_description_new();
-        std::string fam = family.empty() ? (mono ? "monospace" : "sans-serif") : family;
-        pango_font_description_set_family(fd, fam.c_str());
-        pango_font_description_set_size(fd, (gint)(size * PANGO_SCALE));
-        pango_font_description_set_weight(fd, bold ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_NORMAL);
-        pango_font_description_set_style(fd, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
-        return (PlatFont)fd;
+        return (PlatFont)new PlatFontDesc{size, bold, italic, mono, family};
     }
-    void ReleaseFont(PlatFont font) override {
-        if (font) pango_font_description_free((PangoFontDescription*)font);
-    }
+    void ReleaseFont(PlatFont font) override { delete (PlatFontDesc*)font; }
+
     float MeasureText(const std::wstring& text, PlatFont font) override {
-        if (!font || text.empty()) return 0;
-        std::string utf8 = WideToUtf8(text);
-        PangoLayout* layout = pango_layout_new(m_pangoCtx);
-        pango_layout_set_font_description(layout, (PangoFontDescription*)font);
-        pango_layout_set_text(layout, utf8.c_str(), -1);
-        int pw = 0, ph = 0;
-        pango_layout_get_pixel_size(layout, &pw, &ph);
-        g_object_unref(layout);
-        return (float)pw;
+        auto* desc = (PlatFontDesc*)font;
+        if (!desc || text.empty()) return 0.f;
+        auto face = FaceFor(desc);
+        if (!face) return 0.f;
+        float w = 0.f;
+        for (wchar_t ch : text) w += face->AdvanceWidth((uint32_t)ch, desc->size);
+        return w;
     }
     float SpaceWidth(PlatFont font) override { return MeasureText(L" ", font); }
     float FontHeight(PlatFont font) override {
-        if (!font) return 16.f;
-        PangoLayout* layout = pango_layout_new(m_pangoCtx);
-        pango_layout_set_font_description(layout, (PangoFontDescription*)font);
-        pango_layout_set_text(layout, "X", 1);
-        int pw = 0, ph = 0;
-        pango_layout_get_pixel_size(layout, &pw, &ph);
-        g_object_unref(layout);
-        return (float)ph;
+        auto* desc = (PlatFontDesc*)font;
+        if (!desc) return 16.f;
+        auto face = FaceFor(desc);
+        return face ? face->LineHeight(desc->size) : desc->size * 1.2f;
     }
     void DrawText(const std::wstring& text, float x, float y, float maxW, float maxH,
                   PlatFont font, PlatColor color, bool underline) override {
         (void)maxH;
-        if (!m_fb || !font || text.empty()) return;
-        std::string utf8 = WideToUtf8(text);
-        PangoLayout* layout = pango_layout_new(m_pangoCtx);
-        pango_layout_set_font_description(layout, (PangoFontDescription*)font);
-        pango_layout_set_text(layout, utf8.c_str(), -1);
-        pango_layout_set_width(layout, (int)(maxW * PANGO_SCALE));
-        if (underline) {
-            PangoAttrList* attrs = pango_attr_list_new();
-            pango_attr_list_insert(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
-            pango_layout_set_attributes(layout, attrs);
-            pango_attr_list_unref(attrs);
+        auto* desc = (PlatFontDesc*)font;
+        if (!m_fb || !desc || text.empty()) return;
+        auto face = FaceFor(desc);
+        if (!face) return;
+
+        raster::ClipRect clip = CurrentClip();
+        float penX = x;
+        float baselineY = y + face->Ascent(desc->size);
+        for (wchar_t wc : text) {
+            if (maxW > 0.f && penX > x + maxW) break;  // no wrapping — layout already positions single lines
+            uint32_t cp = (uint32_t)wc;
+            auto contours = face->RenderGlyph(cp, desc->size);
+            for (auto& contour : contours) {
+                for (auto& pt : contour) { pt.x += penX; pt.y += baselineY; }
+            }
+            if (!contours.empty()) raster::FillPath(*m_fb, contours, color, clip);
+            penX += face->AdvanceWidth(cp, desc->size);
         }
-
-        int pw = 0, ph = 0;
-        pango_layout_get_pixel_size(layout, &pw, &ph);
-        if (pw <= 0 || ph <= 0) { g_object_unref(layout); return; }
-
-        std::vector<uint8_t> buf((size_t)pw * (size_t)ph, 0);
-        FT_Bitmap bitmap;
-        memset(&bitmap, 0, sizeof(bitmap));
-        bitmap.rows = (unsigned int)ph;
-        bitmap.width = (unsigned int)pw;
-        bitmap.pitch = pw;
-        bitmap.buffer = buf.data();
-        bitmap.num_grays = 256;
-        bitmap.pixel_mode = FT_PIXEL_MODE_GRAY;
-        pango_ft2_render_layout(&bitmap, layout, 0, 0);
-
-        raster::BlitAlphaMask(*m_fb, buf.data(), pw, ph, pw,
-                               (int)std::lround(x), (int)std::lround(y), color, CurrentClip());
-        g_object_unref(layout);
+        if (underline) {
+            float uy = baselineY + std::max(1.f, desc->size * 0.08f);
+            raster::StrokeLine(*m_fb, x, uy, penX, uy, color, 1.f, clip);
+        }
     }
 
     PlatBitmap CreateBitmap(int width, int height, const uint8_t* rgbaPixels) override {
@@ -219,12 +309,15 @@ private:
     raster::Framebuffer* m_fb = nullptr;
     int m_width = 800, m_height = 600;
     std::vector<raster::ClipRect> m_clipStack;
-    PangoFontMap* m_fontMap = nullptr;
-    PangoContext* m_pangoCtx = nullptr;
 
     raster::ClipRect CurrentClip() const {
         if (!m_clipStack.empty()) return m_clipStack.back();
         return raster::ClipRect{0, 0, m_width, m_height};
+    }
+
+    static std::shared_ptr<FontFace> FaceFor(const PlatFontDesc* desc) {
+        std::string path = FindFontFile(desc->family, desc->bold, desc->italic, desc->mono);
+        return GetFontFace(path);
     }
 };
 

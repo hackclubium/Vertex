@@ -7,12 +7,11 @@
 // built-in widget toolkit, so this file hand-draws the toolbar (back/
 // forward/reload/home buttons, URL entry, status label) and hand-tests
 // clicks/keystrokes against it, the same way the box-tree painter already
-// hand-draws page content. Phase 2 of the windowing rewrite: drawing now
-// goes through Vertex's own software rasterizer (src/render/rasterizer.h)
-// and presents via a raw xcb_put_image blit — no Cairo. Pango (text
-// shaping, via its FreeType2 backend now instead of pangocairo) is the last
-// dependency this phase leaves in place, deferred to phase 3's from-scratch
-// font engine.
+// hand-draws page content. Drawing goes through Vertex's own software
+// rasterizer (src/render/rasterizer.h) and font engine (src/font/) and
+// presents via a raw xcb_put_image blit — no Cairo, Pango, or fontconfig.
+// Cairo is still linked (canvas_cairo.cpp, <canvas>'s own backend, deferred
+// to phase 4 of the windowing rewrite) but this file never touches it.
 //
 #include <xcb/xcb.h>
 #include <sys/eventfd.h>
