@@ -1,5 +1,6 @@
 #include "test/fixture.h"
 #include "codec/inflate.h"
+#include "codec/png.h"
 
 #include <cctype>
 #include <vector>
@@ -16,6 +17,17 @@ std::vector<uint8_t> HexToBytes(const std::string& hex) {
     };
     for (size_t i = 0; i + 1 < hex.size(); i += 2)
         out.push_back((uint8_t)((val(hex[i]) << 4) | val(hex[i + 1])));
+    return out;
+}
+
+std::string RgbaSummary(const DecodedImage& img) {
+    if (!img.success) return "fail";
+    std::string out = std::to_string(img.width) + "x" + std::to_string(img.height) + ":";
+    for (size_t i = 0; i < img.rgba.size(); i += 4) {
+        if (i) out += " ";
+        out += std::to_string(img.rgba[i]) + "," + std::to_string(img.rgba[i + 1]) + "," +
+               std::to_string(img.rgba[i + 2]) + "," + std::to_string(img.rgba[i + 3]);
+    }
     return out;
 }
 
@@ -135,6 +147,96 @@ TestResult RunCodecTests() {
         ExpectEqual("codec/inflate/adler32-mismatch-is-rejected",
             std::string(ok ? "unexpected-ok\n" : "rejected\n"),
             "rejected\n",
+            result);
+    }
+
+    // The PNG vectors below were constructed with Python stdlib (struct +
+    // zlib.compress + zlib.crc32 — a real, independent DEFLATE encoder and
+    // CRC-32 implementation, not Vertex's own), each with hand-picked pixel
+    // values so the expected decoded output is known exactly.
+
+    {
+        // 2x2 truecolor (color type 2, depth 8): red, green / blue, white.
+        auto bytes = HexToBytes(
+            "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd4"
+            "9a73000000124944415478da63f8cfc0c000c20cff8100001fee05fbf1abba"
+            "770000000049454e44ae426082");
+        auto img = DecodePng(bytes.data(), bytes.size());
+        ExpectEqual("codec/png/truecolor-8bit",
+            RgbaSummary(img) + "\n",
+            "2x2:255,0,0,255 0,255,0,255 0,0,255,255 255,255,255,255\n",
+            result);
+    }
+
+    {
+        // 2x2 grayscale (color type 0, depth 8): 0, 85 / 170, 255.
+        auto bytes = HexToBytes(
+            "89504e470d0a1a0a0000000d494844520000000200000002080000000057dd"
+            "52f80000000e4944415478da6360086558f51f0003ad01ff7a93847f000000"
+            "0049454e44ae426082");
+        auto img = DecodePng(bytes.data(), bytes.size());
+        ExpectEqual("codec/png/grayscale-8bit",
+            RgbaSummary(img) + "\n",
+            "2x2:0,0,0,255 85,85,85,255 170,170,170,255 255,255,255,255\n",
+            result);
+    }
+
+    {
+        // 2x2 indexed color (color type 3, depth 8) with a 4-entry palette
+        // (red/green/blue/yellow) and a tRNS chunk giving each entry a
+        // different alpha (255/128/0/255) — exercises both PLTE lookup and
+        // tRNS-per-index transparency.
+        auto bytes = HexToBytes(
+            "89504e470d0a1a0a0000000d49484452000000020000000208030000004568"
+            "fd160000000c504c5445ff000000ff000000ffffff00d6028f7b0000000474"
+            "524e53ff8000ffa1a194660000000e4944415478da6360606460620600001100"
+            "0783ca64640000000049454e44ae426082");
+        auto img = DecodePng(bytes.data(), bytes.size());
+        ExpectEqual("codec/png/indexed-with-trns",
+            RgbaSummary(img) + "\n",
+            "2x2:255,0,0,255 0,255,0,128 0,0,255,0 255,255,0,255\n",
+            result);
+    }
+
+    {
+        // 2x2 truecolor+alpha (color type 6, depth 8).
+        auto bytes = HexToBytes(
+            "89504e470d0a1a0a0000000d494844520000000200000002080600000072b6"
+            "0d24000000154944415478da63f8cfc0f01f081b18c0f4ffff0e003f1807ba"
+            "92a45f250000000049454e44ae426082");
+        auto img = DecodePng(bytes.data(), bytes.size());
+        ExpectEqual("codec/png/truecolor-alpha-8bit",
+            RgbaSummary(img) + "\n",
+            "2x2:255,0,0,255 0,255,0,128 0,0,255,0 255,255,255,64\n",
+            result);
+    }
+
+    {
+        // 8x1 grayscale at 1-bit depth: byte 0b10110010 packed MSB-first —
+        // exercises sub-byte sample unpacking, not just whole-byte samples.
+        auto bytes = HexToBytes(
+            "89504e470d0a1a0a0000000d4948445200000008000000010100000000cb7bd2"
+            "ee0000000a4944415478da63d8040000b400b38990cd2f0000000049454e44ae426082");
+        auto img = DecodePng(bytes.data(), bytes.size());
+        ExpectEqual("codec/png/grayscale-1bit-packing",
+            RgbaSummary(img) + "\n",
+            "8x1:255,255,255,255 0,0,0,255 255,255,255,255 255,255,255,255 "
+            "0,0,0,255 0,0,0,255 255,255,255,255 0,0,0,255\n",
+            result);
+    }
+
+    {
+        // Not a PNG at all (no signature) and a truncated real PNG must
+        // both fail cleanly rather than crash — decoding attacker-supplied
+        // image bytes has to be safe against garbage/incomplete input.
+        auto notPng = HexToBytes("00112233");
+        auto badImg = DecodePng(notPng.data(), notPng.size());
+        auto truncated = HexToBytes("89504e470d0a1a0a0000000d4948445200000002");
+        auto truncImg = DecodePng(truncated.data(), truncated.size());
+        ExpectEqual("codec/png/malformed-input-fails-safely",
+            std::string(badImg.success ? "unexpected-ok " : "rejected ") +
+                (truncImg.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected rejected\n",
             result);
     }
 
