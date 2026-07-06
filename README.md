@@ -96,7 +96,8 @@ what the page means, where boxes go, what scripts can touch, and what gets paint
 
 ### Not Built From Scratch
 
-Vertex intentionally uses a few low-level dependencies:
+Vertex intentionally uses a few low-level dependencies, and is in the middle of
+removing the ones that aren't OS-native:
 
 | Dependency | Why |
 |---|---|
@@ -104,10 +105,20 @@ Vertex intentionally uses a few low-level dependencies:
 | stb_image | PNG/JPEG/etc. image decoding |
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
-| GTK3 / Cairo / Pango | Linux windowing, pixels, and glyphs |
+| Cairo (Linux `<canvas>` only) | Linux `<canvas>` 2D drawing |
+| Pango | Text shaping (all platforms use OS text APIs directly except Linux, which uses Pango) |
 
 Those libraries do not supply a browser engine. They do transport, decoding, windows,
 text shaping, and drawing. The browser behavior is Vertex.
+
+**Zero-dependency progress:** Linux windowing is now raw XCB (GTK3 is gone) and
+page/chrome rendering runs on a hand-rolled 2D software rasterizer (Cairo is gone
+from everything except `<canvas>`, which still needs its own rewrite). A hand-rolled
+DEFLATE/PNG/JPEG decoder set and a hand-rolled HTTP/1.1 + TLS client
+(SChannel/mbedTLS/Secure Transport) already exist too, standalone and tested, but
+aren't wired into the main image/fetch paths yet — that's deliberately its own
+follow-up so it doesn't destabilize working code. Remaining: swap those in, replace
+Linux's `<canvas>` backend and Pango/fontconfig with from-scratch equivalents.
 
 ## Download
 
@@ -177,10 +188,10 @@ open build/Vertex.app
 
 ### Linux
 
-Requires GTK3 development headers.
+Requires XCB, Cairo, Pango, and fontconfig development headers (no GTK).
 
 ```sh
-sudo apt-get install -y build-essential cmake libgtk-3-dev libcurl4-openssl-dev pkg-config
+sudo apt-get install -y build-essential cmake libxcb1-dev libcairo2-dev libpango1.0-dev libfontconfig1-dev libcurl4-openssl-dev pkg-config
 cmake -B build
 cmake --build build
 ./build/Vertex
