@@ -106,19 +106,20 @@ removing the ones that aren't OS-native:
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
 | Cairo (Linux `<canvas>` only) | Linux `<canvas>` 2D drawing |
-| Pango | Text shaping (all platforms use OS text APIs directly except Linux, which uses Pango) |
 
 Those libraries do not supply a browser engine. They do transport, decoding, windows,
 text shaping, and drawing. The browser behavior is Vertex.
 
-**Zero-dependency progress:** Linux windowing is now raw XCB (GTK3 is gone) and
-page/chrome rendering runs on a hand-rolled 2D software rasterizer (Cairo is gone
-from everything except `<canvas>`, which still needs its own rewrite). A hand-rolled
-DEFLATE/PNG/JPEG decoder set and a hand-rolled HTTP/1.1 + TLS client
-(SChannel/mbedTLS/Secure Transport) already exist too, standalone and tested, but
-aren't wired into the main image/fetch paths yet — that's deliberately its own
-follow-up so it doesn't destabilize working code. Remaining: swap those in, replace
-Linux's `<canvas>` backend and Pango/fontconfig with from-scratch equivalents.
+**Zero-dependency progress:** Linux windowing is now raw XCB (GTK3 is gone), page/
+chrome rendering runs on a hand-rolled 2D software rasterizer, and text runs on a
+hand-rolled TrueType parser + glyph rasterizer with its own font-directory scanner
+(Cairo/Pango/fontconfig are all gone except for Cairo's one remaining job: `<canvas>`,
+which still needs its own rewrite). A hand-rolled DEFLATE/PNG/JPEG decoder set and a
+hand-rolled HTTP/1.1 + TLS client (SChannel/mbedTLS/Secure Transport) already exist
+too, standalone and tested, but aren't wired into the main image/fetch paths yet —
+that's deliberately its own follow-up so it doesn't destabilize working code.
+Remaining: swap those in, replace Linux's `<canvas>` backend with a from-scratch
+equivalent.
 
 ## Download
 
@@ -188,10 +189,12 @@ open build/Vertex.app
 
 ### Linux
 
-Requires XCB, Cairo, Pango, and fontconfig development headers (no GTK).
+Requires XCB and Cairo development headers (no GTK, no Pango, no fontconfig — Vertex
+does its own windowing, rasterizing, and text rendering on Linux; Cairo is kept only
+for `<canvas>`).
 
 ```sh
-sudo apt-get install -y build-essential cmake libxcb1-dev libcairo2-dev libpango1.0-dev libfontconfig1-dev libcurl4-openssl-dev pkg-config
+sudo apt-get install -y build-essential cmake libxcb1-dev libcairo2-dev libcurl4-openssl-dev pkg-config
 cmake -B build
 cmake --build build
 ./build/Vertex
