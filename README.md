@@ -110,17 +110,6 @@ removing the ones that aren't OS-native:
 Those libraries do not supply a browser engine. They do transport, decoding, windows,
 text shaping, and drawing. The browser behavior is Vertex.
 
-**Zero-dependency progress:** Linux windowing is now raw XCB (GTK3 is gone), page/
-chrome rendering runs on a hand-rolled 2D software rasterizer, and text runs on a
-hand-rolled TrueType parser + glyph rasterizer with its own font-directory scanner
-(Cairo/Pango/fontconfig are all gone except for Cairo's one remaining job: `<canvas>`,
-which still needs its own rewrite). A hand-rolled DEFLATE/PNG/JPEG decoder set and a
-hand-rolled HTTP/1.1 + TLS client (SChannel/mbedTLS/Secure Transport) already exist
-too, standalone and tested, but aren't wired into the main image/fetch paths yet —
-that's deliberately its own follow-up so it doesn't destabilize working code.
-Remaining: swap those in, replace Linux's `<canvas>` backend with a from-scratch
-equivalent.
-
 ## Download
 
 Prebuilt releases are published here:
