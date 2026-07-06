@@ -78,6 +78,7 @@ add_library(vertex_engine STATIC
     src/codec/inflate.cpp
     src/codec/crc32.cpp
     src/codec/png.cpp
+    src/codec/jpeg.cpp
     src/network/fetcher.cpp
     src/network/resource_cache.cpp
     src/network/text_decode.cpp

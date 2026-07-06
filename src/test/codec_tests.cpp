@@ -1,8 +1,11 @@
 #include "test/fixture.h"
 #include "codec/inflate.h"
 #include "codec/png.h"
+#include "codec/jpeg.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -18,6 +21,32 @@ std::vector<uint8_t> HexToBytes(const std::string& hex) {
     for (size_t i = 0; i + 1 < hex.size(); i += 2)
         out.push_back((uint8_t)((val(hex[i]) << 4) | val(hex[i + 1])));
     return out;
+}
+
+// JPEG is lossy, so comparisons against a reference decode use a small
+// tolerance rather than byte-exact equality — `refChannels` is 3 for an RGB
+// reference (djpeg's default PPM output) or 1 for a grayscale reference
+// (djpeg's PGM output).
+std::string JpegDiffSummary(const DecodedImage& img, const std::vector<uint8_t>& ref,
+                             int refWidth, int refHeight, int refChannels) {
+    if (!img.success) return "fail";
+    if (img.width != refWidth || img.height != refHeight)
+        return "size-mismatch:" + std::to_string(img.width) + "x" + std::to_string(img.height);
+    int maxDiff = 0;
+    for (int y = 0; y < refHeight; y++) {
+        for (int x = 0; x < refWidth; x++) {
+            uint8_t rr, rg, rb;
+            if (refChannels == 3) {
+                const uint8_t* p = &ref[((size_t)y * refWidth + x) * 3];
+                rr = p[0]; rg = p[1]; rb = p[2];
+            } else {
+                rr = rg = rb = ref[(size_t)y * refWidth + x];
+            }
+            const uint8_t* out = &img.rgba[((size_t)y * img.width + x) * 4];
+            maxDiff = std::max({ maxDiff, std::abs(out[0] - rr), std::abs(out[1] - rg), std::abs(out[2] - rb) });
+        }
+    }
+    return "maxDiff=" + std::to_string(maxDiff);
 }
 
 std::string RgbaSummary(const DecodedImage& img) {
@@ -234,6 +263,215 @@ TestResult RunCodecTests() {
         auto truncated = HexToBytes("89504e470d0a1a0a0000000d4948445200000002");
         auto truncImg = DecodePng(truncated.data(), truncated.size());
         ExpectEqual("codec/png/malformed-input-fails-safely",
+            std::string(badImg.success ? "unexpected-ok " : "rejected ") +
+                (truncImg.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected rejected\n",
+            result);
+    }
+
+    // The JPEG vectors below were produced by libjpeg-turbo's cjpeg (a real,
+    // independent encoder) at three chroma subsampling ratios plus a
+    // grayscale case, with expected pixels taken from libjpeg-turbo's own
+    // djpeg decode of those exact files — a genuine interoperability check,
+    // not just internal self-consistency. Since JPEG is lossy, comparisons
+    // use a small tolerance rather than byte-exact equality; the 4:2:0/4:2:2
+    // references were decoded with djpeg's `-nosmooth` flag specifically,
+    // since Vertex's chroma upsampling is nearest-neighbor, not djpeg's
+    // smoother default — that's the correct apples-to-apples comparison for
+    // the upsampling method actually implemented (see codec/jpeg.h).
+
+    {
+        // 16x16, 4:4:4 (no chroma subsampling) — every component has its own
+        // full-resolution block per MCU, so this exercises the baseline
+        // pipeline (Huffman, dequant, IDCT, YCbCr->RGB) without exercising
+        // multi-block-per-component MCUs or upsampling at all.
+        auto jpg = HexToBytes(
+            "ffd8ffe000104a46494600010100000100010000ffdb00430003020203020203030303040303"
+            "04050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b10161011131415"
+            "15150c0f171816141812141514ffdb00430103040405040509050509140d0b0d141414141414"
+            "1414141414141414141414141414141414141414141414141414141414141414141414141414"
+            "141414141414ffc00011080010001003011100021101031101ffc4001f000001050101010101"
+            "0100000000000000000102030405060708090a0bffc400b51000020103030204030505040400"
+            "00017d01020300041105122131410613516107227114328191a1082342b1c11552d1f0243362"
+            "7282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a"
+            "636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6"
+            "a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7"
+            "e8e9eaf1f2f3f4f5f6f7f8f9faffc4001f010003010101010101010101000000000000010203"
+            "0405060708090a0bffc400b51100020102040403040705040400010277000102031104052131"
+            "061241510761711322328108144291a1b1c109233352f0156272d10a162434e125f11718191a"
+            "262728292a35363738393a434445464748494a535455565758595a636465666768696a737475"
+            "767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7"
+            "b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9"
+            "faffda000c03010002110311003f00f9febf243fd0b3deebf3a3fc2c3e21aff6acfe9d3f6dab"
+            "fe7a4fd58fffd9");
+        auto ref = HexToBytes(
+            "dc1414dc1414dc1414dc1414dc1414dc1414dc1414dc141415c81415c81415c81415c81415c8"
+            "1415c81415c81415c814dc1414dc1414dc1414dc1414dc1414dc1414dc1414dc141415c81415"
+            "c81415c81415c81415c81415c81415c81415c814dc1414dc1414dc1414dc1414dc1414dc1414"
+            "dc1414dc141415c81415c81415c81415c81415c81415c81415c81415c814dc1414dc1414dc14"
+            "14dc1414dc1414dc1414dc1414dc141415c81415c81415c81415c81415c81415c81415c81415"
+            "c814dc1414dc1414dc1414dc1414dc1414dc1414dc1414dc141415c81415c81415c81415c814"
+            "15c81415c81415c81415c814dc1414dc1414dc1414dc1414dc1414dc1414dc1414dc141415c8"
+            "1415c81415c81415c81415c81415c81415c81415c814dc1414dc1414dc1414dc1414dc1414dc"
+            "1414dc1414dc141415c81415c81415c81415c81415c81415c81415c81415c814dc1414dc1414"
+            "dc1414dc1414dc1414dc1414dc1414dc141415c81415c81415c81415c81415c81415c81415c8"
+            "1415c8141514dc1514dc1514dc1514dc1514dc1514dc1514dc1514dce5e61ee5e61ee5e61ee5"
+            "e61ee5e61ee5e61ee5e61ee5e61e1514dc1514dc1514dc1514dc1514dc1514dc1514dc1514dc"
+            "e5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61e1514dc1514dc1514dc1514dc1514"
+            "dc1514dc1514dc1514dce5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61e1514dc15"
+            "14dc1514dc1514dc1514dc1514dc1514dc1514dce5e61ee5e61ee5e61ee5e61ee5e61ee5e61e"
+            "e5e61ee5e61e1514dc1514dc1514dc1514dc1514dc1514dc1514dc1514dce5e61ee5e61ee5e6"
+            "1ee5e61ee5e61ee5e61ee5e61ee5e61e1514dc1514dc1514dc1514dc1514dc1514dc1514dc15"
+            "14dce5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61e1514dc1514dc1514dc1514dc"
+            "1514dc1514dc1514dc1514dce5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61ee5e61e1514"
+            "dc1514dc1514dc1514dc1514dc1514dc1514dc1514dce5e61ee5e61ee5e61ee5e61ee5e61ee5"
+            "e61ee5e61ee5e61e");
+        auto img = DecodeJpeg(jpg.data(), jpg.size());
+        ExpectEqual("codec/jpeg/no-subsampling-444",
+            JpegDiffSummary(img, ref, 16, 16, 3) + "\n",
+            "maxDiff=0\n",
+            result);
+    }
+
+    {
+        // 16x16, 4:2:0 — luma has 4 blocks per MCU (2x2), chroma 1 each;
+        // exercises multi-block-per-component decode + 2x2 upsampling.
+        auto jpg = HexToBytes(
+            "ffd8ffe000104a46494600010100000100010000ffdb00430003020203020203030303040303"
+            "04050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b10161011131415"
+            "15150c0f171816141812141514ffdb00430103040405040509050509140d0b0d141414141414"
+            "1414141414141414141414141414141414141414141414141414141414141414141414141414"
+            "141414141414ffc00011080010001003012200021101031101ffc4001f000001050101010101"
+            "0100000000000000000102030405060708090a0bffc400b51000020103030204030505040400"
+            "00017d01020300041105122131410613516107227114328191a1082342b1c11552d1f0243362"
+            "7282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a"
+            "636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6"
+            "a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7"
+            "e8e9eaf1f2f3f4f5f6f7f8f9faffc4001f010003010101010101010101000000000000010203"
+            "0405060708090a0bffc400b51100020102040403040705040400010277000102031104052131"
+            "061241510761711322328108144291a1b1c109233352f0156272d10a162434e125f11718191a"
+            "262728292a35363738393a434445464748494a535455565758595a636465666768696a737475"
+            "767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7"
+            "b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9"
+            "faffda000c03010002110311003f00f9febdeebe21afdb6af80f19b853fe21c7f67feffeb1f5"
+            "8f6bf67939793d9ff7a77bf3f95add6fa7a3e20e2ffe22afd57ddfab7d5b9fafb4e6f69c9fe0"
+            "b5b93cef7e96d7ffd9");
+        auto ref = HexToBytes(
+            "e21019e21019dc1414dc1414dc131bdc131bdf1316df131613c91413c91418c80e18c80e16c7"
+            "1516c71512ca1012ca10e21019e21019dc1414dc1414dc131bdc131bdf1316df131613c91413"
+            "c91418c80e18c80e16c71516c71512ca1012ca10d71714d71714d81809d81809d9170ed9170e"
+            "d81712d8171212ca1212ca1211ca1511ca1512c81b12c81b13ca1013ca10d71714d71714d818"
+            "09d81809d9170ed9170ed81712d8171212ca1212ca1211ca1511ca1512c81b12c81b13ca1013"
+            "ca10df1219df1219e3120ee3120ee01212e01212d91519d915191dc50e1dc50e16c71516c715"
+            "13c81b13c81b18c80e18c80edf1219df1219e3120ee3120ee01212e01212d91519d915191dc5"
+            "0e1dc50e16c71516c71513c81b13c81b18c80e18c80edc1512dc1512db160edb160ed21916d2"
+            "1916de1609de160913c81913c8191fc50b1fc50b16c71416c71415c91015c910dc1512dc1512"
+            "db160edb160ed21916d21916de1609de160913c81913c8191fc50b1fc50b16c71416c71415c9"
+            "1015c9101514de1514de1912dc1912dc1a11da1a11da1710e91710e9e4e817e4e817e0e725e0"
+            "e725e1e721e1e721e5e620e5e6201514de1514de1912dc1912dc1a11da1a11da1710e91710e9"
+            "e4e817e4e817e0e725e0e725e1e721e1e721e5e620e5e6201216d71216d71215de1215de0e17"
+            "de0e17de1c11d71c11d7daeb21daeb21e8e51ae8e51ae4e71ae4e71ae4e623e4e6231216d712"
+            "16d71215de1215de0e17de0e17de1c11d71c11d7daeb21daeb21e8e51ae8e51ae4e71ae4e71a"
+            "e4e623e4e6231a11dc1a11dc1d0ee31d0ee31513e21513e21d0fde1d0fdee5e61ee5e61eeee2"
+            "1aeee21ae5e71ae5e71ae7e520e7e5201a11dc1a11dc1d0ee31d0ee31513e21513e21d0fde1d"
+            "0fdee5e61ee5e61eeee21aeee21ae5e71ae5e71ae7e520e7e5200f18d70f18d71713d91713d9"
+            "1216d71216d71613dc1613dce3e81ce3e81ce7e521e7e521e1e820e1e820e8e421e8e4210f18"
+            "d70f18d71713d91713d91216d71216d71613dc1613dce3e81ce3e81ce7e521e7e521e1e820e1"
+            "e820e8e421e8e421");
+        auto img = DecodeJpeg(jpg.data(), jpg.size());
+        ExpectEqual("codec/jpeg/subsampled-420",
+            JpegDiffSummary(img, ref, 16, 16, 3) + "\n",
+            "maxDiff=1\n",
+            result);
+    }
+
+    {
+        // 16x16, 4:2:2 — luma has 2 horizontal blocks per MCU, chroma 1
+        // each; exercises the non-square (asymmetric H/V) subsampling case.
+        auto jpg = HexToBytes(
+            "ffd8ffe000104a46494600010100000100010000ffdb00430003020203020203030303040303"
+            "04050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b10161011131415"
+            "15150c0f171816141812141514ffdb00430103040405040509050509140d0b0d141414141414"
+            "1414141414141414141414141414141414141414141414141414141414141414141414141414"
+            "141414141414ffc00011080010001003012100021101031101ffc4001f000001050101010101"
+            "0100000000000000000102030405060708090a0bffc400b51000020103030204030505040400"
+            "00017d01020300041105122131410613516107227114328191a1082342b1c11552d1f0243362"
+            "7282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a"
+            "636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6"
+            "a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7"
+            "e8e9eaf1f2f3f4f5f6f7f8f9faffc4001f010003010101010101010101000000000000010203"
+            "0405060708090a0bffc400b51100020102040403040705040400010277000102031104052131"
+            "061241510761711322328108144291a1b1c109233352f0156272d10a162434e125f11718191a"
+            "262728292a35363738393a434445464748494a535455565758595a636465666768696a737475"
+            "767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7"
+            "b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9"
+            "faffda000c03010002110311003f00f9febdeebf02ce3fe5dfcff43e87e93fff00326ffb8fff"
+            "00b84f886bf6dabf7dfa5aff00cc8ffee67ff701f3d917fcbdf97ea7ffd9");
+        auto ref = HexToBytes(
+            "db1514db1514de1316de1316de1316de1316d91614d9161418c71418c71413c91413c91413c9"
+            "1213c91216c71416c714db1514db1514de1316de1316de1316de1316d91614d9161418c71418"
+            "c71413c91413c91413c91213c91216c71416c714db1514db1514de1316de1316de1316de1316"
+            "d91614d9161418c71418c71413c91413c91413c91213c91216c71416c714db1514db1514de13"
+            "16de1316de1316de1316d91614d9161418c71418c71413c91413c91413c91213c91216c71416"
+            "c714db1514db1514de1316de1316de1316de1316d91614d9161418c71418c71413c91413c914"
+            "13c91213c91216c71416c714db1514db1514de1316de1316de1316de1316d91614d9161418c7"
+            "1418c71413c91413c91413c91213c91216c71416c714db1514db1514de1316de1316de1316de"
+            "1316d91614d9161418c71418c71413c91413c91413c91213c91216c71416c714db1514db1514"
+            "de1316de1316de1316de1316d91614d9161418c71418c71413c91413c91413c91213c91216c7"
+            "1416c7141613de1613de1315d91315d91315dc1315dc1613dc1613dce4e71ee4e71ee7e51ee7"
+            "e51ee7e521e7e521e4e71ce4e71c1613de1613de1315d91315d91315dc1315dc1613dc1613dc"
+            "e4e71ee4e71ee7e51ee7e51ee7e521e7e521e4e71ce4e71c1613de1613de1315d91315d91315"
+            "dc1315dc1613dc1613dce4e71ee4e71ee7e51ee7e51ee7e521e7e521e4e71ce4e71c1613de16"
+            "13de1315d91315d91315dc1315dc1613dc1613dce4e71ee4e71ee7e51ee7e51ee7e521e7e521"
+            "e4e71ce4e71c1613de1613de1315d91315d91315dc1315dc1613dc1613dce4e71ee4e71ee7e5"
+            "1ee7e51ee7e521e7e521e4e71ce4e71c1613de1613de1315d91315d91315dc1315dc1613dc16"
+            "13dce4e71ee4e71ee7e51ee7e51ee7e521e7e521e4e71ce4e71c1613de1613de1315d91315d9"
+            "1315dc1315dc1613dc1613dce4e71ee4e71ee7e51ee7e51ee7e521e7e521e4e71ce4e71c1613"
+            "de1613de1315d91315d91315dc1315dc1613dc1613dce4e71ee4e71ee7e51ee7e51ee7e521e7"
+            "e521e4e71ce4e71c");
+        auto img = DecodeJpeg(jpg.data(), jpg.size());
+        ExpectEqual("codec/jpeg/subsampled-422",
+            JpegDiffSummary(img, ref, 16, 16, 3) + "\n",
+            "maxDiff=0\n",
+            result);
+    }
+
+    {
+        // 16x16 grayscale (1 component) — the color-conversion bypass path.
+        auto jpg = HexToBytes(
+            "ffd8ffe000104a46494600010100000100010000ffdb00430003020203020203030303040303"
+            "04050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b10161011131415"
+            "15150c0f171816141812141514ffc0000b080010001001011100ffc4001f0000010501010101"
+            "010100000000000000000102030405060708090a0bffc400b510000201030302040305050404"
+            "0000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433"
+            "627282090a161718191a25262728292a3435363738393a434445464748494a53545556575859"
+            "5a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5"
+            "a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6"
+            "e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f00f9febdeebe21afdb6affd9");
+        auto ref = HexToBytes(
+            "50505050505050507e7e7e7e7e7e7e7e50505050505050507e7e7e7e7e7e7e7e505050505050"
+            "50507e7e7e7e7e7e7e7e50505050505050507e7e7e7e7e7e7e7e50505050505050507e7e7e7e"
+            "7e7e7e7e50505050505050507e7e7e7e7e7e7e7e50505050505050507e7e7e7e7e7e7e7e5050"
+            "5050505050507e7e7e7e7e7e7e7e2b2b2b2b2b2b2b2bcfcfcfcfcfcfcfcf2b2b2b2b2b2b2b2b"
+            "cfcfcfcfcfcfcfcf2b2b2b2b2b2b2b2bcfcfcfcfcfcfcfcf2b2b2b2b2b2b2b2bcfcfcfcfcfcf"
+            "cfcf2b2b2b2b2b2b2b2bcfcfcfcfcfcfcfcf2b2b2b2b2b2b2b2bcfcfcfcfcfcfcfcf2b2b2b2b"
+            "2b2b2b2bcfcfcfcfcfcfcfcf2b2b2b2b2b2b2b2bcfcfcfcfcfcfcfcf");
+        auto img = DecodeJpeg(jpg.data(), jpg.size());
+        ExpectEqual("codec/jpeg/grayscale",
+            JpegDiffSummary(img, ref, 16, 16, 1) + "\n",
+            "maxDiff=0\n",
+            result);
+    }
+
+    {
+        // Not a JPEG at all, and a truncated real JPEG, must both fail
+        // cleanly — decoding attacker-supplied image bytes has to be safe
+        // against garbage/incomplete input.
+        auto notJpeg = HexToBytes("00112233");
+        auto badImg = DecodeJpeg(notJpeg.data(), notJpeg.size());
+        auto truncated = HexToBytes("ffd8ffe000104a46494600010100000100010000ffdb0043");
+        auto truncImg = DecodeJpeg(truncated.data(), truncated.size());
+        ExpectEqual("codec/jpeg/malformed-input-fails-safely",
             std::string(badImg.success ? "unexpected-ok " : "rejected ") +
                 (truncImg.success ? "unexpected-ok\n" : "rejected\n"),
             "rejected rejected\n",
