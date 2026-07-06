@@ -116,6 +116,22 @@ TestResult RunCodecTests() {
     }
 
     {
+        // gzip.compress(...) from Python's stdlib — a real, independent gzip
+        // encoder, exercising the header/flags parsing + CRC-32/ISIZE
+        // trailer verification GzipInflate adds on top of the shared
+        // Inflate() core (already covered by the zlib-wrapper tests above).
+        auto bytes = HexToBytes(
+            "1f8b08000000000002ffcb48cdc9c95748afca2c50482bcacf5528a82cc9c8c"
+            "f03009c07368816000000");
+        std::string out;
+        bool ok = GzipInflate(bytes.data(), bytes.size(), out);
+        ExpectEqual("codec/inflate/gzip-wrapper",
+            (ok ? "ok:" : "fail:") + out + "\n",
+            "ok:hello gzip from python\n",
+            result);
+    }
+
+    {
         // A long run of a single repeated byte forces an LZ77 back-reference
         // whose length exceeds its distance (distance=1) — the classic
         // self-overlapping-copy case that a naive bulk memcpy would break.

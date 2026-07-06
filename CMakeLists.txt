@@ -84,6 +84,8 @@ add_library(vertex_engine STATIC
     src/network/text_decode.cpp
     src/network/url.cpp
     src/network/websocket.cpp
+    src/network/socket.cpp
+    src/network/http_client.cpp
     src/platform/downloads.cpp
     src/platform/profile.cpp
     src/html/tokenizer.cpp

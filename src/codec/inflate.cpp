@@ -1,4 +1,5 @@
 #include "codec/inflate.h"
+#include "codec/crc32.h"
 #include <vector>
 
 namespace {
@@ -257,4 +258,37 @@ bool ZlibInflate(const uint8_t* data, size_t size, std::string& out) {
     uint32_t expected = ((uint32_t)data[size - 4] << 24) | ((uint32_t)data[size - 3] << 16) |
                          ((uint32_t)data[size - 2] << 8) | (uint32_t)data[size - 1];
     return Adler32((const uint8_t*)out.data(), out.size()) == expected;
+}
+
+bool GzipInflate(const uint8_t* data, size_t size, std::string& out) {
+    if (size < 18) return false; // 10-byte header + empty deflate block + 8-byte trailer, minimum
+    if (data[0] != 0x1F || data[1] != 0x8B) return false; // magic
+    if (data[2] != 8) return false; // compression method must be DEFLATE
+    uint8_t flg = data[3];
+    size_t pos = 10;
+
+    if (flg & 0x04) { // FEXTRA
+        if (pos + 2 > size) return false;
+        uint16_t xlen = (uint16_t)data[pos] | ((uint16_t)data[pos + 1] << 8);
+        pos += 2 + xlen;
+    }
+    if (flg & 0x08) { // FNAME (NUL-terminated)
+        while (pos < size && data[pos] != 0) pos++;
+        pos++;
+    }
+    if (flg & 0x10) { // FCOMMENT (NUL-terminated)
+        while (pos < size && data[pos] != 0) pos++;
+        pos++;
+    }
+    if (flg & 0x02) pos += 2; // FHCRC (header CRC16, not verified)
+    if (pos + 8 > size) return false; // must leave room for the 8-byte trailer
+
+    if (!Inflate(data + pos, size - pos - 8, out)) return false;
+
+    uint32_t expectedCrc = (uint32_t)data[size - 8] | ((uint32_t)data[size - 7] << 8) |
+                            ((uint32_t)data[size - 6] << 16) | ((uint32_t)data[size - 5] << 24);
+    uint32_t expectedSize = (uint32_t)data[size - 4] | ((uint32_t)data[size - 3] << 8) |
+                             ((uint32_t)data[size - 2] << 16) | ((uint32_t)data[size - 1] << 24);
+    if (Crc32((const uint8_t*)out.data(), out.size()) != expectedCrc) return false;
+    return (uint32_t)(out.size() & 0xFFFFFFFFu) == expectedSize;
 }

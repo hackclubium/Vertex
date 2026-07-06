@@ -5,6 +5,7 @@
 #include "network/text_decode.h"
 #include "network/url.h"
 #include "network/websocket.h"
+#include "network/http_client.h"
 #include "platform/downloads.h"
 #include "platform/profile.h"
 #include "html/parser.h"
@@ -164,6 +165,114 @@ struct TestWsServer {
     }
 
     void join() { if (serverThread.joinable()) serverThread.join(); }
+};
+
+std::vector<uint8_t> HexToBytesForHttpTest(const std::string& hex) {
+    std::vector<uint8_t> out;
+    auto val = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+        return 0;
+    };
+    for (size_t i = 0; i + 1 < hex.size(); i += 2)
+        out.push_back((uint8_t)((val(hex[i]) << 4) | val(hex[i + 1])));
+    return out;
+}
+
+void HandleHttpTestConnection(SockFd clientSock, int serverPort) {
+    std::string req;
+    char tmp[4096];
+    while (req.find("\r\n\r\n") == std::string::npos) {
+        int n = recv(clientSock, tmp, sizeof(tmp), 0);
+        if (n <= 0) { closesocket(clientSock); return; }
+        req.append(tmp, n);
+    }
+    size_t lineEnd = req.find("\r\n");
+    std::string requestLine = req.substr(0, lineEnd);
+    size_t sp1 = requestLine.find(' ');
+    size_t sp2 = requestLine.find(' ', sp1 + 1);
+    std::string path = (sp1 != std::string::npos && sp2 != std::string::npos)
+        ? requestLine.substr(sp1 + 1, sp2 - sp1 - 1) : "";
+
+    std::string resp;
+    if (path == "/plain") {
+        std::string body = "hello from plain route";
+        resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " +
+               std::to_string(body.size()) + "\r\n\r\n" + body;
+    } else if (path == "/chunked") {
+        resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n";
+        for (const char* part : { "chunk-one-", "chunk-two-", "chunk-three" }) {
+            char lenBuf[16];
+            snprintf(lenBuf, sizeof(lenBuf), "%zx", strlen(part));
+            resp += std::string(lenBuf) + "\r\n" + part + "\r\n";
+        }
+        resp += "0\r\n\r\n";
+    } else if (path == "/gzip") {
+        // gzip-compresses to "hello gzip from python" — same vector already
+        // independently verified in codec/inflate/gzip-wrapper.
+        auto gz = HexToBytesForHttpTest(
+            "1f8b08000000000002ffcb48cdc9c95748afca2c50482bcacf5528a82cc9c8c"
+            "f03009c07368816000000");
+        resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n"
+               "Content-Length: " + std::to_string(gz.size()) + "\r\n\r\n";
+        resp.append((const char*)gz.data(), gz.size());
+    } else if (path == "/redirect1") {
+        resp = "HTTP/1.1 302 Found\r\nLocation: /redirect2\r\nContent-Length: 0\r\n\r\n";
+    } else if (path == "/redirect2") {
+        resp = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:" + std::to_string(serverPort) +
+               "/plain\r\nContent-Length: 0\r\n\r\n";
+    } else if (path == "/setcookie") {
+        std::string body = "cookie set";
+        resp = "HTTP/1.1 200 OK\r\nSet-Cookie: testcookie=abc123; Path=/\r\nContent-Length: " +
+               std::to_string(body.size()) + "\r\n\r\n" + body;
+    } else if (path == "/checkcookie") {
+        bool hasCookie = req.find("testcookie=abc123") != std::string::npos;
+        std::string body = hasCookie ? "has-cookie" : "no-cookie";
+        resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    } else if (path == "/noframing") {
+        resp = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody with no explicit framing";
+    } else {
+        std::string body = "not found";
+        resp = "HTTP/1.1 404 Not Found\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    }
+    send(clientSock, resp.data(), (int)resp.size(), 0);
+    closesocket(clientSock);
+}
+
+// A minimal multi-connection HTTP/1.1 test server: one thread per accepted
+// connection (Vertex's own client always sends Connection: close and opens
+// a fresh socket per request, including for each hop of a redirect, so this
+// needs to serve more than one connection over the test's lifetime, unlike
+// TestWsServer above). Runs for the rest of the test process — it's a
+// detached background thread, cleaned up by process exit like the rest of
+// vertex-tests' per-suite-per-process model.
+struct TestHttpServer {
+    int port = 0;
+
+    void start() {
+#ifdef _WIN32
+        static bool wsaInited = [] { WSADATA wsa; return WSAStartup(MAKEWORD(2, 2), &wsa) == 0; }();
+        (void)wsaInited;
+#endif
+        SockFd listenSock = (SockFd)socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        bind(listenSock, (sockaddr*)&addr, sizeof(addr));
+        listen(listenSock, 16);
+        socklen_t len = sizeof(addr);
+        getsockname(listenSock, (sockaddr*)&addr, &len);
+        port = ntohs(addr.sin_port);
+
+        std::thread([listenSock, p = port]() {
+            for (;;) {
+                SockFd clientSock = accept(listenSock, nullptr, nullptr);
+                if (clientSock == kInvalidSock) return;
+                std::thread(HandleHttpTestConnection, clientSock, p).detach();
+            }
+        }).detach();
+    }
 };
 
 } // namespace
@@ -500,6 +609,55 @@ TestResult RunNetworkTests() {
         ExpectEqual("network/websocket/server-initiated-close-is-handled",
             std::to_string(closeCode) + "\n",
             "1000\n",
+            result);
+    }
+
+    {
+        TestHttpServer server;
+        server.start();
+        std::string base = "http://127.0.0.1:" + std::to_string(server.port);
+
+        auto plain = FetchHttp(base + "/plain");
+        ExpectEqual("network/http/plain-content-length-body",
+            (plain.success ? "ok:" : "fail:") + plain.body + ":" + plain.contentType + "\n",
+            "ok:hello from plain route:text/plain\n",
+            result);
+
+        auto chunked = FetchHttp(base + "/chunked");
+        ExpectEqual("network/http/chunked-transfer-encoding",
+            (chunked.success ? "ok:" : "fail:") + chunked.body + "\n",
+            "ok:chunk-one-chunk-two-chunk-three\n",
+            result);
+
+        auto gz = FetchHttp(base + "/gzip");
+        ExpectEqual("network/http/gzip-content-encoding",
+            (gz.success ? "ok:" : "fail:") + gz.body + "\n",
+            "ok:hello gzip from python\n",
+            result);
+
+        auto redirected = FetchHttp(base + "/redirect1");
+        ExpectEqual("network/http/multi-hop-redirect-chain",
+            (redirected.success ? "ok:" : "fail:") + redirected.body + ":" + redirected.finalUrl + "\n",
+            "ok:hello from plain route:" + base + "/plain\n",
+            result);
+
+        FetchHttp(base + "/setcookie");
+        auto cookieCheck = FetchHttp(base + "/checkcookie");
+        ExpectEqual("network/http/cookie-set-then-sent-on-next-request",
+            (cookieCheck.success ? "ok:" : "fail:") + cookieCheck.body + "\n",
+            "ok:has-cookie\n",
+            result);
+
+        auto noFraming = FetchHttp(base + "/noframing");
+        ExpectEqual("network/http/no-explicit-framing-reads-until-close",
+            (noFraming.success ? "ok:" : "fail:") + noFraming.body + "\n",
+            "ok:body with no explicit framing\n",
+            result);
+
+        auto notFound = FetchHttp(base + "/does-not-exist");
+        ExpectEqual("network/http/404-is-reported-as-failure",
+            std::string(notFound.success ? "unexpected-ok " : "failed ") + std::to_string(notFound.status) + "\n",
+            "failed 404\n",
             result);
     }
 

@@ -4,9 +4,9 @@
 //
 // Part of Vertex's zero-third-party-dependency push: this replaces the
 // decompression zlib/libcurl currently do internally. Shared infrastructure
-// for two consumers: PNG decoding (IDAT streams are zlib-wrapped DEFLATE)
-// and, later, HTTP's Content-Encoding: gzip (gzip-wrapped DEFLATE — that
-// wrapper isn't implemented yet, only the zlib one PNG needs).
+// for PNG decoding (IDAT streams are zlib-wrapped DEFLATE) and the
+// hand-rolled HTTP client's Content-Encoding: gzip support (gzip-wrapped
+// DEFLATE).
 //
 #include <cstdint>
 #include <string>
@@ -22,5 +22,12 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out);
 // big-endian Adler-32 checksum of the decompressed data. This is exactly the
 // format PNG's IDAT chunks use.
 bool ZlibInflate(const uint8_t* data, size_t size, std::string& out);
+
+// RFC 1952 gzip format: a 10+ byte header (with optional FEXTRA/FNAME/
+// FCOMMENT/FHCRC fields depending on the flags byte), a raw DEFLATE stream,
+// then a 4-byte little-endian CRC-32 and a 4-byte little-endian ISIZE
+// (uncompressed size mod 2^32) trailer. This is the format HTTP's
+// Content-Encoding: gzip uses.
+bool GzipInflate(const uint8_t* data, size_t size, std::string& out);
 
 uint32_t Adler32(const uint8_t* data, size_t size);
