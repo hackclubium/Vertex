@@ -8,10 +8,9 @@
 // forward/reload/home buttons, URL entry, status label) and hand-tests
 // clicks/keystrokes against it, the same way the box-tree painter already
 // hand-draws page content. Drawing goes through Vertex's own software
-// rasterizer (src/render/rasterizer.h) and font engine (src/font/) and
-// presents via a raw xcb_put_image blit — no Cairo, Pango, or fontconfig.
-// Cairo is still linked (canvas_cairo.cpp, <canvas>'s own backend, deferred
-// to phase 4 of the windowing rewrite) but this file never touches it.
+// rasterizer (src/render/rasterizer.h), font engine (src/font/), and
+// <canvas> backend (src/render/canvas_raster.h), and presents via a raw
+// xcb_put_image blit — Linux has no third-party dependency left at all.
 //
 #include <xcb/xcb.h>
 #include <sys/eventfd.h>
@@ -25,7 +24,8 @@
 #include "platform/plat_text_measure.h"
 #include "network/resource_cache.h"
 #include "render/svg.h"
-#include "render/canvas_cairo.h"
+#include "render/canvas_raster.h"
+#include "render/raster_bitmap.h"
 #include "render/rasterizer.h"
 #include "render/webfont.h"
 #include "third_party/stb_image.h"
@@ -315,7 +315,7 @@ static std::set<std::string> g_loadingImages;
 static std::set<std::string> g_failedImages;
 static std::map<std::string, PlatFont> g_fontCache;
 
-static std::map<const Node*, std::unique_ptr<CairoCanvasSurface>> g_canvasSurfaces;
+static std::map<const Node*, std::unique_ptr<RasterCanvasSurface>> g_canvasSurfaces;
 static std::map<const Node*, PlatBitmap> g_canvasBitmaps;
 
 static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
@@ -329,13 +329,15 @@ static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
     };
     int w = parseIntAttr("width", 300);
     int h = parseIntAttr("height", 150);
-    // g_images now holds RasterBitmap* (the new rasterizer's PlatBitmap), not
-    // cairo_surface_t* — canvas.drawImage(<already-decoded img>) is a no-op
-    // until phase 4 rebuilds the canvas backend on the same rasterizer.
-    // <canvas> itself and drawImage(<canvas>) both still work fine (unaffected —
-    // CairoCanvasSurface owns its own surface independent of g_images).
-    auto surface = std::make_unique<CairoCanvasSurface>(w, h,
-        [](const std::string&) -> cairo_surface_t* { return nullptr; });
+    // g_images and the canvas backend now share the exact same RasterBitmap
+    // type (render/raster_bitmap.h), so canvas.drawImage(<already-decoded
+    // img>) can look the image straight up here — no per-platform bitmap
+    // format mismatch to work around anymore.
+    auto surface = std::make_unique<RasterCanvasSurface>(w, h,
+        [](const std::string& url) -> const RasterBitmap* {
+            auto imgIt = g_images.find(url);
+            return imgIt != g_images.end() ? (const RasterBitmap*)imgIt->second : nullptr;
+        });
     ICanvasSurface* raw = surface.get();
     g_canvasSurfaces[n] = std::move(surface);
     return raw;
@@ -620,7 +622,7 @@ static void DoDraw() {
             ps.images = &g_images;
             g_canvasBitmaps.clear();
             for (auto& [node, surface] : g_canvasSurfaces)
-                g_canvasBitmaps[node] = surface->GetSurface();
+                g_canvasBitmaps[node] = surface->AsPlatBitmap();
             ps.canvasSurfaces = &g_canvasBitmaps;
             ps.hits = &hits;
             ps.fontCache = &g_fontCache;

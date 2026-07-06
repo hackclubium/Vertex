@@ -5,8 +5,8 @@
 
 // CoreGraphics-backed implementation of a <canvas> element's 2D drawing
 // surface — the macOS counterpart to Windows' D2DCanvasSurface
-// (src/render/canvas_renderer.h) and Linux's CairoCanvasSurface
-// (src/render/canvas_cairo.h).
+// (src/render/canvas_renderer.h) and Linux's RasterCanvasSurface
+// (src/render/canvas_raster.h).
 //
 // Unlike those two backends, CGImageRef (macOS's PlatBitmap, see
 // platform/platform.h) is immutable — it's a snapshot, not a live handle —

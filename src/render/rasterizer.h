@@ -55,6 +55,12 @@ struct Framebuffer {
 // intersected with the framebuffer bounds by the caller).
 void FillPath(Framebuffer& fb, const std::vector<Contour>& contours, PlatColor color, const ClipRect& clip);
 
+// Sets an axis-aligned rect to fully transparent (0,0,0,0) — a hard-edged
+// clear, no anti-aliasing (matches Cairo's CAIRO_OPERATOR_CLEAR used for
+// this same purpose; <canvas> clearRect() is the only caller, and is
+// virtually always axis-aligned/unrotated in real-world use).
+void ClearRect(Framebuffer& fb, float x, float y, float w, float h, const ClipRect& clip);
+
 // Convenience shapes built on FillPath.
 void FillRect(Framebuffer& fb, float x, float y, float w, float h, PlatColor color, const ClipRect& clip);
 void FillRoundedRect(Framebuffer& fb, float x, float y, float w, float h, float radius, PlatColor color, const ClipRect& clip);

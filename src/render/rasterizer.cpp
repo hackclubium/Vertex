@@ -34,17 +34,25 @@ void BuildEdges(const std::vector<Contour>& contours, std::vector<Edge>& edges,
     }
 }
 
+// Standard Porter-Duff "over", tracking real destination alpha rather than
+// assuming an opaque destination — needed for <canvas>'s transparent
+// background (the main window framebuffer is always cleared to opaque
+// first, and this reduces to exactly the old always-255 formula whenever
+// dstA is already 1, so there's no behavior change for that caller).
 inline void BlendPixel(uint8_t* p, PlatColor color, float alpha) {
     if (alpha <= 0.f) return;
     if (alpha > 1.f) alpha = 1.f;
-    float ia = 1.f - alpha;
+    float dstA = p[3] / 255.f;
+    float outA = alpha + dstA * (1.f - alpha);
+    if (outA <= 0.0001f) { p[0] = p[1] = p[2] = p[3] = 0; return; }
     uint8_t srcB = (uint8_t)(color.b * 255.f + 0.5f);
     uint8_t srcG = (uint8_t)(color.g * 255.f + 0.5f);
     uint8_t srcR = (uint8_t)(color.r * 255.f + 0.5f);
-    p[0] = (uint8_t)(p[0] * ia + srcB * alpha + 0.5f);
-    p[1] = (uint8_t)(p[1] * ia + srcG * alpha + 0.5f);
-    p[2] = (uint8_t)(p[2] * ia + srcR * alpha + 0.5f);
-    p[3] = 255;
+    float ia = 1.f - alpha;
+    p[0] = (uint8_t)((srcB * alpha + p[0] * dstA * ia) / outA + 0.5f);
+    p[1] = (uint8_t)((srcG * alpha + p[1] * dstA * ia) / outA + 0.5f);
+    p[2] = (uint8_t)((srcR * alpha + p[2] * dstA * ia) / outA + 0.5f);
+    p[3] = (uint8_t)(outA * 255.f + 0.5f);
 }
 
 // Adds `weight` coverage to every pixel fully spanned by [x0,x1), and the
@@ -141,6 +149,18 @@ void FillPath(Framebuffer& fb, const std::vector<Contour>& contours, PlatColor c
     }
 }
 
+void ClearRect(Framebuffer& fb, float x, float y, float w, float h, const ClipRect& clip) {
+    if (w <= 0.f || h <= 0.f) return;
+    int ix0 = std::max({clip.x0, 0, (int)std::floor(x)});
+    int iy0 = std::max({clip.y0, 0, (int)std::floor(y)});
+    int ix1 = std::min({clip.x1, fb.width, (int)std::ceil(x + w)});
+    int iy1 = std::min({clip.y1, fb.height, (int)std::ceil(y + h)});
+    if (ix1 <= ix0 || iy1 <= iy0) return;
+    for (int py = iy0; py < iy1; py++) {
+        std::memset(fb.Row(py) + (size_t)ix0 * 4, 0, (size_t)(ix1 - ix0) * 4);
+    }
+}
+
 void FillRect(Framebuffer& fb, float x, float y, float w, float h, PlatColor color, const ClipRect& clip) {
     if (w <= 0.f || h <= 0.f) return;
     std::vector<Contour> contours(1);
@@ -211,12 +231,15 @@ void BlitBitmap(Framebuffer& fb, const uint8_t* src, int srcW, int srcH,
             // the extra globalAlpha factor spread across both terms of the blend.
             float alpha = (sp[3] / 255.f) * globalAlpha;
             if (alpha > 1.f) alpha = 1.f;
-            float ia = 1.f - alpha;
             uint8_t* dp = drow + x * 4;
-            dp[0] = (uint8_t)(dp[0] * ia + sp[0] * globalAlpha + 0.5f);
-            dp[1] = (uint8_t)(dp[1] * ia + sp[1] * globalAlpha + 0.5f);
-            dp[2] = (uint8_t)(dp[2] * ia + sp[2] * globalAlpha + 0.5f);
-            dp[3] = 255;
+            float dstA = dp[3] / 255.f;
+            float outA = alpha + dstA * (1.f - alpha);
+            if (outA <= 0.0001f) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
+            float ia = 1.f - alpha;
+            dp[0] = (uint8_t)((sp[0] * globalAlpha + dp[0] * dstA * ia) / outA + 0.5f);
+            dp[1] = (uint8_t)((sp[1] * globalAlpha + dp[1] * dstA * ia) / outA + 0.5f);
+            dp[2] = (uint8_t)((sp[2] * globalAlpha + dp[2] * dstA * ia) / outA + 0.5f);
+            dp[3] = (uint8_t)(outA * 255.f + 0.5f);
         }
     }
 }
@@ -241,11 +264,14 @@ void BlitAlphaMask(Framebuffer& fb, const uint8_t* mask, int maskW, int maskH, i
             if (a <= 0.f) continue;
             if (a > 1.f) a = 1.f;
             uint8_t* dp = drow + x * 4;
+            float dstA = dp[3] / 255.f;
+            float outA = a + dstA * (1.f - a);
+            if (outA <= 0.0001f) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
             float ia = 1.f - a;
-            dp[0] = (uint8_t)(dp[0] * ia + srcB * a + 0.5f);
-            dp[1] = (uint8_t)(dp[1] * ia + srcG * a + 0.5f);
-            dp[2] = (uint8_t)(dp[2] * ia + srcR * a + 0.5f);
-            dp[3] = 255;
+            dp[0] = (uint8_t)((srcB * a + dp[0] * dstA * ia) / outA + 0.5f);
+            dp[1] = (uint8_t)((srcG * a + dp[1] * dstA * ia) / outA + 0.5f);
+            dp[2] = (uint8_t)((srcR * a + dp[2] * dstA * ia) / outA + 0.5f);
+            dp[3] = (uint8_t)(outA * 255.f + 0.5f);
         }
     }
 }

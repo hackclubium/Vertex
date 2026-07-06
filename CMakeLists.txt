@@ -207,22 +207,20 @@ elseif (APPLE)
     )
 elseif (UNIX)
     find_package(PkgConfig REQUIRED)
-    # GTK3 is gone (phase 1: raw XCB replaces GTK's window/widget toolkit).
-    # Cairo is gone from the main renderer too (phase 2: src/render/rasterizer
-    # replaces it; presentation is a raw xcb_put_image blit) — Cairo is only
-    # still linked for canvas_cairo.cpp's <canvas> 2D backend, cut in phase 4.
-    # Pango + fontconfig are gone too (phase 3: src/font/'s hand-rolled
-    # TrueType parser + directory-scan font discovery replace them).
+    # Zero third-party dependencies on Linux: GTK3 (phase 1), Cairo (phase 2
+    # for the main renderer, phase 4 for <canvas>), and Pango/fontconfig
+    # (phase 3) have all been replaced by Vertex's own XCB windowing,
+    # software rasterizer (src/render/rasterizer.h), TrueType font engine
+    # (src/font/), and <canvas> backend (src/render/canvas_raster.h).
     pkg_check_modules(XCB REQUIRED xcb)
-    pkg_check_modules(CAIRO REQUIRED cairo)
     add_executable(Vertex
         src/platform/main_linux.cpp
         src/platform/platform_linux.cpp
-        src/render/canvas_cairo.cpp
+        src/render/canvas_raster.cpp
     )
-    target_include_directories(Vertex PRIVATE src ${XCB_INCLUDE_DIRS} ${CAIRO_INCLUDE_DIRS})
-    target_link_libraries(Vertex PRIVATE vertex_engine ${XCB_LIBRARIES} ${CAIRO_LIBRARIES})
-    target_compile_options(Vertex PRIVATE ${XCB_CFLAGS_OTHER} ${CAIRO_CFLAGS_OTHER})
+    target_include_directories(Vertex PRIVATE src ${XCB_INCLUDE_DIRS})
+    target_link_libraries(Vertex PRIVATE vertex_engine ${XCB_LIBRARIES})
+    target_compile_options(Vertex PRIVATE ${XCB_CFLAGS_OTHER})
     add_custom_command(TARGET Vertex POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/src/platform/vertex_icon.png

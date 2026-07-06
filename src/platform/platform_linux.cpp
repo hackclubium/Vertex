@@ -2,16 +2,15 @@
 //
 // platform_linux.cpp — Linux backend: hand-rolled rasterizer + font engine.
 //
-// Phase 3 of the Linux windowing rewrite: text now goes through Vertex's own
-// TrueType parser + glyph rasterizer (src/font/) instead of Pango, cutting
-// the last Cairo/Pango/fontconfig dependency from the main renderer (Cairo
-// is still linked for <canvas>'s own backend, deferred to phase 4). Font
-// discovery replaces fontconfig with a directory scan — see
-// BuildFontIndex() below.
+// Text goes through Vertex's own TrueType parser + glyph rasterizer
+// (src/font/) instead of Pango/fontconfig — font discovery is a directory
+// scan (see BuildFontIndex() below). Cairo is no longer linked on Linux at
+// all: <canvas> also runs on the same rasterizer now (render/canvas_raster).
 //
 #include "platform/platform.h"
 #include "platform/linux_font_registry.h"
 #include "render/rasterizer.h"
+#include "render/raster_bitmap.h"
 #include "font/font_face.h"
 #include <algorithm>
 #include <cctype>
@@ -21,15 +20,6 @@
 #include <map>
 #include <memory>
 #include <vector>
-
-// PlatBitmap backing store. main_linux.cpp's image pipeline already
-// premultiplies + swizzles decoded pixels to BGRA before calling
-// CreateBitmap (historically to match Cairo's ARGB32 layout) — the same
-// layout rasterizer.h's BlitBitmap expects, so no conversion is needed here.
-struct RasterBitmap {
-    int width = 0, height = 0;
-    std::vector<uint8_t> bgra;
-};
 
 // PlatFont backing store: a lightweight descriptor (mirrors what
 // PangoFontDescription used to be) — the actual parsed font file is
