@@ -782,6 +782,19 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
         RequestRedraw();
         return;
     }
+    if (ctrl && !shift && sym == 'r') {
+        g_chrome.reload();
+        return;
+    }
+    if (sym == XK_F5) {
+        g_chrome.reload();
+        return;
+    }
+    if (sym == XK_Escape && CurTab().loading) {
+        CurTab().loading = false;
+        RequestRedraw();
+        return;
+    }
 
     if (g_urlEdit.focused) {
         if (sym == XK_Return)     { NavigateFromUrlBar(); return; }
