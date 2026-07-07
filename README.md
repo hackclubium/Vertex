@@ -13,15 +13,15 @@
 
 <p align="center">
   <strong>A browser engine built from scratch in C++.</strong><br>
-  HTML, CSS, JavaScript, layout, SVG, painting, navigation, and tabs —
+  HTML, CSS, JavaScript, layout, SVG, painting, navigation, and tabs --
   no Chromium, WebView, CEF, or QtWebEngine.
 </p>
 
 ---
 
-Vertex is a web browser built entirely from the ground up. Every piece — parser, DOM,
+Vertex is a web browser built entirely from the ground up. Every piece -- parser, DOM,
 stylesheet engine, JavaScript runtime, layout algorithms, SVG renderer, painting path,
-resource cache, forms, events, history, and the native window shell — lives in this
+resource cache, forms, events, history, and the native window shell -- lives in this
 repository.
 
 If you want to understand how a browser actually works, Vertex is the kind of project
@@ -71,21 +71,21 @@ style resolution, layout, scripting, and painting.
 
 ### Built Here
 
-- **HTML** — tokenizer and parser with entity handling, auto-close, rawtext/RCDATA
+- **HTML** -- tokenizer and parser with entity handling, auto-close, rawtext/RCDATA
   modes, and real-world error recovery.
-- **CSS** — cascade with combinators, attributes, pseudo-classes, relational selectors
+- **CSS** -- cascade with combinators, attributes, pseudo-classes, relational selectors
   (`:has()`, `:nth-child(... of selector)`), media/supports queries, custom properties,
   logical properties, transforms, gradients, flex, grid, tables, floats, positioning,
   form styling, and viewport/math functions.
-- **JavaScript** — lexer, parser, compiler, VM, DOM bindings, timers, events, promises,
+- **JavaScript** -- lexer, parser, compiler, VM, DOM bindings, timers, events, promises,
   `fetch`, a hand-rolled WebSocket client (handshake, framing, and masking from scratch
-  — curl is only the encrypted byte pipe for `wss://`), storage, DOM selectors,
+  -- curl is only the encrypted byte pipe for `wss://`), storage, DOM selectors,
   geometry APIs, and observer APIs.
-- **Layout** — block, inline, line boxes, floats, tables, flex, grid, replaced elements,
+- **Layout** -- block, inline, line boxes, floats, tables, flex, grid, replaced elements,
   positioned boxes, scrolling, and dirty-layout invalidation.
-- **SVG** — inline and external SVGs, paths, gradients, transforms, text, symbols,
+- **SVG** -- inline and external SVGs, paths, gradients, transforms, text, symbols,
   `<use>`, class/style rules, stroke/fill behavior, and raster fallback.
-- **Painting** — text, boxes, links, images, controls, SVG, hover, focus, dirty
+- **Painting** -- text, boxes, links, images, controls, SVG, hover, focus, dirty
   regions, and cached rendering paths with hit testing.
 
 ### External Dependencies
@@ -100,7 +100,7 @@ transport, decoding, and platform drawing:
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
 
-Linux has none — windowing (XCB), 2D rendering, text, and `<canvas>` are all
+Linux has none -- windowing (XCB), 2D rendering, text, and `<canvas>` are all
 hand-rolled, no GTK/Cairo/Pango/fontconfig.
 
 ## Download
@@ -114,7 +114,7 @@ Prebuilt releases: [github.com/hackclubium/Vertex/releases](https://github.com/h
 | Linux | `Vertex-linux-installer.tar.gz` |
 
 Portable updater binaries are also included in each release. Vertex checks for new
-GitHub releases on startup. Press `F12` to install an update — it launches
+GitHub releases on startup. Press `F12` to install an update -- it launches
 `VertexUpdater`, swaps the portable binary, and restarts.
 
 ## Profile Data
@@ -157,7 +157,7 @@ open build/Vertex.app
 
 ### Linux
 
-Requires only XCB development headers. No GTK, Cairo, Pango, or fontconfig — Vertex
+Requires only XCB development headers. No GTK, Cairo, Pango, or fontconfig -- Vertex
 does its own windowing, rasterizing, text rendering, and `<canvas>` on Linux.
 
 ```sh
@@ -201,7 +201,7 @@ build/dump_layout page.html [viewportWidth]
 build/dump_js script.js
 ```
 
-`dump_layout` prints the box tree and geometry — useful when a real site breaks and
+`dump_layout` prints the box tree and geometry -- useful when a real site breaks and
 you want a focused regression test instead of guessing from screenshots.
 
 ## Performance Debugging
@@ -227,7 +227,7 @@ paint time, JavaScript parse/run time, and whether layout was reused.
 Vertex grows by turning real web failures into engine improvements:
 
 1. Capture (or reduce) the page that breaks.
-2. Identify the subsystem — HTML, CSS, JS, layout, paint, network, or platform.
+2. Identify the subsystem -- HTML, CSS, JS, layout, paint, network, or platform.
 3. Add the smallest test that reproduces the issue.
 4. Fix the engine.
 5. Keep the test.
@@ -257,7 +257,7 @@ tools/
 
 ## Why Vertex Exists
 
-Browsers are treated like black boxes — too large, too tangled, too industrial to
+Browsers are treated like black boxes -- too large, too tangled, too industrial to
 approach.
 
 Vertex is the opposite. A browser can start small, stay readable, and still become
