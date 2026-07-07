@@ -705,10 +705,6 @@ static void DrawContextMenu() {
     }
     g_renderer->ReleaseFont(menuFont);
 }
-                              (float)StatusHeight, f, RgbToPlat(Quiet));
-        g_renderer->ReleaseFont(f);
-    }
-}
 
 // ── drawing ──────────────────────────────────────────────────────────────────
 

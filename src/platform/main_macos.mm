@@ -12,6 +12,8 @@
 #include "platform/chrome_theme.h"
 #include "platform/box_painter.h"
 #include "platform/plat_text_measure.h"
+#include "platform/profile.h"
+#include "platform/downloads.h"
 #include "network/resource_cache.h"
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
@@ -40,6 +42,15 @@ static auto& g_activeTab = g_chrome.state.activeTab;
 static auto& g_js        = g_chrome.state.js;
 static auto& g_formState = g_chrome.state.form;
 static auto& g_updater   = g_chrome.state.updater;
+
+const Node* g_hoverNode = nullptr;  // Not static - CSS system needs extern access
+
+// Profile data storage
+static vertex::profile::ProfilePaths g_profilePaths;
+static std::vector<vertex::downloads::DownloadRecord> g_downloads;
+static std::vector<std::vector<std::string>> g_bookmarks;
+static std::vector<std::vector<std::string>> g_history;
+
 static Semaphore g_imageFetchGate(6);
 
 static std::unique_ptr<IPlatformRenderer> g_renderer;
@@ -57,6 +68,133 @@ static std::string HitTestLink(float x, float y) {
          && y >= it->y && y <= it->y + it->h)
             return UnwrapBingRedirect(it->href);
     return {};
+}
+
+// ── profile data helpers ─────────────────────────────────────────────────────
+
+static void AppendHistoryRecord(const std::string& url, const std::string& title) {
+    if (g_profilePaths.historyFile.empty()) return;
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.historyFile, {std::to_string(ms), url, title});
+}
+
+static void AppendBookmarkRecord(const std::string& url, const std::string& title) {
+    if (g_profilePaths.bookmarksFile.empty()) return;
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.bookmarksFile, {std::to_string(ms), url, title});
+}
+
+static void AppendDownloadRecord(const vertex::downloads::DownloadRecord& rec) {
+    if (g_profilePaths.downloadsFile.empty()) return;
+    g_downloads.push_back(rec);
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.downloadsFile, {
+        std::to_string(ms), rec.url, rec.path, rec.filename,
+        rec.success ? "success" : "failed", rec.error
+    });
+}
+
+static std::string AppPageCss() {
+    return "body{margin:0;padding:20px;font:14px/1.5 system-ui,sans-serif;background:#f9fbff;color:#1f2937}"
+           "main{max-width:800px;margin:0 auto;background:#fff;padding:32px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}"
+           "h1{margin:0 0 24px;font-size:24px;font-weight:600;color:#111827}"
+           ".item{margin:16px 0;padding:12px 0;border-bottom:1px solid #e5e7eb}"
+           ".item:last-child{border:none}"
+           ".name{font-weight:500;color:#111827;text-decoration:none;display:block}"
+           ".name:hover{color:#2563eb}"
+           ".meta{margin-top:4px;font-size:13px;color:#6b7280;word-break:break-all}"
+           "code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px}";
+}
+
+static std::string HistoryPageHtml() {
+    std::string html = "<html><head><title>History</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>History</h1>";
+    bool any = false;
+    for (auto it = g_history.rbegin(); it != g_history.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No history yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string BookmarksPageHtml() {
+    std::string html = "<html><head><title>Bookmarks</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Bookmarks</h1>";
+    bool any = false;
+    for (auto it = g_bookmarks.rbegin(); it != g_bookmarks.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No bookmarks yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string DownloadsPageHtml() {
+    std::string html = "<html><head><title>Downloads</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Downloads</h1>";
+    bool any = false;
+    for (auto it = g_downloads.rbegin(); it != g_downloads.rend(); ++it) {
+        std::string status = it->success ? "Complete" : "Failed";
+        std::string color = it->success ? "#10b981" : "#ef4444";
+        html += "<div class=\"item\"><div class=\"name\">" + HtmlEscape(it->filename) 
+            + "</div><div class=\"meta\">Path: <code>" + HtmlEscape(it->path) 
+            + "</code><br>Status: <span style=\"color:" + color + "\">" + status + "</span>";
+        if (!it->error.empty()) html += "<br>Error: " + HtmlEscape(it->error);
+        html += "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No downloads yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string SettingsPageHtml() {
+    return "<html><head><title>Settings</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Settings</h1>"
+        "<div class=\"item\"><div class=\"name\">Profile</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cache</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.cacheProfileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Controls</div>"
+        "<div class=\"meta\"><a href=\"vertex://history\">History</a> | "
+        "<a href=\"vertex://bookmarks\">Bookmarks</a> | "
+        "<a href=\"vertex://downloads\">Downloads</a> | "
+        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<div class=\"item\"><div class=\"name\">Current defaults</div>"
+        "<div class=\"meta\">JavaScript on | Images on | Cache on | Search engine Bing</div></div>"
+        "</main></body></html>";
+}
+
+static std::string SiteDataPageHtml() {
+    return "<html><head><title>Site Data</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Site Data</h1>"
+        "<div class=\"item\"><div class=\"name\">Storage root</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">History entries</div><div class=\"meta\">"
+        + std::to_string(g_history.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Bookmarks</div><div class=\"meta\">"
+        + std::to_string(g_bookmarks.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Downloads</div><div class=\"meta\">"
+        + std::to_string(g_downloads.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Local storage</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.localStorageDir) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
+        "</main></body></html>";
 }
 
 // <canvas> 2D backend. Owns each canvas element's CoreGraphics bitmap
@@ -574,7 +712,25 @@ int main(int argc, const char* argv[]) {
             if (g_view) [g_view setNeedsDisplay:YES];
         };
         g_chrome.onNavigateRequested = [](int tabIdx, const std::string& url) {
-            // macOS platform-owned fetch.
+            // Handle internal pages
+            if (url == "vertex://history" || url == "vertex://bookmarks" || 
+                url == "vertex://downloads" || url == "vertex://settings" || 
+                url == "vertex://site-data") {
+                auto* page = new Page();
+                page->url = url;
+                if (url == "vertex://history") page->dom = ParseHtml(HistoryPageHtml());
+                else if (url == "vertex://bookmarks") page->dom = ParseHtml(BookmarksPageHtml());
+                else if (url == "vertex://downloads") page->dom = ParseHtml(DownloadsPageHtml());
+                else if (url == "vertex://settings") page->dom = ParseHtml(SettingsPageHtml());
+                else if (url == "vertex://site-data") page->dom = ParseHtml(SiteDataPageHtml());
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    g_chrome.onPageReady(tabIdx, page);
+                    [g_view setNeedsDisplay:YES];
+                });
+                return;
+            }
+            
+            // Regular network fetch
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
                 auto res = FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
                 auto* page = new Page();
@@ -587,10 +743,35 @@ int main(int argc, const char* argv[]) {
                 }
                 dispatch_async(dispatch_get_main_queue(), ^{
                     g_chrome.onPageReady(tabIdx, page);
+                    // Record to history (skip internal pages)
+                    if (page->url.rfind("vertex://", 0) != 0 && tabIdx >= 0 && tabIdx < (int)g_tabs.size()) {
+                        std::string title = g_tabs[tabIdx].title;
+                        if (title.empty()) title = page->url;
+                        AppendHistoryRecord(page->url, title);
+                    }
                     [g_view setNeedsDisplay:YES];
                 });
             });
         };
+        
+        // Initialize profile paths and load existing data
+        g_profilePaths = vertex::profile::DefaultPaths();
+        vertex::profile::EnsureDirectories(g_profilePaths);
+        g_history = vertex::profile::ReadTsvRows(g_profilePaths.historyFile, 1000);
+        g_bookmarks = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile, 1000);
+        auto downloadRows = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile, 1000);
+        for (const auto& row : downloadRows) {
+            if (row.size() >= 6) {
+                vertex::downloads::DownloadRecord rec;
+                rec.url = row.size() > 1 ? row[1] : "";
+                rec.path = row.size() > 2 ? row[2] : "";
+                rec.filename = row.size() > 3 ? row[3] : "";
+                rec.success = row.size() > 4 && row[4] == "success";
+                rec.error = row.size() > 5 ? row[5] : "";
+                g_downloads.push_back(rec);
+            }
+        }
+        
         g_chrome.init();
         [NSTimer scheduledTimerWithTimeInterval:0.016 repeats:YES block:^(NSTimer*) {
             g_chrome.pumpJs();
