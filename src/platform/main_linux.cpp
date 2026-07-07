@@ -399,6 +399,13 @@ struct FindState {
 };
 static FindState g_findState;
 
+struct ContextMenu {
+    bool visible = false;
+    float x = 0, y = 0;
+    std::string linkUrl;
+};
+static ContextMenu g_contextMenu;
+
 // Persistent hit regions for link-click detection (populated each paint).
 static std::vector<HitRegion> g_hits;
 
@@ -622,6 +629,45 @@ static void DrawFindBar() {
     
     g_renderer->ReleaseFont(findFont);
 }
+
+static void DrawContextMenu() {
+    using namespace vertex::chrome_theme;
+    if (!g_renderer || !g_contextMenu.visible) return;
+    
+    std::vector<std::string> items;
+    if (!g_contextMenu.linkUrl.empty()) {
+        items.push_back("Open Link");
+        items.push_back("Open Link in New Tab");
+        items.push_back("Copy Link");
+    } else {
+        items.push_back("Back");
+        items.push_back("Forward");
+        items.push_back("Reload");
+    }
+    
+    float menuW = 200.f;
+    float itemH = 28.f;
+    float menuH = itemH * items.size();
+    float x = g_contextMenu.x;
+    float y = g_contextMenu.y;
+    
+    // Keep menu on screen
+    if (x + menuW > g_width) x = g_width - menuW;
+    if (y + menuH > g_height) y = g_height - menuH;
+    
+    g_renderer->FillRoundedRect(x, y, menuW, menuH, (float)CornerRadius, RgbToPlat(Rail));
+    g_renderer->DrawRect(x, y, menuW, menuH, RgbToPlat(Line), 2.f);
+    
+    PlatFont menuFont = g_renderer->CreateFont(13, false, false, false, "");
+    for (size_t i = 0; i < items.size(); i++) {
+        float itemY = y + i * itemH;
+        g_renderer->DrawText(Utf8ToWide(items[i]), x + 12, itemY + 7, menuW - 24, itemH, menuFont, RgbToPlat(Ink));
+        if (i + 1 < items.size()) {
+            g_renderer->DrawLine(x + 8, itemY + itemH, x + menuW - 8, itemY + itemH, RgbToPlat(Line), 1.f);
+        }
+    }
+    g_renderer->ReleaseFont(menuFont);
+}
                               (float)StatusHeight, f, RgbToPlat(Quiet));
         g_renderer->ReleaseFont(f);
     }
@@ -655,6 +701,7 @@ static void DoDraw() {
     DrawToolbar();
     DrawStatusBar();
     DrawFindBar();
+    DrawContextMenu();
 
     int contentH = std::max(0, g_height - ToolbarHeight - StatusHeight);
     // Mirrors what cairo_translate(0, ToolbarHeight) + cairo_clip used to do:
@@ -745,7 +792,59 @@ static void OnButtonPress(uint8_t button, int x, int y) {
 
     if (button == 4) { CurTab().scrollY = std::max(0.f, CurTab().scrollY - 60.f); RequestRedraw(); return; }
     if (button == 5) { CurTab().scrollY += 60.f; RequestRedraw(); return; }
+    
+    // Right-click - show context menu
+    if (button == 3 && y >= ToolbarHeight && y < g_height - StatusHeight) {
+        g_contextMenu.visible = true;
+        g_contextMenu.x = (float)x;
+        g_contextMenu.y = (float)y;
+        g_contextMenu.linkUrl = HitTestLink((float)x, (float)y);
+        RequestRedraw();
+        return;
+    }
+    
     if (button != 1) return;
+    
+    // Left-click - check context menu first
+    if (g_contextMenu.visible) {
+        std::vector<std::string> items;
+        if (!g_contextMenu.linkUrl.empty()) {
+            items.push_back("Open Link");
+            items.push_back("Open Link in New Tab");
+            items.push_back("Copy Link");
+        } else {
+            items.push_back("Back");
+            items.push_back("Forward");
+            items.push_back("Reload");
+        }
+        
+        float menuW = 200.f;
+        float itemH = 28.f;
+        float menuX = g_contextMenu.x;
+        float menuY = g_contextMenu.y;
+        if (menuX + menuW > g_width) menuX = g_width - menuW;
+        
+        if (x >= menuX && x < menuX + menuW && y >= menuY && y < menuY + itemH * items.size()) {
+            int itemIdx = (int)((y - menuY) / itemH);
+            g_contextMenu.visible = false;
+            
+            if (!g_contextMenu.linkUrl.empty()) {
+                if (itemIdx == 0) { g_chrome.navigate(g_contextMenu.linkUrl); }
+                else if (itemIdx == 1) { 
+                    int newIdx = g_chrome.newTab(g_contextMenu.linkUrl);
+                    g_chrome.switchTab(newIdx);
+                }
+                // Copy Link - skipped for now (needs clipboard support)
+            } else {
+                if (itemIdx == 0) { g_chrome.back(); }
+                else if (itemIdx == 1) { g_chrome.forward(); }
+                else if (itemIdx == 2) { g_chrome.reload(); }
+            }
+            RequestRedraw();
+            return;
+        }
+        g_contextMenu.visible = false;
+    }
 
     if (y < ToolbarHeight) {
         for (int i = 0; i < 4; i++) {
