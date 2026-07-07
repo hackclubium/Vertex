@@ -1553,11 +1553,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             SetBrowserCursor(href.empty() ? g_cursorArrow : g_cursorHand);
             SetStatus(href);
-            // Track :hover node for CSS hover styles (throttled to ~30Hz).
+            // Track :hover node for CSS hover styles (throttled adaptively based on page complexity).
             if (g_renderer.GetLayoutRoot() && g_renderer.UsesHoverStyles()) {
                 static DWORD lastHoverTick = 0;
                 DWORD now = GetTickCount();
-                if (now - lastHoverTick >= 33) { // ~30Hz
+                // Adaptive throttle: 33ms (30Hz) for simple pages, 50ms (20Hz) for complex ones
+                size_t candidateCount = g_renderer.HoverCandidateCount();
+                DWORD throttleMs = (candidateCount > 500) ? 50 : 33;
+                if (now - lastHoverTick >= throttleMs) {
                     HitRegion oldHoverRegion{};
                     bool hadOldHoverRegion = g_renderer.LastHoverRegion(oldHoverRegion);
                     const Node* hover = g_renderer.HoverNodeAt(

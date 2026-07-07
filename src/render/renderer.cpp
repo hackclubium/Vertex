@@ -966,8 +966,15 @@ const Node* Renderer::HoverNodeAt(float x, float y, float scrollY, float topInse
 
     // Use the prebuilt hover index instead of walking the full tree.
     // Iterate in reverse to find the deepest (most specific) match.
+    // Early-exit on first match since we're going deepest-first.
     const LayoutBox* found = nullptr;
+    const float viewportH = (float)m_height - topInset;
     for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
+        // Quick viewport culling: skip elements completely off-screen
+        const float elemBottom = it->y - scrollY;
+        const float elemTop = elemBottom - it->h;
+        if (elemBottom < -100.f || elemTop > viewportH + 100.f) continue;
+        
         if (x >= it->x && x <= it->x + it->w
             && docY >= it->y && docY <= it->y + it->h) {
             found = it->box;

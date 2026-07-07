@@ -64,6 +64,7 @@ public:
     std::string LastHitDownloadName() const { return m_lastHitDownloadName; }
     const Node* HoverNodeAt(float x, float y, float scrollY, float topInset) const;
     bool LastHoverRegion(HitRegion& out) const;
+    size_t HoverCandidateCount() const { return m_hoverCandidates.size(); }
     int  HitTestTab(float x, float y) const;
     bool HitTestTabClose(float x, float y, int& outIdx) const;
     bool GetAnchorY(const std::string& anchor, float& outY) const;
