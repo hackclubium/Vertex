@@ -90,18 +90,18 @@ style resolution, layout, scripting, and painting.
 
 ### External Dependencies
 
-Vertex depends on a few libraries that don't supply browser behavior, only low-level
-transport, decoding, and platform drawing:
+Vertex depends on only platform-native APIs for drawing and text rendering:
 
 | Dependency | Purpose |
 |---|---|
-| libcurl | HTTP/HTTPS |
-| stb\_image | PNG/JPEG/etc. decoding |
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
 
-Linux has none -- windowing (XCB), 2D rendering, text, and `<canvas>` are all
+Linux has none. Windowing (XCB), 2D rendering, text, and `<canvas>` are all
 hand-rolled, no GTK/Cairo/Pango/fontconfig.
+
+HTTP/HTTPS networking, PNG/JPEG decoding, and all other functionality is built
+from scratch in this repository.
 
 ## Download
 
