@@ -201,6 +201,14 @@ private:
     float m_layoutZoomKey = 0.f;
     RendererTimings m_lastTimings;
 
+    // Hover acceleration: flat list of hoverable boxes for faster hit testing
+    struct HoverCandidate {
+        const LayoutBox* box;
+        float x, y, w, h;
+    };
+    std::vector<HoverCandidate> m_hoverCandidates;
+    void BuildHoverIndex(const LayoutBox& box);
+
     ID2D1SolidColorBrush* TempBrush(D2D1_COLOR_F color);
     std::string  ResolveUrl(const std::string& href, const std::string& base);
 

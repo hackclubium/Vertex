@@ -836,6 +836,8 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                 m_layoutBaseStyles.clear();
                 m_layoutBoxesByNode.clear();
                 if (m_layoutRoot) CaptureLayoutBaseStyles(*m_layoutRoot);
+                m_hoverCandidates.clear();
+                if (m_layoutRoot) BuildHoverIndex(*m_layoutRoot);
                 auto layoutEnd = std::chrono::steady_clock::now();
                 m_lastTimings.layoutMs =
                     std::chrono::duration<double, std::milli>(layoutEnd - layoutStart).count();
@@ -937,6 +939,22 @@ std::string Renderer::HitTest(float x, float y) const {
     return {};
 }
 
+void Renderer::BuildHoverIndex(const LayoutBox& box) {
+    // Only index boxes with nodes (elements) that can be hovered
+    if (box.node && box.node->type == NodeType::Element) {
+        const float w = box.borderBoxW();
+        const float h = box.borderBoxH();
+        const float area = std::max(0.f, w) * std::max(0.f, h);
+        // Only index reasonably-sized boxes or inline elements or links
+        if (area <= 100000.f || box.isInlineLevel() || !box.href.empty()) {
+            m_hoverCandidates.push_back({ &box, box.x, box.y, w, h });
+        }
+    }
+    for (const auto& kid : box.kids) {
+        BuildHoverIndex(*kid);
+    }
+}
+
 const Node* Renderer::HoverNodeAt(float x, float y, float scrollY, float topInset) const {
     if (!m_layoutRoot) return nullptr;
     const float docY = y + scrollY - topInset;
@@ -946,28 +964,14 @@ const Node* Renderer::HoverNodeAt(float x, float y, float scrollY, float topInse
         return m_lastHoverNode;
     }
 
+    // Use the prebuilt hover index instead of walking the full tree.
+    // Iterate in reverse to find the deepest (most specific) match.
     const LayoutBox* found = nullptr;
-    std::vector<const LayoutBox*> stack;
-    stack.push_back(m_layoutRoot.get());
-    while (!stack.empty()) {
-        const LayoutBox* box = stack.back();
-        stack.pop_back();
-        if (!box) continue;
-        const float bw = box->borderBoxW();
-        const float bh = box->borderBoxH();
-        const bool inside = x >= box->x && x <= box->x + bw
-                         && docY >= box->y && docY <= box->y + bh;
-        if (inside && box->node && box->node->type == NodeType::Element)
-            found = box;
-        if (inside || box == m_layoutRoot.get()) {
-            for (auto it = box->kids.rbegin(); it != box->kids.rend(); ++it)
-                stack.push_back(it->get());
-        } else if (!box->style.overflowHidden) {
-            for (auto it = box->kids.rbegin(); it != box->kids.rend(); ++it) {
-                const LayoutBox* kid = it->get();
-                if (kid->isOutOfFlow() || kid->isFloat() || kid->style.positionMode == 1)
-                    stack.push_back(kid);
-            }
+    for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
+        if (x >= it->x && x <= it->x + it->w
+            && docY >= it->y && docY <= it->y + it->h) {
+            found = it->box;
+            break;
         }
     }
 
@@ -979,16 +983,9 @@ const Node* Renderer::HoverNodeAt(float x, float y, float scrollY, float topInse
 
     const float w = found->borderBoxW();
     const float h = found->borderBoxH();
-    const float area = std::max(0.f, w) * std::max(0.f, h);
-    const bool compactEnough = area <= 40000.f || found->isInlineLevel() || !found->href.empty();
-    if (compactEnough) {
-        m_lastHoverNodeRegion = { found->x, found->y, w, h, {} };
-        m_lastHoverNode = found->node;
-        m_lastHoverNodeValid = true;
-    } else {
-        m_lastHoverNodeValid = false;
-        m_lastHoverNode = nullptr;
-    }
+    m_lastHoverNodeRegion = { found->x, found->y, w, h, {} };
+    m_lastHoverNode = found->node;
+    m_lastHoverNodeValid = true;
     return found->node;
 }
 
