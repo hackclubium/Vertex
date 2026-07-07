@@ -762,6 +762,24 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
         RequestRedraw();
         return;
     }
+    if (ctrl && !shift && sym == 't') {
+        g_chrome.newTab();
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == 'w') {
+        g_chrome.closeTab(g_activeTab);
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && sym >= '1' && sym <= '9') {
+        int targetIdx = sym - '1';
+        if (targetIdx < (int)g_tabs.size()) {
+            g_chrome.switchTab(targetIdx);
+            RequestRedraw();
+        }
+        return;
+    }
     if (ctrl && !shift && (sym == '=' || sym == '+')) {
         float zoom = g_renderer->GetZoom();
         g_renderer->SetZoom(std::min(5.0f, zoom + 0.1f));
