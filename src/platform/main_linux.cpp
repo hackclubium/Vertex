@@ -28,8 +28,8 @@
 #include "render/raster_bitmap.h"
 #include "render/rasterizer.h"
 #include "render/webfont.h"
-#include "third_party/stb_image.h"
 #include "codec/png.h"
+#include "codec/jpeg.h"
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
@@ -410,11 +410,10 @@ static void ProcessImage(const std::string& url, const std::vector<uint8_t>& byt
         return low.find(".svg") != std::string::npos
             || low.find("image/svg+xml") != std::string::npos;
     };
-    int w = 0, h = 0, channels = 0;
-    unsigned char* stbiPixels = nullptr;
+    int w = 0, h = 0;
     std::vector<uint8_t> svgPixels;
+    std::vector<uint8_t> decodedPixels;
     uint8_t* pixels = nullptr;
-    bool fromStbi = false;
     if (looksLikeSvgUrl(url) || svg::looksLikeSvgBytes(bytes)) {
         auto bmp = svg::renderSvgBytes(bytes, svg::SvgRasterMaxDimForBytes(bytes.size()));
         if (bmp.width > 0 && bmp.height > 0 && !bmp.pixels.empty()) {
@@ -425,11 +424,19 @@ static void ProcessImage(const std::string& url, const std::vector<uint8_t>& byt
         }
     }
     if (!pixels) {
-        stbiPixels = stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &channels, 4);
-        pixels = stbiPixels;
-        fromStbi = true;
+        // Try PNG first, then JPEG
+        DecodedImage img = DecodePng(bytes.data(), bytes.size());
+        if (!img.success) {
+            img = DecodeJpeg(bytes.data(), bytes.size());
+        }
+        if (img.success && img.width > 0 && img.height > 0 && !img.rgba.empty()) {
+            w = img.width;
+            h = img.height;
+            decodedPixels = std::move(img.rgba);
+            pixels = decodedPixels.data();
+        }
     }
-    if (!pixels || w <= 0 || h <= 0) { if (stbiPixels) stbi_image_free(stbiPixels); g_failedImages.insert(url); return; }
+    if (!pixels || w <= 0 || h <= 0) { g_failedImages.insert(url); return; }
     // stb_image outputs straight RGBA; the rasterizer's blit expects
     // premultiplied BGRA (matching this project's established convention —
     // originally for Cairo's ARGB32, now shared by rasterizer.h's BlitBitmap).
@@ -443,7 +450,6 @@ static void ProcessImage(const std::string& url, const std::vector<uint8_t>& byt
         p[3] = a;
     }
     PlatBitmap bmp = g_renderer->CreateBitmap(w, h, pixels);
-    if (fromStbi) stbi_image_free(stbiPixels);
     if (bmp) {
         auto it = g_images.find(url);
         if (it != g_images.end() && it->second) g_renderer->ReleaseBitmap(it->second);

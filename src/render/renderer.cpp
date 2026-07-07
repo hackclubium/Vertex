@@ -7,7 +7,8 @@
 #include "platform/chrome_theme.h"
 #include "render/svg.h"
 #include "render/canvas_renderer.h"
-#include "third_party/stb_image.h"
+#include "codec/png.h"
+#include "codec/jpeg.h"
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #include <d2d1.h>
@@ -290,12 +291,11 @@ void Renderer::ReceiveImage(const std::string& url, const std::vector<uint8_t>& 
     if (!m_rt || bytes.empty()) { fail(); return; }
 
     // Decode external SVGs through Vertex's own SVG rasterizer before falling
-    // back to stb_image for raster formats.
-    int w = 0, h = 0, channels = 0;
-    unsigned char* stbiPixels = nullptr;
+    // back to hand-made PNG/JPEG decoders for raster formats.
+    int w = 0, h = 0;
     std::vector<uint8_t> svgPixels;
+    std::vector<uint8_t> decodedPixels;
     uint8_t* pixels = nullptr;
-    bool fromStbi = false;
     if (LooksLikeSvgUrl(url) || svg::looksLikeSvgBytes(bytes)) {
         auto bmp = svg::renderSvgBytes(bytes, svg::SvgRasterMaxDimForBytes(bytes.size()));
         if (bmp.width > 0 && bmp.height > 0 && !bmp.pixels.empty()) {
@@ -306,12 +306,19 @@ void Renderer::ReceiveImage(const std::string& url, const std::vector<uint8_t>& 
         }
     }
     if (!pixels) {
-        stbiPixels = stbi_load_from_memory(
-            bytes.data(), (int)bytes.size(), &w, &h, &channels, 4);  // force RGBA
-        pixels = stbiPixels;
-        fromStbi = true;
+        // Try PNG first, then JPEG
+        DecodedImage img = DecodePng(bytes.data(), bytes.size());
+        if (!img.success) {
+            img = DecodeJpeg(bytes.data(), bytes.size());
+        }
+        if (img.success && img.width > 0 && img.height > 0 && !img.rgba.empty()) {
+            w = img.width;
+            h = img.height;
+            decodedPixels = std::move(img.rgba);
+            pixels = decodedPixels.data();
+        }
     }
-    if (!pixels || w <= 0 || h <= 0) { if (stbiPixels) stbi_image_free(stbiPixels); fail(); return; }
+    if (!pixels || w <= 0 || h <= 0) { fail(); return; }
 
     // stb_image outputs RGBA; Direct2D wants PBGRA (pre-multiplied, swizzled).
     for (int i = 0; i < w * h; ++i) {
@@ -329,7 +336,6 @@ void Renderer::ReceiveImage(const std::string& url, const std::vector<uint8_t>& 
     ID2D1Bitmap* bmp = nullptr;
     HRESULT hr = m_rt->CreateBitmap(
         D2D1::SizeU((UINT32)w, (UINT32)h), pixels, (UINT32)(w * 4), props, &bmp);
-    if (fromStbi) stbi_image_free(stbiPixels);
 
     if (SUCCEEDED(hr) && bmp) {
         auto it = m_images.find(url);
