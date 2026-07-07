@@ -22,44 +22,6 @@ endif ()
 message(STATUS "Vertex version: ${VERTEX_VERSION}")
 add_compile_definitions(VERTEX_VERSION="${VERTEX_VERSION}")
 
-# ── libcurl (cross-platform HTTP) ─────────────────────────────────────────────
-# Try system-installed libcurl first (apt install libcurl4-openssl-dev, brew
-# install curl, etc.). Fall back to FetchContent download if not found.
-find_package(CURL QUIET)
-if (CURL_FOUND)
-    message(STATUS "Using system libcurl: ${CURL_VERSION_STRING}")
-else ()
-    message(STATUS "System libcurl not found — downloading via FetchContent")
-    include(FetchContent)
-    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(CURL_ZLIB OFF CACHE BOOL "" FORCE)
-    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(HTTP_ONLY ON CACHE BOOL "" FORCE)
-    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-    # Per-OS TLS backend for libcurl
-    if (WIN32)
-        set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-        set(CURL_USE_SECTRANSP OFF CACHE BOOL "" FORCE)
-        set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
-    else ()
-        set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
-        set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
-        set(CURL_USE_SECTRANSP OFF CACHE BOOL "" FORCE)
-        if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
-            set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl" CACHE PATH "" FORCE)
-        elseif (APPLE AND EXISTS "/usr/local/opt/openssl")
-            set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl" CACHE PATH "" FORCE)
-        endif ()
-    endif ()
-    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
-    set(CURL_USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(curl
-        URL https://github.com/curl/curl/releases/download/curl-8_11_1/curl-8.11.1.tar.xz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    FetchContent_MakeAvailable(curl)
-endif ()
-
 # ── mbedTLS (Linux-only TLS backend) ──────────────────────────────────────────
 # Windows and macOS get real OS-native TLS (SChannel / Secure Transport —
 # see src/network/tls_windows.cpp / tls_macos.cpp), zero third-party
@@ -134,14 +96,9 @@ add_library(vertex_engine STATIC
     src/js/dom_bridge.cpp
     src/js/canvas_bridge.cpp
     src/js/engine.cpp
-    src/third_party/stb_image_impl.cpp
 )
 
 target_include_directories(vertex_engine PUBLIC src)
-target_link_libraries(vertex_engine PUBLIC CURL::libcurl)
-if (NOT CURL_FOUND)
-    target_compile_definitions(vertex_engine PUBLIC CURL_STATICLIB)
-endif ()
 if (WIN32)
     target_compile_definitions(vertex_engine PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
@@ -152,7 +109,7 @@ endif()
 
 # TLS backend per platform — see src/network/tls_socket.h.
 if (WIN32)
-    target_link_libraries(vertex_engine PUBLIC secur32 crypt32)
+    target_link_libraries(vertex_engine PUBLIC secur32 crypt32 ws2_32)
 elseif (APPLE)
     target_link_libraries(vertex_engine PUBLIC "-framework Security" "-framework CoreFoundation")
 elseif (UNIX)
@@ -255,7 +212,7 @@ target_link_libraries(vertex-tests PRIVATE
 if (WIN32)
     # network_tests.cpp spins up a raw-socket WebSocket test server directly
     # (WSAStartup/socket/bind/...), independent of vertex_engine's own
-    # (transitive, via curl) Winsock usage.
+    # networking.
     target_link_libraries(vertex-tests PRIVATE ws2_32)
 endif()
 
