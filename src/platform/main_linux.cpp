@@ -23,6 +23,8 @@
 #include "platform/chrome_theme.h"
 #include "platform/box_painter.h"
 #include "platform/plat_text_measure.h"
+#include "platform/profile.h"
+#include "platform/downloads.h"
 #include "network/resource_cache.h"
 #include "render/svg.h"
 #include "render/canvas_raster.h"
@@ -310,6 +312,12 @@ const Node* g_hoverNode = nullptr;  // Not static - CSS system needs extern acce
 
 static Semaphore g_imageFetchGate(6);
 
+// Profile data storage
+static vertex::profile::ProfilePaths g_profilePaths;
+static std::vector<vertex::downloads::DownloadRecord> g_downloads;
+static std::vector<std::vector<std::string>> g_bookmarks;
+static std::vector<std::vector<std::string>> g_history;
+
 static std::unique_ptr<IPlatformRenderer> g_renderer;
 static std::unique_ptr<PlatTextMeasure> g_measure;
 static std::unique_ptr<LayoutBox> g_layoutRoot;
@@ -425,6 +433,33 @@ static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* 
     // For simplicity, just redraw the entire content area when hover changes.
     // Could optimize to invalidate just the two regions like Windows does.
     RequestRedraw();
+}
+
+// ── profile data helpers ─────────────────────────────────────────────────────
+
+static void AppendHistoryRecord(const std::string& url, const std::string& title) {
+    if (g_profilePaths.historyFile.empty()) return;
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.historyFile, {std::to_string(ms), url, title});
+}
+
+static void AppendBookmarkRecord(const std::string& url, const std::string& title) {
+    if (g_profilePaths.bookmarksFile.empty()) return;
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.bookmarksFile, {std::to_string(ms), url, title});
+}
+
+static void AppendDownloadRecord(const vertex::downloads::DownloadRecord& rec) {
+    if (g_profilePaths.downloadsFile.empty()) return;
+    g_downloads.push_back(rec);
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    vertex::profile::AppendTsvRow(g_profilePaths.downloadsFile, {
+        std::to_string(ms), rec.url, rec.path, rec.filename,
+        rec.success ? "success" : "failed", rec.error
+    });
 }
 
 // ── image loading pipeline ───────────────────────────────────────────────────
@@ -643,6 +678,8 @@ static void DrawContextMenu() {
         items.push_back("Back");
         items.push_back("Forward");
         items.push_back("Reload");
+        items.push_back("Add Bookmark");
+        items.push_back("View Bookmarks");
     }
     
     float menuW = 200.f;
@@ -779,6 +816,12 @@ static void platformFetch(int tabIdx, const std::string& url) {
         PostToMainThread([tabIdx, page]() {
             g_chrome.onPageReady(tabIdx, page);
             SetWindowTitle(g_chrome.state.title());
+            // Record to history (skip internal pages)
+            if (page->url.rfind("vertex://", 0) != 0 && tabIdx >= 0 && tabIdx < (int)g_tabs.size()) {
+                std::string title = g_tabs[tabIdx].title;
+                if (title.empty()) title = page->url;
+                AppendHistoryRecord(page->url, title);
+            }
             RequestRedraw();
         });
     }).detach();
@@ -858,6 +901,16 @@ static void OnButtonPress(uint8_t button, int x, int y) {
                 if (itemIdx == 0) { g_chrome.back(); }
                 else if (itemIdx == 1) { g_chrome.forward(); }
                 else if (itemIdx == 2) { g_chrome.reload(); }
+                else if (itemIdx == 3) { 
+                    // Add Bookmark
+                    if (!g_tabs.empty()) {
+                        AppendBookmarkRecord(CurTab().url, CurTab().title);
+                    }
+                }
+                else if (itemIdx == 4) { 
+                    // View Bookmarks
+                    g_chrome.navigate("vertex://bookmarks");
+                }
             }
             RequestRedraw();
             return;
@@ -902,6 +955,29 @@ static void OnButtonPress(uint8_t button, int x, int y) {
             return;
         }
         g_formState.blur();
+        
+        // Check for download links
+        if (g_layoutRoot) {
+            for (const auto& hit : g_hits) {
+                if (x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h) {
+                    if (hit.download) {
+                        // Start download in background thread
+                        std::string url = hit.href;
+                        std::string downloadAttr = hit.downloadName;
+                        std::thread([url, downloadAttr]() {
+                            auto res = FetchUrl(url);
+                            auto rec = vertex::downloads::SaveFetchedBody(url, res, downloadAttr);
+                            PostToMainThread([rec]() {
+                                AppendDownloadRecord(rec);
+                            });
+                        }).detach();
+                        return;
+                    }
+                    break;
+                }
+            }
+        }
+        
         std::string href = HitTestLink((float)x, (float)y);
         if (!href.empty()) {
             g_chrome.navigate(href);
@@ -970,6 +1046,18 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
     }
     if (ctrl && !shift && sym == 'r') {
         g_chrome.reload();
+        return;
+    }
+    if (ctrl && !shift && sym == 'h') {
+        g_chrome.navigate("vertex://history");
+        return;
+    }
+    if (ctrl && !shift && sym == 'b') {
+        g_chrome.navigate("vertex://bookmarks");
+        return;
+    }
+    if (ctrl && !shift && sym == 'j') {
+        g_chrome.navigate("vertex://downloads");
         return;
     }
     if (sym == XK_F5) {
@@ -1282,6 +1370,25 @@ int main(int argc, char* argv[]) {
         RequestRedraw();
     };
     g_chrome.onNavigateRequested = platformFetch;
+    
+    // Initialize profile paths and load existing data
+    g_profilePaths = vertex::profile::DefaultPaths();
+    vertex::profile::EnsureDirectories(g_profilePaths);
+    g_history = vertex::profile::ReadTsvRows(g_profilePaths.historyFile, 1000);
+    g_bookmarks = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile, 1000);
+    auto downloadRows = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile, 1000);
+    for (const auto& row : downloadRows) {
+        if (row.size() >= 6) {
+            vertex::downloads::DownloadRecord rec;
+            rec.url = row.size() > 1 ? row[1] : "";
+            rec.path = row.size() > 2 ? row[2] : "";
+            rec.filename = row.size() > 3 ? row[3] : "";
+            rec.success = row.size() > 4 && row[4] == "success";
+            rec.error = row.size() > 5 ? row[5] : "";
+            g_downloads.push_back(rec);
+        }
+    }
+    
     g_chrome.init();
     g_urlEdit.setText(g_tabs.empty() ? "vertex://home" : CurTab().url);
     g_urlBadgeText = UrlBadgeText(g_urlEdit.text);
