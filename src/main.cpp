@@ -478,13 +478,14 @@ static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* 
         InvalidateContent();
         return;
     }
+    // Invalidate both regions separately to ensure both repaint correctly,
+    // even if they're far apart or one is partially off-screen.
     RECT oldRect = HoverRegionToClientRect(*oldRegion);
     RECT newRect = HoverRegionToClientRect(*newRegion);
-    RECT dirty{};
-    if (UnionRect(&dirty, &oldRect, &newRect) && dirty.right > dirty.left && dirty.bottom > dirty.top)
-        InvalidateRect(g_hwnd, &dirty, FALSE);
-    else
-        InvalidateContent();
+    if (oldRect.right > oldRect.left && oldRect.bottom > oldRect.top)
+        InvalidateRect(g_hwnd, &oldRect, FALSE);
+    if (newRect.right > newRect.left && newRect.bottom > newRect.top)
+        InvalidateRect(g_hwnd, &newRect, FALSE);
 }
 
 static void ClearPendingPageScriptsForTab(int tabIdx) {
