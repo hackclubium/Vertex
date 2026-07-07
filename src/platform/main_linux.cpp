@@ -802,7 +802,165 @@ static void DoDraw() {
 
 // ── navigation ───────────────────────────────────────────────────────────────
 
+static std::string AppPageCss() {
+    return "body{margin:0;padding:20px;font:14px/1.5 system-ui,sans-serif;background:#f9fbff;color:#1f2937}"
+           "main{max-width:800px;margin:0 auto;background:#fff;padding:32px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}"
+           "h1{margin:0 0 24px;font-size:24px;font-weight:600;color:#111827}"
+           ".item{margin:16px 0;padding:12px 0;border-bottom:1px solid #e5e7eb}"
+           ".item:last-child{border:none}"
+           ".name{font-weight:500;color:#111827;text-decoration:none;display:block}"
+           ".name:hover{color:#2563eb}"
+           ".meta{margin-top:4px;font-size:13px;color:#6b7280;word-break:break-all}"
+           "code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px}";
+}
+
+static std::string HistoryPageHtml() {
+    std::string html = "<html><head><title>History</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>History</h1>";
+    bool any = false;
+    for (auto it = g_history.rbegin(); it != g_history.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No history yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string BookmarksPageHtml() {
+    std::string html = "<html><head><title>Bookmarks</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Bookmarks</h1>";
+    bool any = false;
+    for (auto it = g_bookmarks.rbegin(); it != g_bookmarks.rend(); ++it) {
+        if (it->size() < 2) continue;
+        std::string url = (*it)[1];
+        std::string title = it->size() > 2 && !(*it)[2].empty() ? (*it)[2] : url;
+        html += "<div class=\"item\"><a class=\"name\" href=\"" + HtmlEscape(url) + "\">"
+            + HtmlEscape(title) + "</a><div class=\"meta\">" + HtmlEscape(url) + "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No bookmarks yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string DownloadsPageHtml() {
+    std::string html = "<html><head><title>Downloads</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Downloads</h1>";
+    bool any = false;
+    for (auto it = g_downloads.rbegin(); it != g_downloads.rend(); ++it) {
+        std::string status = it->success ? "Complete" : "Failed";
+        std::string color = it->success ? "#10b981" : "#ef4444";
+        html += "<div class=\"item\"><div class=\"name\">" + HtmlEscape(it->filename) 
+            + "</div><div class=\"meta\">Path: <code>" + HtmlEscape(it->path) 
+            + "</code><br>Status: <span style=\"color:" + color + "\">" + status + "</span>";
+        if (!it->error.empty()) html += "<br>Error: " + HtmlEscape(it->error);
+        html += "</div></div>";
+        any = true;
+    }
+    if (!any) html += "<p>No downloads yet.</p>";
+    html += "</main></body></html>";
+    return html;
+}
+
+static std::string SettingsPageHtml() {
+    return "<html><head><title>Settings</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Settings</h1>"
+        "<div class=\"item\"><div class=\"name\">Profile</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cache</div>"
+        "<div class=\"meta\"><code>" + HtmlEscape(g_profilePaths.cacheProfileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Controls</div>"
+        "<div class=\"meta\"><a href=\"vertex://history\">History</a> | "
+        "<a href=\"vertex://bookmarks\">Bookmarks</a> | "
+        "<a href=\"vertex://downloads\">Downloads</a> | "
+        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<div class=\"item\"><div class=\"name\">Current defaults</div>"
+        "<div class=\"meta\">JavaScript on | Images on | Cache on | Search engine Bing</div></div>"
+        "</main></body></html>";
+}
+
+static std::string SiteDataPageHtml() {
+    return "<html><head><title>Site Data</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Site Data</h1>"
+        "<div class=\"item\"><div class=\"name\">Storage root</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.profileRoot) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">History entries</div><div class=\"meta\">"
+        + std::to_string(g_history.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Bookmarks</div><div class=\"meta\">"
+        + std::to_string(g_bookmarks.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Downloads</div><div class=\"meta\">"
+        + std::to_string(g_downloads.size()) + "</div></div>"
+        "<div class=\"item\"><div class=\"name\">Local storage</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.localStorageDir) + "</code></div></div>"
+        "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
+        + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
+        "</main></body></html>";
+}
+
 static void platformFetch(int tabIdx, const std::string& url) {
+    // Handle internal pages
+    if (url == "vertex://history") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(HistoryPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    if (url == "vertex://bookmarks") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(BookmarksPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    if (url == "vertex://downloads") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(DownloadsPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    if (url == "vertex://settings") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(SettingsPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    if (url == "vertex://site-data") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(SiteDataPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    
+    // Regular network fetch
     std::thread([tabIdx, url]() {
         auto res = FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
         auto* page = new Page();
