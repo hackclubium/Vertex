@@ -790,8 +790,27 @@ static void OnButtonPress(uint8_t button, int x, int y) {
     using namespace vertex::chrome_theme;
     if (g_tabs.empty()) return;
 
-    if (button == 4) { CurTab().scrollY = std::max(0.f, CurTab().scrollY - 60.f); RequestRedraw(); return; }
-    if (button == 5) { CurTab().scrollY += 60.f; RequestRedraw(); return; }
+    // Mouse wheel scrolling
+    if (button == 4 || button == 5) {
+        float delta = (button == 4) ? -60.f : 60.f;
+        
+        // Try element-level scrolling first
+        if (g_layoutRoot && y >= ToolbarHeight && y < g_height - StatusHeight) {
+            float contentY = y - ToolbarHeight + CurTab().scrollY;
+            LayoutBox* scrollTarget = FindScrollableAt(*g_layoutRoot, (float)x, contentY, CurTab().scrollY, 0);
+            if (scrollTarget && scrollTarget->scrollH > scrollTarget->contentH) {
+                scrollTarget->scrollY = std::max(0.f, std::min(scrollTarget->scrollH - scrollTarget->contentH, 
+                                                                 scrollTarget->scrollY + delta));
+                RequestRedraw();
+                return;
+            }
+        }
+        
+        // Fall back to page scrolling
+        CurTab().scrollY = std::max(0.f, CurTab().scrollY + delta);
+        RequestRedraw();
+        return;
+    }
     
     // Right-click - show context menu
     if (button == 3 && y >= ToolbarHeight && y < g_height - StatusHeight) {
