@@ -385,6 +385,20 @@ static UrlEditState g_urlEdit;
 static std::string g_urlBadgeText = "H";
 static std::string g_statusText;
 
+struct FindState {
+    bool visible = false;
+    std::string query;
+    size_t cursorPos = 0;
+    void insertChar(char c) { query.insert(cursorPos++, 1, c); }
+    void backspace() { if (cursorPos > 0) { query.erase(--cursorPos, 1); } }
+    void deleteChar() { if (cursorPos < query.size()) query.erase(cursorPos, 1); }
+    void left() { if (cursorPos > 0) cursorPos--; }
+    void right() { if (cursorPos < query.size()) cursorPos++; }
+    void home() { cursorPos = 0; }
+    void end() { cursorPos = query.size(); }
+};
+static FindState g_findState;
+
 // Persistent hit regions for link-click detection (populated each paint).
 static std::vector<HitRegion> g_hits;
 
@@ -573,6 +587,41 @@ static void DrawStatusBar() {
     if (!g_statusText.empty()) {
         PlatFont f = g_renderer->CreateFont(11, false, false, false, "");
         g_renderer->DrawText(Utf8ToWide(g_statusText), (float)Margin, y + 4, (float)g_width - 2.f * Margin,
+                              (float)StatusHeight, f, RgbToPlat(Ink));
+        g_renderer->ReleaseFont(f);
+    }
+}
+
+static void DrawFindBar() {
+    using namespace vertex::chrome_theme;
+    if (!g_renderer || !g_findState.visible) return;
+    
+    float barH = 36.f;
+    float y = (float)(g_height - StatusHeight - barH);
+    float x = (float)Margin;
+    float w = 300.f;
+    
+    g_renderer->FillRoundedRect(x, y, w, barH, (float)CornerRadius, RgbToPlat(Rail));
+    g_renderer->DrawRect(x, y, w, barH, RgbToPlat(Line), 1.f);
+    
+    PlatFont labelFont = g_renderer->CreateFont(12, false, false, false, "");
+    g_renderer->DrawText(L"Find:", x + 10, y + 10, 40.f, barH, labelFont, RgbToPlat(Ink));
+    g_renderer->ReleaseFont(labelFont);
+    
+    float entryX = x + 50;
+    float entryW = w - 60;
+    g_renderer->FillRoundedRect(entryX, y + 6, entryW, 24.f, (float)CornerRadius, RgbToPlat(Active));
+    g_renderer->DrawRect(entryX, y + 6, entryW, 24.f, RgbToPlat(Accent), 1.f);
+    
+    PlatFont findFont = g_renderer->CreateFont(13, false, false, false, "");
+    std::wstring wquery = Utf8ToWide(g_findState.query);
+    g_renderer->DrawText(wquery, entryX + 6, y + 11, entryW - 12, 24.f, findFont, RgbToPlat(Ink));
+    
+    float caretX = entryX + 6 + g_renderer->MeasureText(Utf8ToWide(g_findState.query.substr(0, g_findState.cursorPos)), findFont);
+    g_renderer->DrawLine(caretX, y + 9, caretX, y + 27, RgbToPlat(Ink), 1.f);
+    
+    g_renderer->ReleaseFont(findFont);
+}
                               (float)StatusHeight, f, RgbToPlat(Quiet));
         g_renderer->ReleaseFont(f);
     }
@@ -605,6 +654,7 @@ static void DoDraw() {
 
     DrawToolbar();
     DrawStatusBar();
+    DrawFindBar();
 
     int contentH = std::max(0, g_height - ToolbarHeight - StatusHeight);
     // Mirrors what cairo_translate(0, ToolbarHeight) + cairo_clip used to do:
@@ -811,6 +861,73 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
     if (sym == XK_Escape && CurTab().loading) {
         CurTab().loading = false;
         RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == 'f') {
+        g_findState.visible = true;
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == 'g') {
+        if (g_renderer && !g_findState.query.empty()) {
+            g_renderer->FindNext(true);
+            RequestRedraw();
+        }
+        return;
+    }
+    if (ctrl && shift && sym == 'g') {
+        if (g_renderer && !g_findState.query.empty()) {
+            g_renderer->FindNext(false);
+            RequestRedraw();
+        }
+        return;
+    }
+
+    if (g_findState.visible) {
+        if (sym == XK_Escape) { 
+            g_findState.visible = false; 
+            if (g_renderer) g_renderer->SetSearchQuery(L"");
+            RequestRedraw(); 
+            return; 
+        }
+        if (sym == XK_Return) {
+            if (g_renderer && !g_findState.query.empty()) {
+                g_renderer->FindNext(true);
+                RequestRedraw();
+            }
+            return;
+        }
+        if (sym == XK_BackSpace) { 
+            g_findState.backspace(); 
+            if (g_renderer) {
+                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
+                g_renderer->SetSearchQuery(wq);
+            }
+            RequestRedraw(); 
+            return; 
+        }
+        if (sym == XK_Delete) { 
+            g_findState.deleteChar(); 
+            if (g_renderer) {
+                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
+                g_renderer->SetSearchQuery(wq);
+            }
+            RequestRedraw(); 
+            return; 
+        }
+        if (sym == XK_Left) { g_findState.left(); RequestRedraw(); return; }
+        if (sym == XK_Right) { g_findState.right(); RequestRedraw(); return; }
+        if (sym == XK_Home) { g_findState.home(); RequestRedraw(); return; }
+        if (sym == XK_End) { g_findState.end(); RequestRedraw(); return; }
+        if (sym >= 0x20 && sym < 0x7F) { 
+            g_findState.insertChar((char)sym); 
+            if (g_renderer) {
+                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
+                g_renderer->SetSearchQuery(wq);
+            }
+            RequestRedraw(); 
+            return; 
+        }
         return;
     }
 
