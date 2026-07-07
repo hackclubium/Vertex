@@ -29,3 +29,4 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
+.aider*

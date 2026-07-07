@@ -1,7 +1,6 @@
 #include "network/websocket.h"
-#include "network/fetcher.h"
-
-#include <curl/curl.h>
+#include "network/socket.h"
+#include "network/tls_socket.h"
 
 #include <array>
 #include <atomic>
@@ -14,13 +13,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#else
-#include <sys/select.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -253,35 +245,19 @@ private:
     std::string buf_;
 };
 
-// ── raw socket I/O over a curl CONNECT_ONLY handle ──────────────────────────
-// curl does only the TCP connect + TLS handshake (if wss://) here; every byte
-// sent or received past that point is WebSocket protocol bytes Vertex builds
-// and parses itself.
+// ── raw socket I/O over the hand-rolled transport ───────────────────────────
+// TcpSocket (ws://) and TlsConnection (wss://) are used for the TCP connect,
+// TLS handshake, and byte-level send/recv. The entire WebSocket protocol
+// above that (handshake, framing, mask, ping/pong) is Vertex's own code,
+// not a third-party library.
 
-bool CurlSendAll(CURL* curl, const std::string& data) {
-    size_t sent = 0;
-    while (sent < data.size()) {
-        size_t n = 0;
-        CURLcode rc = curl_easy_send(curl, data.data() + sent, data.size() - sent, &n);
-        if (rc == CURLE_AGAIN) {
-            curl_socket_t sock = CURL_SOCKET_BAD;
-            curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sock);
-            if (sock == CURL_SOCKET_BAD) return false;
-            fd_set wfds; FD_ZERO(&wfds); FD_SET(sock, &wfds);
-            timeval tv{ 1, 0 };
-            select((int)sock + 1, nullptr, &wfds, nullptr, &tv);
-            continue;
-        }
-        if (rc != CURLE_OK) return false;
-        sent += n;
-    }
-    return true;
+template <typename Sock>
+bool SockSendAll(Sock& sock, const std::string& data) {
+    return sock.SendAll(data.data(), data.size());
 }
 
-// Reads until the blank line terminating the HTTP response headers is seen.
-// Any bytes read past it (the start of the first WS frame, if the server
-// pipelined it right after the handshake) are returned via `leftover`.
-bool ReadHttpResponseHeaders(CURL* curl, curl_socket_t sock, std::string& headers, std::string& leftover) {
+template <typename Sock>
+bool ReadWsHandshakeHeaders(Sock& sock, std::string& headers, std::string& leftover) {
     constexpr size_t kMaxHeaderBytes = 64 * 1024;
     char buf[4096];
     for (;;) {
@@ -293,15 +269,8 @@ bool ReadHttpResponseHeaders(CURL* curl, curl_socket_t sock, std::string& header
         }
         if (headers.size() > kMaxHeaderBytes) return false;
 
-        fd_set rfds; FD_ZERO(&rfds); FD_SET(sock, &rfds);
-        timeval tv{ 10, 0 };
-        int sel = select((int)sock + 1, &rfds, nullptr, nullptr, &tv);
-        if (sel <= 0) return false;
-
-        size_t n = 0;
-        CURLcode rc = curl_easy_recv(curl, buf, sizeof(buf), &n);
-        if (rc == CURLE_AGAIN) continue;
-        if (rc != CURLE_OK || n == 0) return false;
+        int n = sock.Recv(buf, sizeof(buf), 10000);
+        if (n <= 0) return false;
         headers.append(buf, n);
     }
 }
@@ -366,41 +335,14 @@ void PushEvent(const WsEventCallback& cb, WsEvent ev) {
     g_wsEvents.push_back({ cb, std::move(ev) });
 }
 
-void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent,
-                            std::shared_ptr<WsConnection> conn) {
+template <typename Sock>
+bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
+                          std::shared_ptr<WsConnection> conn,
+                          const WsEventCallback& onEvent) {
     auto abnormalClose = [&](const std::string& errMsg, int code) {
         if (!errMsg.empty()) PushEvent(onEvent, WsEvent{ WsEventKind::Error, errMsg });
         PushEvent(onEvent, WsEvent{ WsEventKind::Close, "", false, code, "", false });
     };
-
-    WsUrl parsed;
-    if (!ParseWsUrl(url, parsed)) { abnormalClose("Invalid WebSocket URL", 1006); return; }
-
-    EnsureCurlInit();
-    CURL* curl = curl_easy_init();
-    if (!curl) { abnormalClose("Failed to initialize connection", 1006); return; }
-
-    const std::string transportUrl =
-        (parsed.secure ? "https://" : "http://") + parsed.host + ":" + std::to_string(parsed.port) + "/";
-    curl_easy_setopt(curl, CURLOPT_URL, transportUrl.c_str());
-    curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-
-    if (curl_easy_perform(curl) != CURLE_OK) {
-        curl_easy_cleanup(curl);
-        abnormalClose("Connection failed", 1006);
-        return;
-    }
-
-    curl_socket_t sock = CURL_SOCKET_BAD;
-    curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sock);
-    if (sock == CURL_SOCKET_BAD) {
-        curl_easy_cleanup(curl);
-        abnormalClose("No active socket", 1006);
-        return;
-    }
 
     // ── handshake ──
     uint8_t keyRaw[16];
@@ -420,29 +362,25 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
         "Sec-WebSocket-Version: 13\r\n"
         "\r\n";
 
-    if (!CurlSendAll(curl, request)) {
-        curl_easy_cleanup(curl);
+    if (!SockSendAll(sock, request)) {
         abnormalClose("Failed to send handshake", 1006);
-        return;
+        return false;
     }
 
-    std::string headers, leftover;
-    if (!ReadHttpResponseHeaders(curl, sock, headers, leftover)) {
-        curl_easy_cleanup(curl);
+    std::string headers;
+    if (!ReadWsHandshakeHeaders(sock, headers, leftover)) {
         abnormalClose("Handshake response timed out or was too large", 1006);
-        return;
+        return false;
     }
     if (headers.find(" 101 ") == std::string::npos) {
-        curl_easy_cleanup(curl);
         abnormalClose("Server did not upgrade to WebSocket", 1002);
-        return;
+        return false;
     }
     const std::string accept = HeaderValue(headers, "sec-websocket-accept");
     const std::string expectedAccept = ComputeWebSocketAccept(secKey);
     if (accept.empty() || accept != expectedAccept) {
-        curl_easy_cleanup(curl);
         abnormalClose("Invalid Sec-WebSocket-Accept", 1002);
-        return;
+        return false;
     }
 
     PushEvent(onEvent, WsEvent{ WsEventKind::Open });
@@ -457,8 +395,6 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
     char readBuf[8192];
 
     for (;;) {
-        // Drain any queued outgoing sends / a requested close before waiting
-        // on the socket, so sends aren't delayed more than one poll interval.
         std::deque<WsOutboxItem> toSend;
         bool doClose = false;
         int closeCode = 1000;
@@ -474,7 +410,7 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
         }
         bool sendFailed = false;
         for (auto& item : toSend) {
-            if (!CurlSendAll(curl, EncodeFrame(item.opcode, item.payload))) { sendFailed = true; break; }
+            if (!SockSendAll(sock, EncodeFrame(item.opcode, item.payload))) { sendFailed = true; break; }
         }
         if (sendFailed) break;
         if (doClose) {
@@ -482,20 +418,14 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
             payload.push_back((char)((closeCode >> 8) & 0xFF));
             payload.push_back((char)(closeCode & 0xFF));
             payload += closeReason;
-            CurlSendAll(curl, EncodeFrame(0x8, payload));
+            SockSendAll(sock, EncodeFrame(0x8, payload));
             closeSent = true;
         }
         if (closeSent && closeReceived) break;
 
-        fd_set rfds; FD_ZERO(&rfds); FD_SET(sock, &rfds);
-        timeval tv{ 0, 50000 }; // 50ms — bounds how stale outbox/close checks can get.
-        int sel = select((int)sock + 1, &rfds, nullptr, nullptr, &tv);
-        if (sel <= 0) continue;
-
-        size_t n = 0;
-        CURLcode rc = curl_easy_recv(curl, readBuf, sizeof(readBuf), &n);
-        if (rc == CURLE_AGAIN) continue;
-        if (rc != CURLE_OK || n == 0) break; // peer closed or a real socket error
+        int n = sock.Recv(readBuf, sizeof(readBuf), 50);
+        if (n < 0) break;
+        if (n == 0) continue;
 
         parser.feed(readBuf, n);
 
@@ -533,14 +463,14 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
                     reason = frame.payload.substr(2);
                 }
                 if (!closeSent) {
-                    CurlSendAll(curl, EncodeFrame(0x8, frame.payload));
+                    SockSendAll(sock, EncodeFrame(0x8, frame.payload));
                     closeSent = true;
                 }
                 PushEvent(onEvent, WsEvent{ WsEventKind::Close, "", false, code, reason, true });
                 break;
             }
             case 0x9: // ping -> pong
-                CurlSendAll(curl, EncodeFrame(0xA, frame.payload));
+                SockSendAll(sock, EncodeFrame(0xA, frame.payload));
                 break;
             case 0xA: // pong
                 break;
@@ -560,7 +490,36 @@ void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent
     if (!closeReceived) {
         PushEvent(onEvent, WsEvent{ WsEventKind::Close, "", false, closeSent ? 1000 : 1006, "", false });
     }
-    curl_easy_cleanup(curl);
+    return true;
+}
+
+void RunWebSocketConnection(int handle, std::string url, WsEventCallback onEvent,
+                            std::shared_ptr<WsConnection> conn) {
+    auto abnormalClose = [&](const std::string& errMsg, int code) {
+        if (!errMsg.empty()) PushEvent(onEvent, WsEvent{ WsEventKind::Error, errMsg });
+        PushEvent(onEvent, WsEvent{ WsEventKind::Close, "", false, code, "", false });
+    };
+
+    WsUrl parsed;
+    if (!ParseWsUrl(url, parsed)) { abnormalClose("Invalid WebSocket URL", 1006); return; }
+
+    if (parsed.secure) {
+        TlsConnection sock;
+        if (!sock.Connect(parsed.host, parsed.port, 15000)) {
+            abnormalClose("Connection failed", 1006);
+            return;
+        }
+        std::string leftover;
+        RunWebSocketSession(sock, parsed, leftover, conn, onEvent);
+    } else {
+        TcpSocket sock;
+        if (!sock.Connect(parsed.host, parsed.port, 15000)) {
+            abnormalClose("Connection failed", 1006);
+            return;
+        }
+        std::string leftover;
+        RunWebSocketSession(sock, parsed, leftover, conn, onEvent);
+    }
 }
 
 } // namespace

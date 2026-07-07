@@ -1,10 +1,8 @@
 #include "network/fetcher.h"
-#include <curl/curl.h>
+#include "network/http_client.h"
 #include <cctype>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <mutex>
 
 // ── helpers (data-URL decoding — platform-independent, kept as-is) ───────────
 
@@ -115,73 +113,6 @@ static std::filesystem::path FileUrlToPath(const std::string& url) {
     return std::filesystem::u8path(path);
 }
 
-// ── libcurl global init (once, thread-safe) ──────────────────────────────────
-
-void EnsureCurlInit() {
-    static std::once_flag flag;
-    std::call_once(flag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-
-// ── write callback for libcurl ───────────────────────────────────────────────
-
-struct WriteCtx {
-    std::string* body;
-    size_t limit;
-    bool exceeded;
-};
-
-static size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* ctx = static_cast<WriteCtx*>(userdata);
-    size_t bytes = size * nmemb;
-    if (ctx->body->size() + bytes > ctx->limit) {
-        ctx->exceeded = true;
-        return 0;  // abort transfer
-    }
-    ctx->body->append(ptr, bytes);
-    return bytes;
-}
-
-// ── header callback (captures Content-Type + Set-Cookie) ────────────────────
-
-#include "network/cookies.h"
-
-struct HeaderCtx {
-    std::string* contentType;
-    std::string* contentDisposition;
-    std::string requestUrl;
-};
-
-static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
-    auto* ctx = static_cast<HeaderCtx*>(userdata);
-    size_t total = size * nitems;
-    std::string line(buffer, total);
-    if (StartsWithNoCase(line, "content-type:")) {
-        size_t colon = line.find(':');
-        std::string val = line.substr(colon + 1);
-        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(val.begin());
-        while (!val.empty() && (val.back() == '\r' || val.back() == '\n')) val.pop_back();
-        size_t semi = val.find(';');
-        if (semi != std::string::npos) val = val.substr(0, semi);
-        while (!val.empty() && val.back() == ' ') val.pop_back();
-        *ctx->contentType = val;
-    }
-    if (StartsWithNoCase(line, "content-disposition:")) {
-        size_t colon = line.find(':');
-        std::string val = line.substr(colon + 1);
-        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(val.begin());
-        while (!val.empty() && (val.back() == '\r' || val.back() == '\n')) val.pop_back();
-        *ctx->contentDisposition = val;
-    }
-    if (StartsWithNoCase(line, "set-cookie:")) {
-        size_t colon = line.find(':');
-        std::string val = line.substr(colon + 1);
-        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(val.begin());
-        while (!val.empty() && (val.back() == '\r' || val.back() == '\n')) val.pop_back();
-        CookieJar::instance().handleSetCookie(val, ctx->requestUrl);
-    }
-    return total;
-}
-
 // ── public API ───────────────────────────────────────────────────────────────
 
 FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
@@ -251,58 +182,11 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
         }
     }
 
-    // HTTP(S) via libcurl.
-    EnsureCurlInit();
-    CURL* curl = curl_easy_init();
-    if (!curl) { r.error = "curl_easy_init failed"; return r; }
-
-    WriteCtx wctx{ &r.body, maxResponseBytes, false };
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Vertex/0.1 (+https://github.com/vertex-browser)");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");   // auto decompress gzip/deflate
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &wctx);
-    HeaderCtx hctx{&r.contentType, &r.contentDisposition, url};
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx);
-    // Send cookies from the jar.
-    std::string cookies = CookieJar::instance().cookieHeader(url);
-    if (!cookies.empty())
-        curl_easy_setopt(curl, CURLOPT_COOKIE, cookies.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-
-    CURLcode res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        r.error = curl_easy_strerror(res);
-        if (wctx.exceeded) r.error = "Response exceeds size limit";
-        curl_easy_cleanup(curl);
-        return r;
+    // HTTP(S) via hand-rolled client (http_client.h — zero third-party deps).
+    if (StartsWithNoCase(url, "http://") || StartsWithNoCase(url, "https://")) {
+        return FetchHttp(url, maxResponseBytes);
     }
 
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    r.status = (int)status;
-
-    char* effectiveUrl = nullptr;
-    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
-    r.finalUrl = effectiveUrl ? effectiveUrl : url;
-
-    curl_easy_cleanup(curl);
-
-    if (status >= 400) {
-        r.success = false;
-        r.error = "HTTP " + std::to_string(status);
-        r.body.clear();
-    } else {
-        r.success = true;
-    }
+    r.error = "Unsupported URL scheme";
     return r;
 }

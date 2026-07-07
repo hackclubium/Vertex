@@ -5,10 +5,8 @@
 // Vertex speaks the WebSocket protocol itself: the HTTP Upgrade handshake,
 // Sec-WebSocket-Accept validation, frame masking/parsing, fragmentation,
 // ping/pong, and the close handshake are all implemented here, not delegated
-// to a library. The one thing reused is libcurl's already-integrated TLS
-// backend (Schannel/Secure Transport/OpenSSL, same as HTTP fetches) purely as
-// a raw encrypted byte pipe for wss:// via CURLOPT_CONNECT_ONLY — curl never
-// sees a WebSocket frame or sends an HTTP request of its own.
+// to a library. Transport is TcpSocket (ws://) or TlsConnection (wss://) —
+// neither curl nor any third-party WebSocket library is used.
 //
 #include <cstddef>
 #include <functional>

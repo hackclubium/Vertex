@@ -418,33 +418,33 @@ TestResult RunNetworkTests() {
 
     {
         auto root = FindRepoRoot();
-        std::string source = ReadTextFile(root / "src/network/fetcher.cpp");
-        const bool hasSession = source.find("EnsureCurlInit") != std::string::npos
-            && source.find("curl_easy_init") != std::string::npos;
-        const bool enablesDecode = source.find("CURLOPT_ACCEPT_ENCODING") != std::string::npos;
-        const bool resolvesRedirects = source.find("CURLINFO_EFFECTIVE_URL") != std::string::npos;
+        std::string source = ReadTextFile(root / "src/network/http_client.cpp");
+        const bool hasSocketConnect = source.find("TcpSocket()") != std::string::npos;
+        const bool enablesDecode = source.find("Accept-Encoding: gzip") != std::string::npos;
+        const bool resolvesRedirects = source.find("r.finalUrl") != std::string::npos;
+        const bool handlesCookies = source.find("Cookie:") != std::string::npos
+            && source.find("set-cookie") != std::string::npos;
         ExpectEqual("network/http-session-decoding-and-final-url",
-            std::string(hasSession ? "session " : "no-session ")
+            std::string(hasSocketConnect ? "session " : "no-session ")
                 + (enablesDecode ? "decode " : "no-decode ")
-                + (resolvesRedirects ? "url\n" : "no-url\n"),
-            "session decode url\n",
+                + (resolvesRedirects ? "url " : "no-url ")
+                + (handlesCookies ? "cookies\n" : "no-cookies\n"),
+            "session decode url cookies\n",
             result);
     }
 
     {
-        // TLS verification must stay on — a live bad-cert fetch would be
-        // slow/flaky/offline-hostile in CI, so this asserts the curl options
-        // directly rather than hitting a real MITM-able endpoint.
+        // TLS verification must stay on. HTTP is now via FetchHttp/http_client.cpp
+        // which uses TlsConnection for https:// — assert the hand-rolled TLS
+        // backend code directly rather than hitting a real MITM-able endpoint.
         auto root = FindRepoRoot();
-        std::string source = ReadTextFile(root / "src/network/fetcher.cpp");
-        const bool verifiesPeer = source.find("CURLOPT_SSL_VERIFYPEER, 1L") != std::string::npos;
-        const bool verifiesHost = source.find("CURLOPT_SSL_VERIFYHOST, 2L") != std::string::npos;
-        const bool disablesPeer = source.find("CURLOPT_SSL_VERIFYPEER, 0L") != std::string::npos;
-        const bool disablesHost = source.find("CURLOPT_SSL_VERIFYHOST, 0L") != std::string::npos;
-        ExpectEqual("network/https-fetches-verify-peer-and-host",
-            std::string(verifiesPeer && !disablesPeer ? "verify-peer " : "no-verify-peer ")
-                + (verifiesHost && !disablesHost ? "verify-host\n" : "no-verify-host\n"),
-            "verify-peer verify-host\n",
+        std::string htSource = ReadTextFile(root / "src/network/http_client.cpp");
+        const bool hasTlsTransport = htSource.find("TlsConnection") != std::string::npos;
+        const bool hasTlsVerify = htSource.find("VerifyCertificates()") != std::string::npos;
+        ExpectEqual("network/https-fetches-use-tls-and-verify-peer",
+            std::string(hasTlsTransport ? "tls " : "no-tls ")
+                + (hasTlsVerify ? "verify\n" : "no-verify\n"),
+            "tls verify\n",
             result);
     }
 
