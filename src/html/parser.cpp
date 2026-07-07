@@ -291,6 +291,16 @@ std::shared_ptr<Node> ParseHtml(const std::string& html) {
         return false;
     };
 
+    // Raw-text elements (<script>/<style>/<noscript>): their text is source
+    // code/CSS, not display text, so it must be preserved byte-for-byte.
+    // Collapsing newlines to spaces here (as we do for ordinary text nodes)
+    // silently corrupts scripts; e.g. a `//` line comment with no `\n` left
+    // to terminate it swallows the rest of the script.
+    auto inRawText = [&]() -> bool {
+        return !stack.empty() && (stack.back()->tagName == "script"
+            || stack.back()->tagName == "style" || stack.back()->tagName == "noscript");
+    };
+
     HtmlTokenizer tok;
     tok.tokenize(html, [&](const HtmlToken& t) {
         switch (t.type) {
@@ -601,8 +611,9 @@ std::shared_ptr<Node> ParseHtml(const std::string& html) {
                 ensureBody();
             }
 
-            // Preserve whitespace inside <pre>/<textarea>.
-            if (inPre()) {
+            // Preserve whitespace inside <pre>/<textarea>, and preserve raw
+            // source verbatim inside <script>/<style>/<noscript>.
+            if (inPre() || inRawText()) {
                 if (!txt.empty())
                     current()->appendChild(Node::makeText(txt));
                 break;

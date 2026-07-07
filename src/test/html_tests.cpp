@@ -41,6 +41,7 @@ TestResult RunHtmlTests() {
 
     RunDomFixture("basic", result);
     RunDomFixture("rawtext-style", result);
+    RunDomFixture("rawtext-script-multiline", result);
     RunDomFixture("autoclose-paragraphs", result);
 
     {

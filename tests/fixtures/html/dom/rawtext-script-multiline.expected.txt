@@ -1,0 +1,5 @@
+#document
+  <html>
+    <body>
+      <script>
+        #text "\n// this is a comment\ndocument.getElementById('d').textContent = 'AFTER-COMMENT';\n"

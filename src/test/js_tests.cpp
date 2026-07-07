@@ -122,6 +122,33 @@ static std::string RunDomReflectionSnapshot() {
          + " text=" + text + "\n";
 }
 
+// Regression: HTML's <script> raw-text extraction used to run ordinary
+// whitespace normalization on script source (newlines/tabs -> spaces, runs
+// collapsed) same as any other text node. With no '\n' left in the string, a
+// `//` line comment had nothing to stop at and silently swallowed the rest
+// of the script. Reproduces the real browser's script-loading path: extract
+// a <script> node's text the same way src/platform/chrome.h's
+// runPageScripts() does, then run it through the engine.
+static std::string RunScriptCommentSurvivesHtmlExtractionSnapshot() {
+    auto dom = ParseHtml(
+        "<html><body><p id=\"d\">before</p><script>\n"
+        "// this is a comment\n"
+        "document.getElementById('d').textContent = 'AFTER-COMMENT';\n"
+        "</script></body></html>");
+    JsEngine engine;
+    engine.setDocument(dom, []() {});
+    Node* script = FindByTag(dom.get(), "script");
+    if (!script) return "no script node\n";
+    std::string source;
+    for (auto& c : script->children) if (c->type == NodeType::Text) source += c->text;
+    bool ok = engine.runScript(source, "extracted");
+    if (!ok) return "script failed\n";
+    Node* p = FindByTag(dom.get(), "p");
+    std::string text;
+    for (auto& c : p->children) if (c->type == NodeType::Text) text += c->text;
+    return "text=" + text + "\n";
+}
+
 // Exercises the canvas 2D JS surface with no ICanvasSurface wired up (the
 // default test harness leaves DomBridgeCallbacks::getCanvasSurface unset) —
 // proves the API shape is right and that draw calls no-op safely rather than
@@ -1233,6 +1260,12 @@ static std::string RunScriptBudgetProfileSnapshot() {
 
 TestResult RunJsTests() {
     TestResult result;
+
+    ExpectEqual(
+        "js/engine/script-comment-survives-html-extraction",
+        RunScriptCommentSurvivesHtmlExtractionSnapshot(),
+        "text=AFTER-COMMENT\n",
+        result);
 
     ExpectEqual(
         "js/dom/selector-compatibility",

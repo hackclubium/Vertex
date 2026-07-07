@@ -382,6 +382,17 @@ static UrlEditState g_urlEdit;
 static std::string g_urlBadgeText = "H";
 static std::string g_statusText;
 
+// Persistent hit regions for link-click detection (populated each paint).
+static std::vector<HitRegion> g_hits;
+
+static std::string HitTestLink(float x, float y) {
+    for (auto it = g_hits.rbegin(); it != g_hits.rend(); ++it)
+        if (x >= it->x && x <= it->x + it->w
+         && y >= it->y && y <= it->y + it->h)
+            return UnwrapBingRedirect(it->href);
+    return {};
+}
+
 // ── image loading pipeline ───────────────────────────────────────────────────
 
 struct LinuxImageMsg {
@@ -613,7 +624,6 @@ static void DoDraw() {
         in.baseUrl = tab.page->url;
         g_layoutRoot = LayoutDocument(in);
         if (g_layoutRoot) {
-            std::vector<HitRegion> hits;
             PaintState ps;
             ps.r = g_renderer.get();
             ps.scrollY = tab.scrollY;
@@ -624,7 +634,8 @@ static void DoDraw() {
             for (auto& [node, surface] : g_canvasSurfaces)
                 g_canvasBitmaps[node] = surface->AsPlatBitmap();
             ps.canvasSurfaces = &g_canvasBitmaps;
-            ps.hits = &hits;
+            g_hits.clear();
+            ps.hits = &g_hits;
             ps.fontCache = &g_fontCache;
             ps.form = &g_formState;
             PaintBoxTree(ps, *g_layoutRoot);
@@ -704,6 +715,11 @@ static void OnButtonPress(uint8_t button, int x, int y) {
             return;
         }
         g_formState.blur();
+        std::string href = HitTestLink((float)x, (float)y);
+        if (!href.empty()) {
+            g_chrome.navigate(href);
+            return;
+        }
         RequestRedraw();
     }
 }
@@ -797,7 +813,18 @@ static void HandleEvent(xcb_generic_event_t* ev) {
         OnKeyPress(kp->detail, kp->state);
         break;
     }
-    default:
+    case XCB_MOTION_NOTIFY: {
+        auto* mp = (xcb_motion_notify_event_t*)ev;
+        int y = mp->event_y;
+        if (y >= ToolbarHeight && y < g_height - StatusHeight) {
+            std::string href = HitTestLink((float)mp->event_x, (float)y);
+            if (g_statusText != href) {
+                g_statusText = href;
+                RequestRedraw();
+            }
+        }
+        break;
+    }
         break;
     }
 }

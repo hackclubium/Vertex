@@ -48,6 +48,17 @@ static std::unique_ptr<LayoutBox> g_layoutRoot;
 static std::map<std::string, PlatBitmap> g_images;
 static std::map<std::string, PlatFont> g_fontCache;
 
+// Persistent hit regions for link-click detection (populated each paint).
+static std::vector<HitRegion> g_hits;
+
+static std::string HitTestLink(float x, float y) {
+    for (auto it = g_hits.rbegin(); it != g_hits.rend(); ++it)
+        if (x >= it->x && x <= it->x + it->w
+         && y >= it->y && y <= it->y + it->h)
+            return UnwrapBingRedirect(it->href);
+    return {};
+}
+
 // <canvas> 2D backend. Owns each canvas element's CoreGraphics bitmap
 // context (content persists across repaints, unlike PaintState which is
 // rebuilt per frame); g_canvasBitmaps mirrors a fresh CGImageRef snapshot
@@ -209,7 +220,7 @@ static Stylesheet CollectCSS(const Node* root) {
         in.baseUrl = tab.page->url;
         g_layoutRoot = LayoutDocument(in);
         if (g_layoutRoot) {
-            std::vector<HitRegion> hits;
+            g_hits.clear();
             PaintState ps;
             ps.r = g_renderer.get();
             ps.scrollY = tab.scrollY;
@@ -225,7 +236,7 @@ static Stylesheet CollectCSS(const Node* root) {
             for (auto& [node, surface] : g_canvasSurfaces)
                 g_canvasBitmaps[node] = surface->CreateSnapshot();
             ps.canvasSurfaces = &g_canvasBitmaps;
-            ps.hits = &hits;
+            ps.hits = &g_hits;
             ps.fontCache = &g_fontCache;
             ps.form = &g_formState;
             PaintBoxTree(ps, *g_layoutRoot);
@@ -247,8 +258,41 @@ static Stylesheet CollectCSS(const Node* root) {
             return;
         }
         g_formState.blur();
+        std::string href = HitTestLink((float)pt.x, (float)pt.y);
+        if (!href.empty()) {
+            g_chrome.navigate(href);
+            return;
+        }
         [self setNeedsDisplay:YES];
     }
+}
+
+- (void)mouseMoved:(NSEvent*)event {
+    NSPoint pt = [self convertPoint:[event locationInWindow] fromView:nil];
+    std::string href;
+    if (g_layoutRoot && !g_tabs.empty()) {
+        href = HitTestLink((float)pt.x, (float)pt.y);
+    }
+    if (g_statusField) {
+        NSString* str = [NSString stringWithUTF8String:href.c_str()];
+        if (![str isEqualToString:[g_statusField stringValue]])
+            [g_statusField setStringValue:str];
+    }
+    if (!href.empty())
+        [[NSCursor pointingHandCursor] set];
+    else
+        [[NSCursor arrowCursor] set];
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    NSArray* areas = [self trackingAreas];
+    for (NSTrackingArea* area in areas)
+        [self removeTrackingArea:area];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:[self bounds]
+                                                          options:(NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect)
+                                                            owner:self
+                                                         userInfo:nil]];
 }
 
 - (void)keyDown:(NSEvent*)event {
@@ -400,6 +444,7 @@ int main(int argc, const char* argv[]) {
             backing:NSBackingStoreBuffered
             defer:NO];
         [g_window setTitle:@"Vertex"];
+        [g_window setAcceptsMouseMovedEvents:YES];
 
         VertexWindowDelegate* delegate = [[VertexWindowDelegate alloc] init];
         [g_window setDelegate:delegate];
