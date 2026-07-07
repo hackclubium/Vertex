@@ -437,6 +437,21 @@ static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* 
 
 // ── profile data helpers ─────────────────────────────────────────────────────
 
+static std::string HtmlEscape(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        default: out += c; break;
+        }
+    }
+    return out;
+}
+
 static void AppendHistoryRecord(const std::string& url, const std::string& title) {
     if (g_profilePaths.historyFile.empty()) return;
     auto now = std::chrono::system_clock::now();
