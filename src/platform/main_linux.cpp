@@ -752,8 +752,36 @@ static void NavigateFromUrlBar() {
 
 static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
     bool shift = (state & XCB_MOD_MASK_SHIFT) != 0;
+    bool ctrl = (state & XCB_MOD_MASK_CONTROL) != 0;
     xcb_keysym_t sym = g_keymap.KeysymFor(kc, shift ? 1 : 0);
     if (!sym) return;
+
+    // Global shortcuts (work everywhere)
+    if (ctrl && !shift && sym == 'l') {
+        g_urlEdit.focused = true;
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && (sym == '=' || sym == '+')) {
+        float zoom = g_renderer->GetZoom();
+        g_renderer->SetZoom(std::min(5.0f, zoom + 0.1f));
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == '-') {
+        float zoom = g_renderer->GetZoom();
+        g_renderer->SetZoom(std::max(0.25f, zoom - 0.1f));
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == '0') {
+        g_renderer->SetZoom(1.0f);
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
 
     if (g_urlEdit.focused) {
         if (sym == XK_Return)     { NavigateFromUrlBar(); return; }
