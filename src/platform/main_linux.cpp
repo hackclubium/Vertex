@@ -16,6 +16,7 @@
 #include <sys/eventfd.h>
 #include <poll.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "platform/platform.h"
 #include "platform/chrome.h"
@@ -305,6 +306,8 @@ static auto& g_js        = g_chrome.state.js;
 static auto& g_formState = g_chrome.state.form;
 static auto& g_updater   = g_chrome.state.updater;
 
+const Node* g_hoverNode = nullptr;  // Not static - CSS system needs extern access
+
 static Semaphore g_imageFetchGate(6);
 
 static std::unique_ptr<IPlatformRenderer> g_renderer;
@@ -391,6 +394,16 @@ static std::string HitTestLink(float x, float y) {
          && y >= it->y && y <= it->y + it->h)
             return UnwrapBingRedirect(it->href);
     return {};
+}
+
+static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* newRegion) {
+    if (!oldRegion && !newRegion) {
+        RequestRedraw();
+        return;
+    }
+    // For simplicity, just redraw the entire content area when hover changes.
+    // Could optimize to invalidate just the two regions like Windows does.
+    RequestRedraw();
 }
 
 // ── image loading pipeline ───────────────────────────────────────────────────
@@ -826,6 +839,36 @@ static void HandleEvent(xcb_generic_event_t* ev) {
             std::string href = HitTestLink((float)mp->event_x, (float)y);
             if (g_statusText != href) {
                 g_statusText = href;
+                RequestRedraw();
+            }
+            // Track :hover node for CSS hover styles (throttled adaptively).
+            if (g_layoutRoot && g_renderer && g_renderer->UsesHoverStyles()) {
+                static timespec lastHoverTime = {0, 0};
+                timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                auto msElapsed = [](const timespec& start, const timespec& end) {
+                    return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+                };
+                // Adaptive throttle: 33ms (30Hz) for simple pages, 50ms (20Hz) for complex ones
+                size_t candidateCount = g_renderer->HoverCandidateCount();
+                long throttleMs = (candidateCount > 500) ? 50 : 33;
+                if (msElapsed(lastHoverTime, now) >= throttleMs) {
+                    HitRegion oldHoverRegion{};
+                    bool hadOldHoverRegion = g_renderer->LastHoverRegion(oldHoverRegion);
+                    const Node* hover = g_renderer->HoverNodeAt(
+                        (float)mp->event_x, (float)y, CurTab().scrollY, (float)vertex::chrome_theme::ToolbarHeight);
+                    lastHoverTime = now;
+                    if (hover != g_hoverNode) {
+                        HitRegion newHoverRegion{};
+                        bool hasNewHoverRegion = g_renderer->LastHoverRegion(newHoverRegion);
+                        g_hoverNode = hover;
+                        InvalidateHoverRegions(
+                            hadOldHoverRegion ? &oldHoverRegion : nullptr,
+                            hasNewHoverRegion ? &newHoverRegion : nullptr);
+                    }
+                }
+            } else if (g_hoverNode) {
+                g_hoverNode = nullptr;
                 RequestRedraw();
             }
         }
