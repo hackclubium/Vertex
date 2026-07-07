@@ -822,7 +822,7 @@ static void HandleEvent(xcb_generic_event_t* ev) {
     case XCB_MOTION_NOTIFY: {
         auto* mp = (xcb_motion_notify_event_t*)ev;
         int y = mp->event_y;
-        if (y >= ToolbarHeight && y < g_height - StatusHeight) {
+        if (y >= vertex::chrome_theme::ToolbarHeight && y < g_height - vertex::chrome_theme::StatusHeight) {
             std::string href = HitTestLink((float)mp->event_x, (float)y);
             if (g_statusText != href) {
                 g_statusText = href;
