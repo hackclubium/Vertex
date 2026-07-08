@@ -649,37 +649,6 @@ static void DrawStatusBar() {
     }
 }
 
-static void DrawFindBar() {
-    using namespace vertex::chrome_theme;
-    if (!g_renderer || !g_findState.visible) return;
-    
-    float barH = 36.f;
-    float y = (float)(g_height - StatusHeight - barH);
-    float x = (float)Margin;
-    float w = 300.f;
-    
-    g_renderer->FillRoundedRect(x, y, w, barH, (float)CornerRadius, RgbToPlat(Rail));
-    g_renderer->DrawRect(x, y, w, barH, RgbToPlat(Line), 1.f);
-    
-    PlatFont labelFont = g_renderer->CreateFont(12, false, false, false, "");
-    g_renderer->DrawText(L"Find:", x + 10, y + 10, 40.f, barH, labelFont, RgbToPlat(Ink));
-    g_renderer->ReleaseFont(labelFont);
-    
-    float entryX = x + 50;
-    float entryW = w - 60;
-    g_renderer->FillRoundedRect(entryX, y + 6, entryW, 24.f, (float)CornerRadius, RgbToPlat(Active));
-    g_renderer->DrawRect(entryX, y + 6, entryW, 24.f, RgbToPlat(Accent), 1.f);
-    
-    PlatFont findFont = g_renderer->CreateFont(13, false, false, false, "");
-    std::wstring wquery = Utf8ToWide(g_findState.query);
-    g_renderer->DrawText(wquery, entryX + 6, y + 11, entryW - 12, 24.f, findFont, RgbToPlat(Ink));
-    
-    float caretX = entryX + 6 + g_renderer->MeasureText(Utf8ToWide(g_findState.query.substr(0, g_findState.cursorPos)), findFont);
-    g_renderer->DrawLine(caretX, y + 9, caretX, y + 27, RgbToPlat(Ink), 1.f);
-    
-    g_renderer->ReleaseFont(findFont);
-}
-
 static void DrawContextMenu() {
     using namespace vertex::chrome_theme;
     if (!g_renderer || !g_contextMenu.visible) return;
@@ -748,7 +717,6 @@ static void DoDraw() {
 
     DrawToolbar();
     DrawStatusBar();
-    DrawFindBar();
     DrawContextMenu();
 
     int contentH = std::max(0, g_height - ToolbarHeight - StatusHeight);
@@ -1005,20 +973,6 @@ static void OnButtonPress(uint8_t button, int x, int y) {
     // Mouse wheel scrolling
     if (button == 4 || button == 5) {
         float delta = (button == 4) ? -60.f : 60.f;
-        
-        // Try element-level scrolling first
-        if (g_layoutRoot && y >= ToolbarHeight && y < g_height - StatusHeight) {
-            float contentY = y - ToolbarHeight + CurTab().scrollY;
-            LayoutBox* scrollTarget = FindScrollableAt(*g_layoutRoot, (float)x, contentY, CurTab().scrollY, 0);
-            if (scrollTarget && scrollTarget->scrollH > scrollTarget->contentH) {
-                scrollTarget->scrollY = std::max(0.f, std::min(scrollTarget->scrollH - scrollTarget->contentH, 
-                                                                 scrollTarget->scrollY + delta));
-                RequestRedraw();
-                return;
-            }
-        }
-        
-        // Fall back to page scrolling
         CurTab().scrollY = std::max(0.f, CurTab().scrollY + delta);
         RequestRedraw();
         return;
@@ -1193,116 +1147,14 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
         }
         return;
     }
-    if (ctrl && !shift && (sym == '=' || sym == '+')) {
-        float zoom = g_renderer->GetZoom();
-        g_renderer->SetZoom(std::min(5.0f, zoom + 0.1f));
-        g_layoutRoot.reset();
-        RequestRedraw();
-        return;
-    }
-    if (ctrl && !shift && sym == '-') {
-        float zoom = g_renderer->GetZoom();
-        g_renderer->SetZoom(std::max(0.25f, zoom - 0.1f));
-        g_layoutRoot.reset();
-        RequestRedraw();
-        return;
-    }
-    if (ctrl && !shift && sym == '0') {
-        g_renderer->SetZoom(1.0f);
-        g_layoutRoot.reset();
-        RequestRedraw();
-        return;
-    }
+
     if (ctrl && !shift && sym == 'r') {
-        g_chrome.reload();
-        return;
-    }
-    if (ctrl && !shift && sym == 'h') {
-        g_chrome.navigate("vertex://history");
-        return;
-    }
-    if (ctrl && !shift && sym == 'b') {
-        g_chrome.navigate("vertex://bookmarks");
-        return;
-    }
-    if (ctrl && !shift && sym == 'j') {
-        g_chrome.navigate("vertex://downloads");
-        return;
-    }
-    if (sym == XK_F5) {
         g_chrome.reload();
         return;
     }
     if (sym == XK_Escape && CurTab().loading) {
         CurTab().loading = false;
         RequestRedraw();
-        return;
-    }
-    if (ctrl && !shift && sym == 'f') {
-        g_findState.visible = true;
-        RequestRedraw();
-        return;
-    }
-    if (ctrl && !shift && sym == 'g') {
-        if (g_renderer && !g_findState.query.empty()) {
-            g_renderer->FindNext(true);
-            RequestRedraw();
-        }
-        return;
-    }
-    if (ctrl && shift && sym == 'g') {
-        if (g_renderer && !g_findState.query.empty()) {
-            g_renderer->FindNext(false);
-            RequestRedraw();
-        }
-        return;
-    }
-
-    if (g_findState.visible) {
-        if (sym == XK_Escape) { 
-            g_findState.visible = false; 
-            if (g_renderer) g_renderer->SetSearchQuery(L"");
-            RequestRedraw(); 
-            return; 
-        }
-        if (sym == XK_Return) {
-            if (g_renderer && !g_findState.query.empty()) {
-                g_renderer->FindNext(true);
-                RequestRedraw();
-            }
-            return;
-        }
-        if (sym == XK_BackSpace) { 
-            g_findState.backspace(); 
-            if (g_renderer) {
-                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
-                g_renderer->SetSearchQuery(wq);
-            }
-            RequestRedraw(); 
-            return; 
-        }
-        if (sym == XK_Delete) { 
-            g_findState.deleteChar(); 
-            if (g_renderer) {
-                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
-                g_renderer->SetSearchQuery(wq);
-            }
-            RequestRedraw(); 
-            return; 
-        }
-        if (sym == XK_Left) { g_findState.left(); RequestRedraw(); return; }
-        if (sym == XK_Right) { g_findState.right(); RequestRedraw(); return; }
-        if (sym == XK_Home) { g_findState.home(); RequestRedraw(); return; }
-        if (sym == XK_End) { g_findState.end(); RequestRedraw(); return; }
-        if (sym >= 0x20 && sym < 0x7F) { 
-            g_findState.insertChar((char)sym); 
-            if (g_renderer) {
-                std::wstring wq(g_findState.query.begin(), g_findState.query.end());
-                g_renderer->SetSearchQuery(wq);
-            }
-            RequestRedraw(); 
-            return; 
-        }
         return;
     }
 
@@ -1390,36 +1242,6 @@ static void HandleEvent(xcb_generic_event_t* ev) {
             std::string href = HitTestLink((float)mp->event_x, (float)y);
             if (g_statusText != href) {
                 g_statusText = href;
-                RequestRedraw();
-            }
-            // Track :hover node for CSS hover styles (throttled adaptively).
-            if (g_layoutRoot && g_renderer && g_renderer->UsesHoverStyles()) {
-                static timespec lastHoverTime = {0, 0};
-                timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                auto msElapsed = [](const timespec& start, const timespec& end) {
-                    return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
-                };
-                // Adaptive throttle: 33ms (30Hz) for simple pages, 50ms (20Hz) for complex ones
-                size_t candidateCount = g_renderer->HoverCandidateCount();
-                long throttleMs = (candidateCount > 500) ? 50 : 33;
-                if (msElapsed(lastHoverTime, now) >= throttleMs) {
-                    HitRegion oldHoverRegion{};
-                    bool hadOldHoverRegion = g_renderer->LastHoverRegion(oldHoverRegion);
-                    const Node* hover = g_renderer->HoverNodeAt(
-                        (float)mp->event_x, (float)y, CurTab().scrollY, (float)vertex::chrome_theme::ToolbarHeight);
-                    lastHoverTime = now;
-                    if (hover != g_hoverNode) {
-                        HitRegion newHoverRegion{};
-                        bool hasNewHoverRegion = g_renderer->LastHoverRegion(newHoverRegion);
-                        g_hoverNode = hover;
-                        InvalidateHoverRegions(
-                            hadOldHoverRegion ? &oldHoverRegion : nullptr,
-                            hasNewHoverRegion ? &newHoverRegion : nullptr);
-                    }
-                }
-            } else if (g_hoverNode) {
-                g_hoverNode = nullptr;
                 RequestRedraw();
             }
         }
