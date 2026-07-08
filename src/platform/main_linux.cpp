@@ -427,6 +427,44 @@ static std::string HitTestLink(float x, float y) {
     return {};
 }
 
+// Find the deepest node at the given position by traversing the layout tree
+static const Node* FindNodeAt(const LayoutBox* box, float x, float y, float scrollY, float topInset) {
+    if (!box) return nullptr;
+    
+    // Check if point is within this box's bounds (adjusted for scroll and inset)
+    float boxTop = box->y + topInset - scrollY;
+    float boxBottom = boxTop + box->borderBoxH();
+    float boxLeft = box->x;
+    float boxRight = boxLeft + box->borderBoxW();
+    
+    if (x < boxLeft || x > boxRight || y < boxTop || y > boxBottom)
+        return nullptr;
+    
+    // Check children first (deepest first)
+    for (auto& child : box->kids) {
+        if (const Node* found = FindNodeAt(child.get(), x, y, scrollY, topInset))
+            return found;
+    }
+    
+    // Check inline fragments
+    for (auto& line : box->lines) {
+        for (auto& frag : line.frags) {
+            if (frag.src && frag.src->node) {
+                float fragTop = frag.y + topInset - scrollY;
+                float fragBottom = fragTop + frag.h;
+                float fragLeft = frag.x;
+                float fragRight = fragLeft + frag.w;
+                
+                if (x >= fragLeft && x <= fragRight && y >= fragTop && y <= fragBottom)
+                    return frag.src->node;
+            }
+        }
+    }
+    
+    // Return this box's node if no children matched
+    return box->node;
+}
+
 static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* newRegion) {
     if (!oldRegion && !newRegion) {
         RequestRedraw();
@@ -1274,6 +1312,31 @@ static void HandleEvent(xcb_generic_event_t* ev) {
             if (g_statusText != href) {
                 g_statusText = href;
                 RequestRedraw();
+            }
+            
+            // Track hover for CSS :hover styles (throttled to avoid excessive redraws)
+            if (g_layoutRoot) {
+                static timespec lastHoverTime = {0, 0};
+                timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                auto msElapsed = [](const timespec& start, const timespec& end) {
+                    return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+                };
+                
+                // Throttle to 50ms (20Hz) to avoid excessive relayout on hover
+                if (msElapsed(lastHoverTime, now) >= 50) {
+                    float contentY = y - vertex::chrome_theme::ToolbarHeight + CurTab().scrollY;
+                    const Node* hover = FindNodeAt(g_layoutRoot.get(), (float)mp->event_x, contentY, 
+                                                    CurTab().scrollY, (float)vertex::chrome_theme::ToolbarHeight);
+                    lastHoverTime = now;
+                    
+                    if (hover != g_hoverNode) {
+                        g_hoverNode = hover;
+                        // Force relayout because CSS :hover rules may apply
+                        g_layoutRoot.reset();
+                        RequestRedraw();
+                    }
+                }
             }
         }
         break;
