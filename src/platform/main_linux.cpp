@@ -1332,6 +1332,7 @@ static void HandleEvent(xcb_generic_event_t* ev) {
                     
                     if (hover != g_hoverNode) {
                         g_hoverNode = hover;
+                        SetCssHoverNode(hover);  // Tell CSS system which node is hovered
                         // Force relayout because CSS :hover rules may apply
                         g_layoutRoot.reset();
                         RequestRedraw();
