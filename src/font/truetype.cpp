@@ -72,6 +72,7 @@ bool Font::ParseHead() {
     m_unitsPerEm = ReadU16(p + 18);
     if (m_unitsPerEm <= 0) m_unitsPerEm = 1000;
     m_indexToLocFormat = ReadS16(p + 50);
+    if (m_indexToLocFormat != 0 && m_indexToLocFormat != 1) return false;
     return true;
 }
 
@@ -104,7 +105,7 @@ bool Font::ResolveCmapSubtable() {
         uint16_t platformID = ReadU16(rec);
         uint16_t encodingID = ReadU16(rec + 2);
         uint32_t offset = ReadU32(rec + 4);
-        if (offset + 2 > m_cmapTable.length) continue;
+        if (offset > m_cmapTable.length - 2) continue;
         uint16_t format = ReadU16(base + offset);
         if (format != 4) continue;
         int score = (platformID == 3 && encodingID == 1) ? 2 : (platformID == 0 ? 1 : 0);
@@ -213,7 +214,7 @@ uint32_t Font::GlyfOffsetForIndex(uint16_t glyphIndex, uint32_t& outLength) cons
         o1 = ReadU32(loca + byteOff);
         o2 = ReadU32(loca + byteOff + 4);
     }
-    if (o2 < o1 || o2 - o1 > m_glyfTable.length || o1 > m_glyfTable.length) return 0;
+    if (o2 < o1 || o2 > m_glyfTable.length || o1 > m_glyfTable.length) return 0;
     outLength = o2 - o1;
     return o1;
 }
@@ -224,15 +225,19 @@ GlyphOutline Font::ParseSimpleGlyph(const uint8_t* p, const uint8_t* end, int nu
     if (cursor + numberOfContours * 2 + 2 > end) return g;
 
     std::vector<uint16_t> endPts((size_t)numberOfContours);
-    for (int i = 0; i < numberOfContours; i++) { endPts[(size_t)i] = ReadU16(cursor); cursor += 2; }
+    for (int i = 0; i < numberOfContours; i++) {
+        endPts[(size_t)i] = ReadU16(cursor);
+        cursor += 2;
+        if (i > 0 && endPts[i] <= endPts[i-1]) return g; // endPts must be strictly increasing
+    }
     int numPoints = numberOfContours > 0 ? endPts.back() + 1 : 0;
     if (numPoints <= 0 || numPoints > 20000) return g;  // sanity guard against corrupt data
 
     if (cursor + 2 > end) return g;
     uint16_t instructionLength = ReadU16(cursor);
     cursor += 2;
+    if (cursor + instructionLength > end) return g;
     cursor += instructionLength;
-    if (cursor > end) return g;
 
     std::vector<uint8_t> flags((size_t)numPoints);
     for (int i = 0; i < numPoints;) {

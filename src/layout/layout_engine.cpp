@@ -1027,6 +1027,7 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
         // Multi-column layout: distribute children across N columns.
         if (s.columnCountSet && s.columnCount > 1 && !box.kids.empty()) {
             int cols = s.columnCount;
+            if (cols <= 0) cols = 1; // guard against invalid column count
             float gap = px(s.columnGap);
             float colW = (box.contentW - gap * (cols - 1)) / cols;
 
@@ -1468,8 +1469,15 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
                 occupied.insert({r, c});
     int autoRow = 0, autoCol = 0;
     for (auto* item : autoItems) {
+        int attempts = 0;
         while (occupied.count({autoRow, autoCol})) {
             if (++autoCol >= (int)cols) { autoCol = 0; ++autoRow; }
+            if (++attempts > (int)(cols * (maxRow + autoItems.size() + 1))) {
+                // Bail out if we've searched too many cells (grid likely full)
+                autoRow = (int)maxRow;
+                autoCol = 0;
+                break;
+            }
         }
         placed.push_back({autoRow, autoCol, 1, 1, item});
         occupied.insert({autoRow, autoCol});
@@ -1821,8 +1829,10 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
             InlineItem it; it.type = InlineItem::Word; it.text = word; it.box = box; it.font = f;
             it.width = E.in.measure ? E.in.measure->MeasureText(word, f) : (float)word.size() * f.size * 0.5f;
             // letter-spacing: add extra width per character
-            if (box->style.letterSpacingSet && box->style.letterSpacing != 0)
-                it.width += box->style.letterSpacing * E.Z * (float)word.size();
+            if (box->style.letterSpacingSet && box->style.letterSpacing != 0) {
+                float extra = box->style.letterSpacing * E.Z * (float)word.size();
+                if (std::isfinite(extra) && extra < 1e6f) it.width += extra;
+            }
             it.ascent = asc; it.lineH = lh; it.vAlign = va;
             items.push_back(it);
             i = j;
@@ -1896,6 +1906,7 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
         if (lineRight <= lineLeft && fctx) {
             float nb = fctx->nextBreakBelow(y);
             if (nb > y) { y = nb; continue; }
+            if (nb == y) { y += 1.0f; continue; } // Avoid infinite loop if nextBreakBelow stuck
             lineLeft = cLeft; lineRight = cRight;
         }
         float avail = lineRight - lineLeft;
@@ -2200,6 +2211,7 @@ void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
 
 std::unique_ptr<LayoutBox> LayoutDocument(const LayoutInput& in) {
     if (!in.document) return nullptr;
+    g_depth = 0; // Reset thread_local depth counter for this layout pass
 
     float cssW = in.viewportW / std::max(0.01f, in.zoom);
     float cssH = in.viewportH / std::max(0.01f, in.zoom);

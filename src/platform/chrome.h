@@ -186,6 +186,9 @@ public:
     ChromeState state;
     ChromeCallbacks cb;
 
+    BrowserChrome() : alive_(std::make_shared<bool>(true)) {}
+    ~BrowserChrome() { if (alive_) *alive_ = false; }
+
     void init() {
         state.tabs.emplace_back();
         state.tabs[0].page = std::make_shared<Page>();
@@ -249,6 +252,9 @@ public:
         tab.page = std::shared_ptr<Page>(page);
         tab.loading = false;
         state.loading = false;
+        state.hoverNode = nullptr;
+        state.form.blur();
+        state.form.values.clear();
 
         // Extract title
         if (tab.page->dom) {
@@ -395,8 +401,10 @@ private:
                     state.js.dispatchDocumentEvent("DOMContentLoaded");
                     state.js.dispatchWindowEvent("load");
                 } else if (pendingPageScriptWaitingForFetch(job)) {
+                    auto aliveFlag = alive_;
                     FetchResourceAsync(job.filename, 1024 * 1024, ResourceKind::Script,
-                        [this, job](FetchResult res) mutable {
+                        [this, aliveFlag, job](FetchResult res) mutable {
+                            if (!aliveFlag || !*aliveFlag) return;
                             requeueFetchedPageScript(std::move(job), std::move(res));
                         });
                 } else {
@@ -498,4 +506,6 @@ private:
             // Page script setup failed; continue without page scripts.
         }
     }
+
+    std::shared_ptr<bool> alive_;
 };

@@ -83,7 +83,14 @@ bool HasUrlScheme(const std::string& url) {
 std::string ResolveUrlAgainstBase(const std::string& href, const std::string& base) {
     if (href.empty()) return {};
     if (HasUrlScheme(href)) return href;
-    if (href.size() >= 2 && href[0] == '/' && href[1] == '/') return "https:" + href;
+    if (href.size() >= 2 && href[0] == '/' && href[1] == '/') {
+        // Protocol-relative URL: use base URL's scheme
+        size_t p = base.find("://");
+        if (p != std::string::npos) {
+            return base.substr(0, p + 1) + href;
+        }
+        return "https:" + href; // Fallback if base has no scheme
+    }
     if (href[0] == '/') {
         size_t p = base.find("://");
         if (p == std::string::npos) return href;

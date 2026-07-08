@@ -55,7 +55,7 @@ void LoadExternalScriptSources(const std::shared_ptr<Node>& document,
             }
         }
 
-        for (auto it = node->children.rbegin(); it != node->children.rend(); ++it)
-            stack.push_back(it->get());
+        for (auto& child : node->children)
+            stack.push_back(child.get());
     }
 }

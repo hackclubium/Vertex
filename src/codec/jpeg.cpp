@@ -229,7 +229,7 @@ DecodedImage DecodeJpeg(const uint8_t* data, size_t size) {
                 uint8_t tc = seg[p] >> 4;
                 uint8_t th = seg[p] & 0x0F;
                 p++;
-                if (th > 3 || p + 16 > segDataLen) return result;
+                if (tc > 1 || th > 3 || p + 16 > segDataLen) return result;
                 HuffTable table;
                 int total = 0;
                 for (int i = 1; i <= 16; i++) { table.counts[i] = seg[p + i - 1]; total += table.counts[i]; }
@@ -379,6 +379,7 @@ DecodedImage DecodeJpeg(const uint8_t* data, size_t size) {
             for (int ci = 0; ci < numComponents; ci++) {
                 Component& comp = comps[ci];
                 int sx = x * comp.h / hMax;
+                if (sx >= comp.pixelsStride) sx = comp.pixelsStride - 1;
                 int sy = y * comp.v / vMax;
                 samples[ci] = comp.pixels[(size_t)sy * comp.pixelsStride + sx];
             }

@@ -147,6 +147,7 @@ public:
 
     PlatBitmap CreateBitmap(int width, int height, const uint8_t* rgbaPixels) override {
         if (!m_rt || !rgbaPixels || width <= 0 || height <= 0) return nullptr;
+        if (width > INT_MAX / 4) return nullptr; // Prevent overflow in width * 4
         // Caller provides PBGRA (pre-multiplied, swizzled by ReceiveImage).
         D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));

@@ -392,7 +392,10 @@ bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
     uint8_t fragOpcode = 0;
     bool fragActive = false;
     bool closeSent = false, closeReceived = false;
+    int closeWaitIterations = 0;
+    constexpr int kMaxCloseWaitIterations = 600; // 30 seconds timeout at 50ms per iteration
     char readBuf[8192];
+    constexpr size_t kMaxFragmentedMessageSize = 16 * 1024 * 1024;
 
     for (;;) {
         std::deque<WsOutboxItem> toSend;
@@ -422,10 +425,20 @@ bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
             closeSent = true;
         }
         if (closeSent && closeReceived) break;
+        
+        // Timeout if waiting too long for close response from peer
+        if (closeSent && !closeReceived) {
+            if (++closeWaitIterations > kMaxCloseWaitIterations) break;
+        }
 
         int n = sock.Recv(readBuf, sizeof(readBuf), 50);
         if (n < 0) break;
-        if (n == 0) continue;
+        if (n == 0) {
+            // n==0 might mean EOF (peer closed without close frame) or timeout.
+            // If we've already started close handshake, EOF means disconnect.
+            if (closeSent || closeReceived) break;
+            continue;
+        }
 
         parser.feed(readBuf, n);
 
@@ -436,6 +449,10 @@ bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
             switch (frame.opcode) {
             case 0x0: // continuation
                 if (fragActive) {
+                    if (fragBuf.size() + frame.payload.size() > kMaxFragmentedMessageSize) {
+                        protocolError = true;
+                        break;
+                    }
                     fragBuf += frame.payload;
                     if (frame.fin) {
                         PushEvent(onEvent, WsEvent{ WsEventKind::Message, fragBuf, fragOpcode == 0x2 });
@@ -447,6 +464,10 @@ bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
             case 0x1: // text
             case 0x2: // binary
                 if (!frame.fin) {
+                    if (frame.payload.size() > kMaxFragmentedMessageSize) {
+                        protocolError = true;
+                        break;
+                    }
                     fragBuf = frame.payload;
                     fragOpcode = frame.opcode;
                     fragActive = true;

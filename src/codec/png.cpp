@@ -186,7 +186,9 @@ DecodedImage DecodePng(const uint8_t* data, size_t size) {
                 out[0] = out[1] = out[2] = g8;
                 out[3] = 255;
                 if (trns.size() >= 2) {
-                    uint32_t trnsVal = ((uint32_t)trns[0] << 8) | trns[1];
+                    uint32_t trnsVal = (bitDepth == 16) 
+                        ? (((uint32_t)trns[0] << 8) | trns[1])
+                        : trns[1];
                     if (g == trnsVal) out[3] = 0;
                 }
                 break;
@@ -197,9 +199,16 @@ DecodedImage DecodePng(const uint8_t* data, size_t size) {
                 uint32_t b = getSample(row, x * 3 + 2);
                 out[0] = scale8(r); out[1] = scale8(g); out[2] = scale8(b); out[3] = 255;
                 if (trns.size() >= 6) {
-                    uint32_t tr = ((uint32_t)trns[0] << 8) | trns[1];
-                    uint32_t tg = ((uint32_t)trns[2] << 8) | trns[3];
-                    uint32_t tb = ((uint32_t)trns[4] << 8) | trns[5];
+                    uint32_t tr, tg, tb;
+                    if (bitDepth == 16) {
+                        tr = ((uint32_t)trns[0] << 8) | trns[1];
+                        tg = ((uint32_t)trns[2] << 8) | trns[3];
+                        tb = ((uint32_t)trns[4] << 8) | trns[5];
+                    } else {
+                        tr = trns[1];
+                        tg = trns[3];
+                        tb = trns[5];
+                    }
                     if (r == tr && g == tg && b == tb) out[3] = 0;
                 }
                 break;

@@ -163,12 +163,13 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
                 r.error = "Could not open local file";
                 return r;
             }
-            r.body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-            if (r.body.size() > maxResponseBytes) {
-                r.body.clear();
-                r.error = "Response exceeds size limit";
+            // Check file size before reading to avoid memory exhaustion
+            std::uintmax_t fileSize = std::filesystem::file_size(path);
+            if (fileSize > maxResponseBytes) {
+                r.error = "File exceeds size limit";
                 return r;
             }
+            r.body.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
             r.contentType = FileContentTypeForPath(path);
             r.finalUrl = url;
             r.success = true;

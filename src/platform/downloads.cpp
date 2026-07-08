@@ -136,7 +136,11 @@ std::string UniquePathWithExists(const std::string& directory,
         candidate = JoinPath(directory, stem + " (" + std::to_string(i) + ")" + ext);
         if (!exists(candidate)) return candidate;
     }
-    return JoinPath(directory, stem + " (copy)" + ext);
+    // Fallback: check if "(copy)" suffix is available
+    candidate = JoinPath(directory, stem + " (copy)" + ext);
+    if (!exists(candidate)) return candidate;
+    // Last resort: use number beyond loop limit
+    return JoinPath(directory, stem + " (10000)" + ext);
 }
 
 } // namespace

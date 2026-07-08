@@ -154,13 +154,15 @@ bool TlsConnection::SendAll(const char* data, size_t len) {
 
         if (EncryptMessage(&im.ctxHandle, 0, &desc, 0) != SEC_E_OK) return false;
 
-        // Sent as three separate writes (not one contiguous blob) since
-        // EncryptMessage may use less than the allocated header/trailer
-        // capacity — each SecBuffer's own pointer+length is authoritative,
-        // matching Microsoft's own reference SChannel client sample.
-        if (!im.sock.SendAll((const char*)buffers[0].pvBuffer, buffers[0].cbBuffer)) return false;
-        if (!im.sock.SendAll((const char*)buffers[1].pvBuffer, buffers[1].cbBuffer)) return false;
-        if (!im.sock.SendAll((const char*)buffers[2].pvBuffer, buffers[2].cbBuffer)) return false;
+        // Concatenate header + data + trailer into a single contiguous buffer
+        // so one SendAll sends a complete TLS record. If SendAll fails the
+        // peer never sees a truncated record.
+        std::string tlsRecord;
+        tlsRecord.reserve(buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer);
+        tlsRecord.append((const char*)buffers[0].pvBuffer, buffers[0].cbBuffer);
+        tlsRecord.append((const char*)buffers[1].pvBuffer, buffers[1].cbBuffer);
+        tlsRecord.append((const char*)buffers[2].pvBuffer, buffers[2].cbBuffer);
+        if (!im.sock.SendAll(tlsRecord.data(), tlsRecord.size())) return false;
 
         sent += chunkLen;
     }

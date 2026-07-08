@@ -138,7 +138,8 @@ bool ReadChunkedBody(Sock& sock, std::string& body, std::string& out, size_t max
         pos += chunkSize + 2;
 
         // Keep the buffer from growing unboundedly across many chunks.
-        if (pos > 65536) { body.erase(0, pos); pos = 0; }
+        // Clean up more aggressively to handle many small chunks efficiently.
+        if (pos > 8192) { body.erase(0, pos); pos = 0; }
     }
 }
 
@@ -149,6 +150,13 @@ template <typename Sock>
 bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& currentUrl,
                      size_t maxResponseBytes, FetchResult& r,
                      std::string& outBody, std::vector<HeaderLine>& headers) {
+    // Validate host and path to prevent header injection via CRLF
+    for (char c : parsed.host) {
+        if (c == '\r' || c == '\n') { r.error = "Invalid host"; return false; }
+    }
+    for (char c : parsed.path) {
+        if (c == '\r' || c == '\n') { r.error = "Invalid path"; return false; }
+    }
     std::string cookieHeader = CookieJar::instance().cookieHeader(currentUrl);
     std::string request =
         "GET " + parsed.path + " HTTP/1.1\r\n"
@@ -217,8 +225,15 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
 FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
     FetchResult r;
     std::string currentUrl = url;
+    std::set<std::string> visited;
 
     for (int redirects = 0; redirects <= 10; redirects++) {
+        if (visited.count(currentUrl)) {
+            r.error = "Redirect cycle detected";
+            return r;
+        }
+        visited.insert(currentUrl);
+        
         HttpUrl parsed;
         if (!ParseHttpUrl(currentUrl, parsed)) { r.error = "Unsupported or malformed URL"; return r; }
 

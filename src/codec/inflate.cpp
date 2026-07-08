@@ -207,6 +207,7 @@ bool InflateBlock(BitReader& br, const HuffmanTable& litTable, const HuffmanTabl
 } // namespace
 
 bool Inflate(const uint8_t* data, size_t size, std::string& out) {
+    constexpr size_t kMaxDecompressedSize = 256 * 1024 * 1024; // 256 MB limit
     BitReader br(data, size);
     bool final = false;
     while (!final) {
@@ -219,8 +220,11 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out) {
             uint16_t len = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             uint16_t nlen = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             if (br.error() || (uint16_t)(~len) != nlen) return false;
-            for (int i = 0; i < len; i++) out.push_back((char)br.ReadByte());
-            if (br.error()) return false;
+            if (out.size() + len > kMaxDecompressedSize) return false;
+            for (int i = 0; i < len; i++) {
+                out.push_back((char)br.ReadByte());
+                if (br.error()) return false;
+            }
         } else if (btype == 1 || btype == 2) {
             HuffmanTable litTable, distTable;
             if (btype == 1) {
@@ -229,6 +233,7 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out) {
                 if (!ReadDynamicTables(br, litTable, distTable)) return false;
             }
             if (!InflateBlock(br, litTable, distTable, out)) return false;
+            if (out.size() > kMaxDecompressedSize) return false;
         } else {
             return false; // btype == 3 is reserved/invalid
         }
@@ -270,14 +275,18 @@ bool GzipInflate(const uint8_t* data, size_t size, std::string& out) {
     if (flg & 0x04) { // FEXTRA
         if (pos + 2 > size) return false;
         uint16_t xlen = (uint16_t)data[pos] | ((uint16_t)data[pos + 1] << 8);
-        pos += 2 + xlen;
+        pos += 2;
+        if (pos + xlen > size) return false;
+        pos += xlen;
     }
     if (flg & 0x08) { // FNAME (NUL-terminated)
         while (pos < size && data[pos] != 0) pos++;
+        if (pos >= size) return false;
         pos++;
     }
     if (flg & 0x10) { // FCOMMENT (NUL-terminated)
         while (pos < size && data[pos] != 0) pos++;
+        if (pos >= size) return false;
         pos++;
     }
     if (flg & 0x02) pos += 2; // FHCRC (header CRC16, not verified)
