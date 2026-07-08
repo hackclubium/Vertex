@@ -6,6 +6,7 @@
 #include "codec/inflate.h"
 #include <algorithm>
 #include <cctype>
+#include <set>
 
 namespace {
 
