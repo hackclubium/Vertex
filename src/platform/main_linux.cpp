@@ -326,6 +326,8 @@ static std::set<std::string> g_loadingImages;
 static std::set<std::string> g_failedImages;
 static std::map<std::string, PlatFont> g_fontCache;
 
+static float g_zoom = 1.0f;
+
 static std::map<const Node*, std::unique_ptr<RasterCanvasSurface>> g_canvasSurfaces;
 static std::map<const Node*, PlatBitmap> g_canvasBitmaps;
 
@@ -752,7 +754,7 @@ static void DoDraw() {
         in.measure = g_measure.get();
         in.viewportW = (float)g_width;
         in.viewportH = (float)contentH;
-        in.zoom = 1.f;
+        in.zoom = g_zoom;
         in.baseUrl = tab.page->url;
         g_layoutRoot = LayoutDocument(in);
         if (g_layoutRoot) {
@@ -1147,9 +1149,38 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
         }
         return;
     }
-
+    if (ctrl && !shift && (sym == '=' || sym == '+')) {
+        g_zoom = std::min(5.0f, g_zoom + 0.1f);
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == '-') {
+        g_zoom = std::max(0.25f, g_zoom - 0.1f);
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
+    if (ctrl && !shift && sym == '0') {
+        g_zoom = 1.0f;
+        g_layoutRoot.reset();
+        RequestRedraw();
+        return;
+    }
     if (ctrl && !shift && sym == 'r') {
         g_chrome.reload();
+        return;
+    }
+    if (ctrl && !shift && sym == 'h') {
+        g_chrome.navigate("vertex://history");
+        return;
+    }
+    if (ctrl && !shift && sym == 'b') {
+        g_chrome.navigate("vertex://bookmarks");
+        return;
+    }
+    if (ctrl && !shift && sym == 'j') {
+        g_chrome.navigate("vertex://downloads");
         return;
     }
     if (sym == XK_Escape && CurTab().loading) {
