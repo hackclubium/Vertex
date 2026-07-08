@@ -198,9 +198,14 @@ struct ComputedStyle {
     int      alignSelf       = -1; // -1=auto (inherits align-items), 0..3 same as alignItems
     bool     alignSelfSet    = false;
     float    flexGap         = -1;
+    float    flexRowGap      = -1; // separate row/column gap for flex
+    float    flexColumnGap   = -1;
     // align-items on the cross axis: 0=stretch(default),1=start,2=center,3=end
     int      alignItems      = 0;
     bool     alignItemsSet   = false;
+    // align-content for multi-line flex: 0=stretch,1=start,2=center,3=end,4=space-between,5=space-around
+    int      alignContent    = 0;
+    bool     alignContentSet = false;
     int      justifyContent  = 0; // 0=start,1=center,2=end,3=space-between
     bool     justifyContentSet = false;
     // Grid tracks remain CSS tokens until their containing block is known.
@@ -210,6 +215,40 @@ struct ComputedStyle {
     bool     gridTemplateRowsSet = false;
     int      gridColumnStart = 0, gridColumnEnd = 0; // 0 = auto
     int      gridRowStart = 0, gridRowEnd = 0;
+    float    gridGap         = -1; // gap for grid (both row and column if not set separately)
+    float    gridRowGap      = -1;
+    float    gridColumnGap   = -1;
+    int      gridAutoFlow    = 0;  // 0=row, 1=column, 2=row dense, 3=column dense
+    bool     gridAutoFlowSet = false;
+    // Filter effects: simplified implementation for most common filters
+    float    filterBlur      = 0;   // blur radius in px
+    float    filterBrightness = 1;  // 0..2+ (1=normal, <1 darker, >1 brighter)
+    float    filterContrast   = 1;  // 0..2+ (1=normal)
+    float    filterGrayscale  = 0;  // 0..1 (0=color, 1=grayscale)
+    float    filterOpacity    = 1;  // 0..1 (different from opacity property)
+    float    filterSaturate   = 1;  // 0..2+ (1=normal)
+    bool     filterSet        = false;
+    // Backdrop filter (blur behind element)
+    float    backdropBlur     = 0;
+    bool     backdropFilterSet = false;
+    // Text truncation
+    int      lineClamp        = 0;  // 0=no clamp, >0=max lines before ellipsis
+    bool     lineClampSet     = false;
+    // Cursor property: 0=auto,1=pointer,2=text,3=move,4=not-allowed,5=grab,6=grabbing,7=crosshair,8=help
+    int      cursor           = 0;
+    bool     cursorSet        = false;
+    // Pointer events: 0=auto, 1=none, 2=all
+    int      pointerEvents    = 0;
+    bool     pointerEventsSet = false;
+    // User select: 0=auto, 1=none, 2=text, 3=all
+    int      userSelect       = 0;
+    bool     userSelectSet    = false;
+    // White space modes: 0=normal, 1=nowrap, 2=pre, 3=pre-wrap, 4=pre-line, 5=break-spaces
+    int      whiteSpaceMode   = 0;
+    bool     whiteSpaceModeSet = false;
+    // Scroll behavior: 0=auto, 1=smooth
+    int      scrollBehavior   = 0;
+    bool     scrollBehaviorSet = false;
     // Linear gradient.
     struct GradientStop { CssColor color; float pos = -1; }; // pos: 0..1, -1=auto
     float    gradientAngle    = 180;  // degrees (0=to top, 90=to right, 180=to bottom)
@@ -367,12 +406,35 @@ struct ComputedStyle {
         if (child.alignSelfSet) { out.alignSelf = child.alignSelf; out.alignSelfSet = true; }
         if (child.gradientSet) { out.gradientAngle = child.gradientAngle; out.gradientStops = child.gradientStops; out.gradientSet = true; }
         if (child.flexGap >= 0) out.flexGap = child.flexGap;
+        if (child.flexRowGap >= 0) out.flexRowGap = child.flexRowGap;
+        if (child.flexColumnGap >= 0) out.flexColumnGap = child.flexColumnGap;
+        if (child.alignContentSet) { out.alignContent = child.alignContent; out.alignContentSet = true; }
         if (child.gridTemplateColumnsSet) { out.gridTemplateColumns = child.gridTemplateColumns; out.gridTemplateColumnsSet = true; }
         if (child.gridTemplateRowsSet) { out.gridTemplateRows = child.gridTemplateRows; out.gridTemplateRowsSet = true; }
         if (child.gridColumnStart) out.gridColumnStart = child.gridColumnStart;
         if (child.gridColumnEnd) out.gridColumnEnd = child.gridColumnEnd;
         if (child.gridRowStart) out.gridRowStart = child.gridRowStart;
         if (child.gridRowEnd) out.gridRowEnd = child.gridRowEnd;
+        if (child.gridGap >= 0) out.gridGap = child.gridGap;
+        if (child.gridRowGap >= 0) out.gridRowGap = child.gridRowGap;
+        if (child.gridColumnGap >= 0) out.gridColumnGap = child.gridColumnGap;
+        if (child.gridAutoFlowSet) { out.gridAutoFlow = child.gridAutoFlow; out.gridAutoFlowSet = true; }
+        if (child.filterSet) {
+            out.filterBlur = child.filterBlur;
+            out.filterBrightness = child.filterBrightness;
+            out.filterContrast = child.filterContrast;
+            out.filterGrayscale = child.filterGrayscale;
+            out.filterOpacity = child.filterOpacity;
+            out.filterSaturate = child.filterSaturate;
+            out.filterSet = true;
+        }
+        if (child.backdropFilterSet) { out.backdropBlur = child.backdropBlur; out.backdropFilterSet = true; }
+        if (child.lineClampSet) { out.lineClamp = child.lineClamp; out.lineClampSet = true; }
+        if (child.cursorSet) { out.cursor = child.cursor; out.cursorSet = true; }
+        if (child.pointerEventsSet) { out.pointerEvents = child.pointerEvents; out.pointerEventsSet = true; }
+        if (child.userSelectSet) { out.userSelect = child.userSelect; out.userSelectSet = true; }
+        if (child.whiteSpaceModeSet) { out.whiteSpaceMode = child.whiteSpaceMode; out.whiteSpaceModeSet = true; }
+        if (child.scrollBehaviorSet) { out.scrollBehavior = child.scrollBehavior; out.scrollBehaviorSet = true; }
         for (const auto& [name, value] : child.customProperties)
             out.customProperties[name] = value;
         out.deferredDeclarations.insert(out.deferredDeclarations.end(),

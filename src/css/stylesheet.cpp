@@ -1125,6 +1125,14 @@ static void ApplyDeclaration(const std::string& prop,
         out.justifyContent = (v == "center") ? 1
                            : (v == "flex-end" || v == "end") ? 2
                            : (v == "space-between") ? 3 : 0;
+    } else if (prop == "align-content") {
+        std::string v = sLower(sTrim(val));
+        out.alignContentSet = true;
+        out.alignContent = (v == "flex-start" || v == "start") ? 1
+                         : (v == "center") ? 2
+                         : (v == "flex-end" || v == "end") ? 3
+                         : (v == "space-between") ? 4
+                         : (v == "space-around") ? 5 : 0;  // 0 = stretch
     } else if (prop == "flex-grow") {
         try { out.flexGrow = std::max(0.f, std::stof(sTrim(val))); out.flexGrowSet = true; } catch (...) {}
     } else if (prop == "flex-shrink") {
@@ -1179,12 +1187,38 @@ static void ApplyDeclaration(const std::string& prop,
             else if (tl == "wrap-reverse") { out.flexWrap = 2; out.flexWrapSet = true; }
             else if (tl == "nowrap") { out.flexWrap = 0; out.flexWrapSet = true; }
         }
-    } else if (prop == "gap" || prop == "row-gap") {
+    } else if (prop == "gap") {
+        // Universal gap property - applies to both flex and grid
         std::istringstream values(val);
         std::string gap;
         values >> gap;
         float parsed = ParseLength(gap);
-        if (parsed >= 0) out.flexGap = parsed;
+        if (parsed >= 0) {
+            out.flexGap = parsed;
+            out.gridGap = parsed;
+        }
+    } else if (prop == "row-gap") {
+        float parsed = ParseLength(sTrim(val));
+        if (parsed >= 0) {
+            out.flexRowGap = parsed;
+            out.gridRowGap = parsed;
+        }
+    } else if (prop == "column-gap") {
+        float parsed = ParseLength(sTrim(val));
+        if (parsed >= 0) {
+            out.flexColumnGap = parsed;
+            out.gridColumnGap = parsed;
+        }
+    } else if (prop == "grid-gap") {
+        // Legacy grid-gap property
+        float parsed = ParseLength(sTrim(val));
+        if (parsed >= 0) out.gridGap = parsed;
+    } else if (prop == "grid-row-gap") {
+        float parsed = ParseLength(sTrim(val));
+        if (parsed >= 0) out.gridRowGap = parsed;
+    } else if (prop == "grid-column-gap") {
+        float parsed = ParseLength(sTrim(val));
+        if (parsed >= 0) out.gridColumnGap = parsed;
     } else if (prop == "grid-template-columns") {
         auto tracks = SplitGridTracks(sTrim(val));
         if (!tracks.empty()) { out.gridTemplateColumns = std::move(tracks); out.gridTemplateColumnsSet = true; }
@@ -1212,6 +1246,13 @@ static void ApplyDeclaration(const std::string& prop,
         try { out.gridRowStart = std::stoi(sTrim(val)); } catch (...) {}
     } else if (prop == "grid-row-end") {
         try { out.gridRowEnd = std::stoi(sTrim(val)); } catch (...) {}
+    } else if (prop == "grid-auto-flow") {
+        std::string v = sLower(sTrim(val));
+        out.gridAutoFlowSet = true;
+        if (v == "column") out.gridAutoFlow = 1;
+        else if (v == "row dense" || v == "dense") out.gridAutoFlow = 2;
+        else if (v == "column dense") out.gridAutoFlow = 3;
+        else out.gridAutoFlow = 0;  // row (default)
     } else if (prop == "margin") {
         std::istringstream vs(val); std::vector<float> v;
         std::string tok;
@@ -1708,9 +1749,28 @@ static void ApplyDeclaration(const std::string& prop,
     } else if (prop == "outline-color") {
         out.outlineColor = ParseCssColor(sTrim(val)); out.outlineSet = true;
     } else if (prop == "outline-style" || prop == "outline-offset") {
-    } else if (prop == "cursor" || prop == "pointer-events" || prop == "user-select"
-            || prop == "-webkit-user-select" || prop == "-moz-user-select") {
-        // Interaction properties — parsed but no visual effect.
+    } else if (prop == "cursor") {
+        std::string v = sLower(sTrim(val));
+        out.cursorSet = true;
+        out.cursor = (v == "pointer") ? 1
+                   : (v == "text") ? 2
+                   : (v == "move") ? 3
+                   : (v == "not-allowed") ? 4
+                   : (v == "grab") ? 5
+                   : (v == "grabbing") ? 6
+                   : (v == "crosshair") ? 7
+                   : (v == "help") ? 8 : 0;  // 0 = auto
+    } else if (prop == "pointer-events") {
+        std::string v = sLower(sTrim(val));
+        out.pointerEventsSet = true;
+        out.pointerEvents = (v == "none") ? 1
+                          : (v == "all") ? 2 : 0;  // 0 = auto
+    } else if (prop == "user-select" || prop == "-webkit-user-select" || prop == "-moz-user-select") {
+        std::string v = sLower(sTrim(val));
+        out.userSelectSet = true;
+        out.userSelect = (v == "none") ? 1
+                       : (v == "text") ? 2
+                       : (v == "all") ? 3 : 0;  // 0 = auto
     } else if (prop == "transition") {
         // Shorthand: property duration timing-function delay
         // Simplified: extract duration (first value with s/ms) and property name.
@@ -1741,13 +1801,95 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "animation-iteration-count" || prop == "animation-direction"
             || prop == "animation-fill-mode" || prop == "animation-play-state") {
         // Animation properties — parsed but no visual effect yet.
+    } else if (prop == "filter") {
+        // Parse filter functions: blur(), brightness(), contrast(), grayscale(), opacity(), saturate()
+        std::string v = sLower(val);
+        out.filterSet = true;
+        // Extract blur
+        size_t blurPos = v.find("blur(");
+        if (blurPos != std::string::npos) {
+            size_t endPos = v.find(")", blurPos);
+            if (endPos != std::string::npos) {
+                std::string blurVal = v.substr(blurPos + 5, endPos - blurPos - 5);
+                out.filterBlur = ParseLength(blurVal);
+            }
+        }
+        // Extract brightness
+        size_t brightPos = v.find("brightness(");
+        if (brightPos != std::string::npos) {
+            size_t endPos = v.find(")", brightPos);
+            if (endPos != std::string::npos) {
+                try { out.filterBrightness = std::stof(v.substr(brightPos + 11, endPos - brightPos - 11)); } catch (...) {}
+            }
+        }
+        // Extract contrast
+        size_t contrastPos = v.find("contrast(");
+        if (contrastPos != std::string::npos) {
+            size_t endPos = v.find(")", contrastPos);
+            if (endPos != std::string::npos) {
+                try { out.filterContrast = std::stof(v.substr(contrastPos + 9, endPos - contrastPos - 9)); } catch (...) {}
+            }
+        }
+        // Extract grayscale
+        size_t grayPos = v.find("grayscale(");
+        if (grayPos != std::string::npos) {
+            size_t endPos = v.find(")", grayPos);
+            if (endPos != std::string::npos) {
+                try { out.filterGrayscale = std::stof(v.substr(grayPos + 10, endPos - grayPos - 10)); } catch (...) {}
+            }
+        }
+        // Extract saturate
+        size_t satPos = v.find("saturate(");
+        if (satPos != std::string::npos) {
+            size_t endPos = v.find(")", satPos);
+            if (endPos != std::string::npos) {
+                try { out.filterSaturate = std::stof(v.substr(satPos + 9, endPos - satPos - 9)); } catch (...) {}
+            }
+        }
+    } else if (prop == "backdrop-filter") {
+        // Simplified: only parse blur for now
+        std::string v = sLower(val);
+        size_t blurPos = v.find("blur(");
+        if (blurPos != std::string::npos) {
+            size_t endPos = v.find(")", blurPos);
+            if (endPos != std::string::npos) {
+                std::string blurVal = v.substr(blurPos + 5, endPos - blurPos - 5);
+                out.backdropBlur = ParseLength(blurVal);
+                out.backdropFilterSet = true;
+            }
+        }
+    } else if (prop == "line-clamp" || prop == "-webkit-line-clamp") {
+        try {
+            int lines = std::stoi(sTrim(val));
+            if (lines > 0) {
+                out.lineClamp = lines;
+                out.lineClampSet = true;
+            }
+        } catch (...) {}
+    } else if (prop == "scroll-behavior") {
+        std::string v = sLower(sTrim(val));
+        out.scrollBehaviorSet = true;
+        out.scrollBehavior = (v == "smooth") ? 1 : 0;  // 0 = auto
+    } else if (prop == "white-space") {
+        std::string v = sLower(sTrim(val));
+        out.whiteSpaceModeSet = true;
+        if (v == "nowrap") out.whiteSpaceMode = 1;
+        else if (v == "pre") out.whiteSpaceMode = 2;
+        else if (v == "pre-wrap") out.whiteSpaceMode = 3;
+        else if (v == "pre-line") out.whiteSpaceMode = 4;
+        else if (v == "break-spaces") out.whiteSpaceMode = 5;
+        else out.whiteSpaceMode = 0;  // normal
+        // Also set legacy flags for backward compatibility
+        out.whiteSpaceSet = true;
+        out.whiteSpaceNowrap = (out.whiteSpaceMode == 1);
+        out.whiteSpacePre = (out.whiteSpaceMode == 2);
     } else if (prop == "will-change" || prop == "contain" || prop == "isolation"
-            || prop == "mix-blend-mode" || prop == "filter" || prop == "backdrop-filter"
+            || prop == "mix-blend-mode"
             || prop == "clip-path" || prop == "mask" || prop == "mask-image"
             || prop == "appearance" || prop == "-webkit-appearance" || prop == "-moz-appearance"
             || prop == "resize" || prop == "direction" || prop == "unicode-bidi"
             || prop == "writing-mode" || prop == "accent-color" || prop == "caret-color"
-            || prop == "scroll-behavior" || prop == "overscroll-behavior"
+            || prop == "overscroll-behavior"
             || prop == "touch-action" || prop == "backface-visibility"
             || prop == "-webkit-font-smoothing" || prop == "-moz-osx-font-smoothing"
             || prop == "-webkit-tap-highlight-color" || prop == "-webkit-text-size-adjust"
@@ -1757,7 +1899,7 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "text-size-adjust" || prop == "tab-size"
             || prop == "columns"
             || prop == "place-items" || prop == "place-content"
-            || prop == "grid-area" || prop == "grid-auto-flow" || prop == "grid-auto-rows"
+            || prop == "grid-area" || prop == "grid-auto-rows"
             || prop == "grid-auto-columns"
             || prop == "order" || prop == "counter-reset" || prop == "counter-increment"
             || prop == "quotes" || prop == "hyphens") {
