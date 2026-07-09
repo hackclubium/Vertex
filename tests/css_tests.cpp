@@ -127,6 +127,17 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><p id=\"target\"></p></body></html>");
+        auto* node = FindElementById(dom.get(), "target");
+        auto sheet = ParseStylesheet("#target { background: rgb(10 20 30 / 40%); }");
+        std::string actual = node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        ExpectEqual("css/color/background-modern-rgb",
+            actual,
+            "bg=0.0392157,0.0784314,0.117647,0.4 \n",
+            result);
+    }
+
+    {
         auto html = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.in.html");
         auto css = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.in.css");
         auto expected = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.expected.txt");

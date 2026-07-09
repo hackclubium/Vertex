@@ -961,6 +961,8 @@ static void ApplyDeclaration(const std::string& prop,
                 if (tl == "repeat")    { repeat = 0; continue; }
                 if (tl == "repeat-x")  { repeat = 1; continue; }
                 if (tl == "repeat-y")  { repeat = 2; continue; }
+                CssColor c = ParseCssColor(tok);
+                if (c.valid) { bg = c; colorCount++; continue; }
                 if (afterSlash || tl == "cover" || tl == "contain") {
                     sizeStr += (sizeStr.empty() ? "" : " ") + tl; continue;
                 }
@@ -974,9 +976,7 @@ static void ApplyDeclaration(const std::string& prop,
                     || tl == "content-box");
                 if (tl == "transparent") { bg = {true,0,0,0,0}; colorCount++; }
                 else if (!keyword) {
-                    CssColor c = ParseCssColor(tok);
-                    if (c.valid) { bg = c; colorCount++; }
-                    else invalid = true;   // unknown token (e.g. a second colour name)
+                    invalid = true;   // unknown token (e.g. a second colour name)
                 }
             }
         }
