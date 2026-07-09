@@ -42,7 +42,7 @@ experimental browser:
 | Updates | GitHub release checking, background portable download, helper-assisted install with `F12` |
 | Performance | Cached resources, cached stylesheets, cached selector parsing, dirty layout paths, hover fast paths |
 | Profile | Per-user storage for settings, history, bookmarks, downloads, cookies, local storage, and session restore |
-| Testing | Subsystem test suites for HTML, CSS, layout, paint, JS, and network |
+| Testing | Subsystem test suites for HTML, CSS, layout, paint, JS, network, and codec |
 
 It is still early. Some pages will look wrong, some JavaScript will hit unimplemented
 APIs, and layout is still growing. Each broken page drives new engine work.
@@ -191,6 +191,7 @@ build\Release\vertex-tests.exe layout
 build\Release\vertex-tests.exe paint
 build\Release\vertex-tests.exe js
 build\Release\vertex-tests.exe network
+build\Release\vertex-tests.exe codec
 build\Release\vertex-layout-engine-tests.exe
 ```
 
@@ -252,7 +253,7 @@ src/
 tools/
   dump_layout   offline layout inspection
   dump_js       offline JS execution
-tests/           subsystem and regression tests
+tests/      subsystem and regression tests
 ```
 
 ## Why Vertex Exists
