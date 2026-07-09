@@ -404,7 +404,8 @@ TestResult RunLayoutEngineTests() {
         sin.measure = &measure; sin.viewportW = 320.f; sin.viewportH = 480.f;
         auto sl = LayoutDocument(sin);
         auto* sticky = FindEngineBoxById(sl.get(), "sticky");
-        const bool positioned = sticky && sticky->style.positionMode == 1 && sticky->style.topSet;
+        const bool positioned = sticky && (sticky->style.positionMode == 1 || sticky->style.positionMode == 4)
+            && sticky->style.topSet;
         ExpectEqual("layout-engine/sticky-falls-back-to-relative",
             positioned ? "relative\n" : "static\n",
             "relative\n",

@@ -2190,7 +2190,7 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
 // ─── relative offset pass ────────────────────────────────────────────────────
 void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
     for (auto& k : box.kids) ApplyRelativeOffsets(E, *k);
-    if (box.style.positionMode == 1) {
+    if (box.style.positionMode == 1 || box.style.positionMode == 4) {
         float dx = 0, dy = 0;
         if (box.style.leftSet)       dx = E.px(box.style.left);
         else if (box.style.rightSet) dx = -E.px(box.style.right);
