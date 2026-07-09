@@ -71,8 +71,10 @@ public:
                 std::string aval = aeq != std::string::npos ? trim(attr.substr(aeq + 1)) : "";
 
                 if (aname == "domain") {
-                    c.domain = aval;
-                    if (!c.domain.empty() && c.domain[0] != '.') c.domain = "." + c.domain;
+                    std::string requested = toLower(aval);
+                    if (!requested.empty() && requested[0] != '.') requested = "." + requested;
+                    if (!domainMatches(domainFromUrl(requestUrl), requested)) return;
+                    c.domain = requested;
                 } else if (aname == "path") {
                     c.path = aval.empty() ? "/" : aval;
                 } else if (aname == "secure") {
@@ -142,12 +144,14 @@ public:
 
         std::string domain = domainFromUrl(url);
         std::string path = pathFromUrl(url);
+        bool isSecure = (url.rfind("https://", 0) == 0);
         time_t now = std::time(nullptr);
 
         std::string result;
         for (const auto& c : m_cookies) {
             if (c.httpOnly) continue;
             if (c.expires > 0 && c.expires < now) continue;
+            if (c.secure && !isSecure) continue;
             if (!domainMatches(domain, c.domain)) continue;
             if (!pathMatches(path, c.path)) continue;
 
@@ -216,6 +220,10 @@ private:
     }
 
     static bool pathMatches(const std::string& requestPath, const std::string& cookiePath) {
-        return requestPath.rfind(cookiePath, 0) == 0;
+        if (cookiePath.empty() || cookiePath == "/") return true;
+        if (requestPath == cookiePath) return true;
+        if (requestPath.rfind(cookiePath, 0) != 0) return false;
+        return cookiePath.back() == '/'
+            || (requestPath.size() > cookiePath.size() && requestPath[cookiePath.size()] == '/');
     }
 };
