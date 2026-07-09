@@ -56,7 +56,7 @@ public:
         c.name = trim(header.substr(0, eq));
         c.value = trim(header.substr(eq + 1, semi == std::string::npos ? std::string::npos : semi - eq - 1));
 
-        if (c.name.empty()) return;
+        if (c.name.empty() || hasCtl(c.name) || hasCtl(c.value) || c.name.find(';') != std::string::npos) return;
 
         // Parse attributes after the first semicolon.
         if (semi != std::string::npos) {
@@ -189,6 +189,12 @@ private:
     static std::string toLower(std::string s) {
         for (auto& c : s) c = (char)std::tolower((unsigned char)c);
         return s;
+    }
+
+    static bool hasCtl(const std::string& s) {
+        for (unsigned char c : s)
+            if (c < 0x20 || c == 0x7f) return true;
+        return false;
     }
 
     static std::string domainFromUrl(const std::string& url) {
