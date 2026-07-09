@@ -161,7 +161,7 @@ Requires only XCB development headers. No GTK, Cairo, Pango, or fontconfig -- Ve
 does its own windowing, rasterizing, text rendering, and `<canvas>` on Linux.
 
 ```sh
-sudo apt-get install -y build-essential cmake libxcb1-dev libcurl4-openssl-dev pkg-config
+sudo apt-get install -y build-essential cmake libxcb1-dev pkg-config
 cmake -B build
 cmake --build build
 ./build/Vertex

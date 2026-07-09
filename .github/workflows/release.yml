@@ -31,7 +31,7 @@ jobs:
 
       - name: Install Linux deps
         if: matrix.name == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev pkg-config
 
       - name: Install Windows packaging deps
         if: matrix.name == 'windows'

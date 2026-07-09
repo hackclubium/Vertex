@@ -1131,6 +1131,86 @@ static void registerConsole(VM& vm) {
     });
     addNative(vm, console, "dir", logFn("[JS dir] "));
     addNative(vm, console, "trace", logFn("[JS trace] "));
+    
+    // console.table - simplified table output
+    addNative(vm, console, "table", NATIVE("table") {
+        if (args.empty()) return JsValue::undefined();
+        fprintf(stderr, "[JS table]\n");
+        if (ARG(0).isObject() && ARG(0).asObject()->isArray()) {
+            auto* arr = ARG(0).asObject();
+            int len = arr->getProp("length").toInt32();
+            for (int i = 0; i < len && i < 100; i++) {
+                fprintf(stderr, "  %d: %s\n", i, arr->getProp(std::to_string(i)).toString().c_str());
+            }
+        } else if (ARG(0).isObject()) {
+            auto* obj = ARG(0).asObject();
+            for (auto& k : obj->ownEnumKeys()) {
+                fprintf(stderr, "  %s: %s\n", k.c_str(), obj->getProp(k).toString().c_str());
+            }
+        } else {
+            fprintf(stderr, "  %s\n", ARG_STR(0).c_str());
+        }
+        return JsValue::undefined();
+    });
+    
+    // console.time / console.timeEnd - simple timing
+    static std::unordered_map<std::string, std::chrono::steady_clock::time_point> timers;
+    addNative(vm, console, "time", NATIVE("time") {
+        std::string label = args.empty() ? "default" : ARG_STR(0);
+        timers[label] = std::chrono::steady_clock::now();
+        return JsValue::undefined();
+    });
+    addNative(vm, console, "timeEnd", NATIVE("timeEnd") {
+        std::string label = args.empty() ? "default" : ARG_STR(0);
+        auto it = timers.find(label);
+        if (it != timers.end()) {
+            auto duration = std::chrono::steady_clock::now() - it->second;
+            double ms = std::chrono::duration<double, std::milli>(duration).count();
+            fprintf(stderr, "[JS] %s: %.3fms\n", label.c_str(), ms);
+            timers.erase(it);
+        }
+        return JsValue::undefined();
+    });
+    
+    // console.count / console.countReset - count occurrences
+    static std::unordered_map<std::string, int> counters;
+    addNative(vm, console, "count", NATIVE("count") {
+        std::string label = args.empty() ? "default" : ARG_STR(0);
+        counters[label]++;
+        fprintf(stderr, "[JS] %s: %d\n", label.c_str(), counters[label]);
+        return JsValue::undefined();
+    });
+    addNative(vm, console, "countReset", NATIVE("countReset") {
+        std::string label = args.empty() ? "default" : ARG_STR(0);
+        counters[label] = 0;
+        return JsValue::undefined();
+    });
+    
+    // console.clear - clear console (just output newlines)
+    addNative(vm, console, "clear", NATIVE("clear") {
+        fprintf(stderr, "\n\n\n");
+        return JsValue::undefined();
+    });
+    
+    // console.group / console.groupEnd - group messages
+    static int groupDepth = 0;
+    addNative(vm, console, "group", NATIVE("group") {
+        std::string label = args.empty() ? "" : ARG_STR(0);
+        fprintf(stderr, "[JS group] %s\n", label.c_str());
+        groupDepth++;
+        return JsValue::undefined();
+    });
+    addNative(vm, console, "groupCollapsed", NATIVE("groupCollapsed") {
+        std::string label = args.empty() ? "" : ARG_STR(0);
+        fprintf(stderr, "[JS group] %s\n", label.c_str());
+        groupDepth++;
+        return JsValue::undefined();
+    });
+    addNative(vm, console, "groupEnd", NATIVE("groupEnd") {
+        if (groupDepth > 0) groupDepth--;
+        return JsValue::undefined();
+    });
+    
     vm.setGlobal("console", JsValue::object(console));
 }
 
@@ -1718,4 +1798,40 @@ void registerBuiltins(VM& vm) {
     registerMapSet(vm);
     registerDate(vm);
     registerRegExp(vm);
+    
+    // Crypto API - crypto.randomUUID() and crypto.getRandomValues()
+    auto* crypto = vm.gc().newObject(ObjKind::Plain);
+    addNative(vm, crypto, "randomUUID", NATIVE("randomUUID") {
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_int_distribution<> hex(0, 15);
+        static std::uniform_int_distribution<> variant(8, 11);
+        auto hexChar = [](int n) { return "0123456789abcdef"[n]; };
+        std::string uuid;
+        uuid.reserve(36);
+        for (int i = 0; i < 8; i++) uuid += hexChar(hex(gen));
+        uuid += '-';
+        for (int i = 0; i < 4; i++) uuid += hexChar(hex(gen));
+        uuid += '-';
+        uuid += '4';
+        for (int i = 0; i < 3; i++) uuid += hexChar(hex(gen));
+        uuid += '-';
+        uuid += hexChar(variant(gen));
+        for (int i = 0; i < 3; i++) uuid += hexChar(hex(gen));
+        uuid += '-';
+        for (int i = 0; i < 12; i++) uuid += hexChar(hex(gen));
+        return vm.str(uuid);
+    });
+    addNative(vm, crypto, "getRandomValues", NATIVE("getRandomValues") {
+        if (!ARG(0).isObject() || !ARG(0).asObject()->isArray()) return ARG(0);
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_int_distribution<> byte(0, 255);
+        auto* arr = ARG(0).asObject();
+        int len = arr->getProp("length").toInt32();
+        for (int i = 0; i < len && i < 65536; i++)
+            arr->setProp(std::to_string(i), JsValue::integer(byte(gen)));
+        return ARG(0);
+    });
+    vm.setGlobal("crypto", JsValue::object(crypto));
 }
