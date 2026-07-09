@@ -132,7 +132,23 @@ std::string HtmlTokenizer::decodeEntities(const std::string& raw) {
     for (size_t i = 0; i < raw.size(); ) {
         if (raw[i] != '&') { out += raw[i++]; continue; }
         size_t semi = raw.find(';', i + 1);
-        if (semi == std::string::npos) { out += raw[i++]; continue; }
+        if (semi == std::string::npos) {
+            size_t bestLen = 0;
+            unsigned long bestCp = 0;
+            for (const auto& [name, cp] : namedEntities()) {
+                if (raw.compare(i + 1, name.size(), name) == 0 && name.size() > bestLen) {
+                    bestLen = name.size();
+                    bestCp = cp;
+                }
+            }
+            if (bestLen > 0) {
+                out += utf8(bestCp);
+                i += bestLen + 1;
+                continue;
+            }
+            out += raw[i++];
+            continue;
+        }
         std::string ent = raw.substr(i + 1, semi - i - 1);
         auto named = namedEntities().find(ent);
         if (named != namedEntities().end()) {

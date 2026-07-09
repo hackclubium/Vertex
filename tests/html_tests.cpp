@@ -56,6 +56,17 @@ TestResult RunHtmlTests() {
     }
 
     {
+        std::string actual = SerializeDom(ParseHtml("<p>A&nbsp B&amp C</p>"));
+        std::string expected =
+            "#document\n"
+            "  <html>\n"
+            "    <body>\n"
+            "      <p>\n"
+            "        #text \"A" + std::string("\xC2\xA0") + " B& C\"\n";
+        ExpectEqual("html/dom/named-entities-without-semicolon", actual, expected, result);
+    }
+
+    {
         std::string actual = SerializeDom(ParseHtml(
             "<html><body><div class=\"picture\"><p><table><tr><td></table>"
             "<p class=\"bad\"><blockquote class=\"first one\"></blockquote>"
