@@ -648,17 +648,82 @@ CssColor ParseCssColor(const std::string& raw) {
         return out;
     }
 
-    if (s.substr(0,4) == "rgb(") {
-        size_t end = s.find(')');
+    if (s.rfind("rgb(", 0) == 0 || s.rfind("rgba(", 0) == 0) {
+        size_t open = s.find('('), end = s.find(')', open + 1);
         if (end != std::string::npos) {
-            std::istringstream ss(s.substr(4, end-4));
-            std::string tok; std::vector<float> v;
-            while (std::getline(ss, tok, ','))
-                try { v.push_back(std::stof(sTrim(tok))); } catch (...) {}
-            if (v.size() >= 3) {
-                out.r=v[0]/255.f; out.g=v[1]/255.f; out.b=v[2]/255.f;
-                out.a = v.size()>=4 ? v[3] : 1.f;
+            std::string inner = s.substr(open + 1, end - open - 1);
+            std::replace(inner.begin(), inner.end(), '/', ' ');
+            std::replace(inner.begin(), inner.end(), ',', ' ');
+            std::istringstream ss(inner);
+            std::string tok;
+            std::vector<std::string> toks;
+            while (ss >> tok) toks.push_back(tok);
+            auto rgbValue = [](const std::string& tok, float& out) {
+                try {
+                    if (!tok.empty() && tok.back() == '%') out = std::stof(tok.substr(0, tok.size() - 1)) / 100.f;
+                    else out = std::stof(tok) / 255.f;
+                    out = std::max(0.f, std::min(1.f, out));
+                    return true;
+                } catch (...) { return false; }
+            };
+            auto alphaValue = [](const std::string& tok, float& out) {
+                try {
+                    if (!tok.empty() && tok.back() == '%') out = std::stof(tok.substr(0, tok.size() - 1)) / 100.f;
+                    else out = std::stof(tok);
+                    out = std::max(0.f, std::min(1.f, out));
+                    return true;
+                } catch (...) { return false; }
+            };
+            if (toks.size() >= 3
+                && rgbValue(toks[0], out.r)
+                && rgbValue(toks[1], out.g)
+                && rgbValue(toks[2], out.b)) {
+                out.a = 1.f;
+                if (toks.size() >= 4 && !alphaValue(toks[3], out.a)) return out;
                 out.valid = true;
+            }
+        }
+    } else if (s.rfind("hsl(", 0) == 0 || s.rfind("hsla(", 0) == 0) {
+        size_t open = s.find('('), end = s.find(')', open + 1);
+        if (end != std::string::npos) {
+            std::string inner = s.substr(open + 1, end - open - 1);
+            std::replace(inner.begin(), inner.end(), '/', ' ');
+            std::replace(inner.begin(), inner.end(), ',', ' ');
+            std::istringstream ss(inner);
+            std::string tok;
+            std::vector<std::string> toks;
+            while (ss >> tok) toks.push_back(tok);
+            auto pctValue = [](const std::string& tok, float& out) {
+                if (tok.empty() || tok.back() != '%') return false;
+                try { out = std::max(0.f, std::min(1.f, std::stof(tok.substr(0, tok.size() - 1)) / 100.f)); return true; }
+                catch (...) { return false; }
+            };
+            auto alphaValue = [](const std::string& tok, float& out) {
+                try {
+                    if (!tok.empty() && tok.back() == '%') out = std::stof(tok.substr(0, tok.size() - 1)) / 100.f;
+                    else out = std::stof(tok);
+                    out = std::max(0.f, std::min(1.f, out));
+                    return true;
+                } catch (...) { return false; }
+            };
+            if (toks.size() >= 3) {
+                float h = 0, sat = 0, light = 0;
+                try { h = std::stof(toks[0]); } catch (...) { return out; }
+                if (!pctValue(toks[1], sat) || !pctValue(toks[2], light)) return out;
+                h = std::fmod(h, 360.f);
+                if (h < 0) h += 360.f;
+                float c = (1.f - std::fabs(2.f * light - 1.f)) * sat;
+                float x = c * (1.f - std::fabs(std::fmod(h / 60.f, 2.f) - 1.f));
+                float m = light - c / 2.f;
+                float r = 0, g = 0, b = 0;
+                if (h < 60.f) { r = c; g = x; }
+                else if (h < 120.f) { r = x; g = c; }
+                else if (h < 180.f) { g = c; b = x; }
+                else if (h < 240.f) { g = x; b = c; }
+                else if (h < 300.f) { r = x; b = c; }
+                else { r = c; b = x; }
+                out = {true, r + m, g + m, b + m, 1.f};
+                if (toks.size() >= 4 && !alphaValue(toks[3], out.a)) return CssColor{};
             }
         }
     }
@@ -1325,8 +1390,8 @@ static void ApplyDeclaration(const std::string& prop,
             out.borderTopWidth = widths[0]; out.borderRightWidth = widths[1]; out.borderBottomWidth = widths[2]; out.borderLeftWidth = widths[3];
         }
     } else if (prop == "border-color") {
-        std::istringstream vs(val); std::vector<CssColor> colors; std::string tok;
-        while (vs >> tok) { CssColor c = ParseCssColor(tok); if (c.valid) colors.push_back(c); }
+        std::vector<CssColor> colors;
+        for (auto& tok : SplitCssWhitespace(val)) { CssColor c = ParseCssColor(tok); if (c.valid) colors.push_back(c); }
         if (colors.size() == 1) out.borderColor = colors[0];
         else if (colors.size() == 2) {
             out.borderTopColor = out.borderBottomColor = colors[0];
