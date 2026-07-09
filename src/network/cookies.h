@@ -163,6 +163,7 @@ public:
 
     // Set a cookie from document.cookie = "name=value; ..."
     void setFromJS(const std::string& cookieStr, const std::string& url) {
+        if (toLower(cookieStr).find("httponly") != std::string::npos) return;
         handleSetCookie(cookieStr, url);
     }
 
