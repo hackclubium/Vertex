@@ -405,6 +405,7 @@ TestResult RunNetworkTests() {
         CookieJar::instance().handleSetCookie("vertex_secure=1; Secure; Path=/", "https://example.test/app/start");
         CookieJar::instance().handleSetCookie("vertex_default=1", "https://example.test/app/start");
         CookieJar::instance().setFromJS("vertex_js_http_only=1; HttpOnly; Path=/", "https://example.test/app/start");
+        CookieJar::instance().setFromJS("vertex_js_secure_http=1; Secure; Path=/", "http://example.test/app/start");
         std::string actual;
         actual += CookieJar::instance().cookieHeader("https://example.test/app/page") + "\n";
         actual += CookieJar::instance().cookieHeader("http://example.test/application/page") + "\n";

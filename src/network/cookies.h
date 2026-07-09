@@ -163,7 +163,9 @@ public:
 
     // Set a cookie from document.cookie = "name=value; ..."
     void setFromJS(const std::string& cookieStr, const std::string& url) {
-        if (toLower(cookieStr).find("httponly") != std::string::npos) return;
+        std::string low = toLower(cookieStr);
+        if (low.find("httponly") != std::string::npos) return;
+        if (low.find("secure") != std::string::npos && url.rfind("https://", 0) != 0) return;
         handleSetCookie(cookieStr, url);
     }
 
