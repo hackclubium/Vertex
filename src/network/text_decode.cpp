@@ -127,9 +127,8 @@ std::string DecodeTextToUtf8(const std::string& bytes,
         return DecodeUtf16(bytes, true);
     if (charset == "utf-16be")
         return DecodeUtf16(bytes, false);
-    if (charset == "windows-1252" || charset == "cp1252")
+    if (charset == "windows-1252" || charset == "cp1252"
+        || charset == "iso-8859-1" || charset == "latin1")
         return DecodeLatin(bytes, true);
-    if (charset == "iso-8859-1" || charset == "latin1")
-        return DecodeLatin(bytes, false);
     return bytes;  // Unknown encoding: preserve bytes rather than corrupt them.
 }

@@ -393,9 +393,10 @@ TestResult RunNetworkTests() {
         actual += DecodeTextToUtf8(cp1252, "text/html; charset=windows-1252") + "\n";
         actual += DecodeTextToUtf8(metaCp1252, "text/html", true) + "\n";
         actual += DecodeTextToUtf8("\xEF\xBB\xBFhello", "text/html") + "\n";
+        actual += DecodeTextToUtf8("\x93quote\x94", "text/html; charset=iso-8859-1") + "\n";
         ExpectEqual("network/text-decode/headers-meta-and-bom",
             actual,
-            "caf\xC3\xA9\n<meta charset=\"windows-1252\">caf\xC3\xA9\nhello\n",
+            "caf\xC3\xA9\n<meta charset=\"windows-1252\">caf\xC3\xA9\nhello\n\xE2\x80\x9Cquote\xE2\x80\x9D\n",
             result);
     }
 
