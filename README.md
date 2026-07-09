@@ -249,10 +249,10 @@ src/
   paint/        display-list pieces
   platform/     native shells and shared browser chrome
   render/       painting, SVG, images, fonts
-  test/         subsystem and regression tests
 tools/
   dump_layout   offline layout inspection
   dump_js       offline JS execution
+tests/           subsystem and regression tests
 ```
 
 ## Why Vertex Exists

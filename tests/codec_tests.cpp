@@ -1,4 +1,4 @@
-#include "test/fixture.h"
+#include "fixture.h"
 #include "codec/inflate.h"
 #include "codec/png.h"
 #include "codec/jpeg.h"

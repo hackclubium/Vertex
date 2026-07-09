@@ -1,4 +1,4 @@
-#include "test/fixture.h"
+#include "fixture.h"
 
 #include "js/compiler.h"
 #include "js/engine.h"

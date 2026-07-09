@@ -1,4 +1,4 @@
-#include "test/fixture.h"
+#include "fixture.h"
 
 #include "css/stylesheet.h"
 #include "html/parser.h"

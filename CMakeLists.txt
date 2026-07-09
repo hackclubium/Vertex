@@ -193,18 +193,18 @@ add_executable(VertexUpdater
 )
 
 add_executable(vertex-tests
-    src/test/main.cpp
-    src/test/fixture.cpp
-    src/test/html_tests.cpp
-    src/test/css_tests.cpp
-    src/test/layout_tests.cpp
-    src/test/paint_tests.cpp
-    src/test/js_tests.cpp
-    src/test/network_tests.cpp
-    src/test/codec_tests.cpp
+    tests/main.cpp
+    tests/fixture.cpp
+    tests/html_tests.cpp
+    tests/css_tests.cpp
+    tests/layout_tests.cpp
+    tests/paint_tests.cpp
+    tests/js_tests.cpp
+    tests/network_tests.cpp
+    tests/codec_tests.cpp
 )
 
-target_include_directories(vertex-tests PRIVATE src)
+target_include_directories(vertex-tests PRIVATE src tests)
 
 target_link_libraries(vertex-tests PRIVATE
     vertex_engine
@@ -217,11 +217,11 @@ if (WIN32)
 endif()
 
 add_executable(vertex-layout-engine-tests
-    src/test/layout_engine_main.cpp
-    src/test/fixture.cpp
-    src/test/layout_engine_tests.cpp
+    tests/layout_engine_main.cpp
+    tests/fixture.cpp
+    tests/layout_engine_tests.cpp
 )
-target_include_directories(vertex-layout-engine-tests PRIVATE src)
+target_include_directories(vertex-layout-engine-tests PRIVATE src tests)
 target_link_libraries(vertex-layout-engine-tests PRIVATE vertex_engine)
 
 add_executable(dump_layout tools/dump_layout.cpp)

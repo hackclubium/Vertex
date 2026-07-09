@@ -1,4 +1,4 @@
-#include "test/fixture.h"
+#include "fixture.h"
 
 #include "network/fetcher.h"
 #include "network/resource_cache.h"
