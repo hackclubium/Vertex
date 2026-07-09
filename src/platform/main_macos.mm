@@ -420,6 +420,39 @@ static Stylesheet CollectCSS(const Node* root) {
     }
 }
 
+- (void)copyLinkAction:(NSMenuItem*)item {
+    NSString* href = [item representedObject];
+    if (!href) return;
+    NSPasteboard* pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    [pb writeObjects:@[href]];
+}
+- (void)backAction:(id)sender { g_chrome.back(); }
+- (void)forwardAction:(id)sender { g_chrome.forward(); }
+- (void)reloadAction:(id)sender { g_chrome.reload(); }
+
+- (void)rightMouseDown:(NSEvent*)event {
+    NSPoint pt = [self convertPoint:[event locationInWindow] fromView:nil];
+    std::string href;
+    if (g_layoutRoot && !g_tabs.empty()) href = HitTestLink((float)pt.x, (float)pt.y);
+
+    NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+    if (!href.empty()) {
+        NSMenuItem* copy = [menu addItemWithTitle:@"Copy Link" action:@selector(copyLinkAction:) keyEquivalent:@""];
+        [copy setTarget:self];
+        [copy setRepresentedObject:[NSString stringWithUTF8String:href.c_str()]];
+        [menu addItem:[NSMenuItem separatorItem]];
+    }
+    NSMenuItem* back = [menu addItemWithTitle:@"Back" action:@selector(backAction:) keyEquivalent:@""];
+    [back setTarget:self];
+    NSMenuItem* fwd = [menu addItemWithTitle:@"Forward" action:@selector(forwardAction:) keyEquivalent:@""];
+    [fwd setTarget:self];
+    NSMenuItem* reload = [menu addItemWithTitle:@"Reload" action:@selector(reloadAction:) keyEquivalent:@""];
+    [reload setTarget:self];
+
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+}
+
 - (void)mouseMoved:(NSEvent*)event {
     NSPoint pt = [self convertPoint:[event locationInWindow] fromView:nil];
     std::string href;

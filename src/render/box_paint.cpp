@@ -68,7 +68,7 @@ static PaintYExtent ComputePaintYExtent(const LayoutBox& root) {
         stack.pop_back();
         if (!box || box->style.isDisplayNone()) continue;
 
-        if (box->style.positionMode == 3 || box->style.transformSet) {
+        if (box->style.positionMode == 3 || box->style.positionMode == 4 || box->style.transformSet) {
             extent.safe = false;
             return extent;
         }
@@ -108,7 +108,7 @@ static bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
                                          float topInset,
                                          float dirtyTop,
                                          float dirtyBottom) {
-    if (box.style.positionMode == 3 || box.style.transformSet) return false;
+    if (box.style.positionMode == 3 || box.style.positionMode == 4 || box.style.transformSet) return false;
     if (box.kind == BoxKind::Inline || box.kind == BoxKind::Text || box.kind == BoxKind::Break)
         return false;
 
@@ -657,6 +657,14 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     if (box.style.isDisplayNone()) return;
     bool fixed = underFixed || box.style.positionMode == 3;
     float effScroll = fixed ? 0.f : scrollY;
+    // position:sticky (top-only, viewport-relative approximation): once the
+    // box's natural screen Y would scroll above `top`, pin it there and shift
+    // its subtree by the same delta (mirrors how `fixed` forces effScroll=0).
+    if (!fixed && box.style.positionMode == 4 && box.style.topSet) {
+        float minY = topInset + box.style.top * m_zoom;
+        float natural = box.y - scrollY + topInset;
+        if (natural < minY) effScroll = box.y + topInset - minY;
+    }
 
     bool hidden = (box.style.visibilitySet && box.style.visibilityHidden)
                 || (box.style.opacitySet && box.style.opacity < 0.01f);
@@ -734,7 +742,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     bool simpleInFlowChildren = true;
     for (auto& kptr : box.kids) {
         const LayoutBox* k = kptr.get();
-        if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1
+        if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1 || k->style.positionMode == 4
             || k->style.zIndexSet) {
             simpleInFlowChildren = false;
             break;
@@ -776,8 +784,8 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
             else posZ.push_back(k);
         } else if (k->isFloat()) {
             floats.push_back(k);
-        } else if (k->style.positionMode == 1) {
-            // relative: in normal flow but paints with positioned descendants on top
+        } else if (k->style.positionMode == 1 || k->style.positionMode == 4) {
+            // relative/sticky: in normal flow but paints with positioned descendants on top
             posZ.push_back(k);
         } else {
             inflow.push_back(k);

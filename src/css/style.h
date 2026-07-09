@@ -131,7 +131,7 @@ struct ComputedStyle {
     int      floatMode    = 0;       // 0=none, 1=left, 2=right
     bool     floatInherit = false;
     int      clearMode    = 0;       // 0=none, 1=left, 2=right, 3=both
-    int      positionMode = 0;       // 0=static, 1=relative, 2=absolute, 3=fixed
+    int      positionMode = 0;       // 0=static, 1=relative, 2=absolute, 3=fixed, 4=sticky
     int      zIndex       = 0;
     bool     zIndexSet    = false;
     bool     overflowHidden = false;   // legacy: true if hidden/auto/scroll

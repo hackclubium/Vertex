@@ -1677,7 +1677,7 @@ static void ApplyDeclaration(const std::string& prop,
         if      (v == "relative") out.positionMode = 1;
         else if (v == "absolute") out.positionMode = 2;
         else if (v == "fixed")    out.positionMode = 3;
-        else if (v == "sticky")   out.positionMode = 1; // approximate as relative until sticky scrolling exists
+        else if (v == "sticky")   out.positionMode = 4;
         else                      out.positionMode = 0;
     } else if (prop == "z-index") {
         std::string v = sLower(sTrim(val));
@@ -3418,6 +3418,7 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.positionMode == 1) out << "position=relative ";
     if (style.positionMode == 2) out << "position=absolute ";
     if (style.positionMode == 3) out << "position=fixed ";
+    if (style.positionMode == 4) out << "position=sticky ";
     if (style.zIndexSet) out << "zIndex=" << style.zIndex << " ";
     if (style.overflowHidden)    out << "overflow=hidden ";
     if (style.topSet)    out << "top="    << style.top    << " ";

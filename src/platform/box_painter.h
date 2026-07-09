@@ -31,6 +31,7 @@ struct PaintState {
     IPlatformRenderer* r = nullptr;
     float scrollY = 0;
     float topInset = 0;
+    float zoom = 1.f;
     std::string baseUrl;
     std::map<std::string, PlatBitmap>* images = nullptr;
     // <canvas> elements' backing drawing surfaces, keyed by Node* (not URL —
@@ -62,7 +63,7 @@ inline PaintYExtent ComputePaintYExtent(const LayoutBox& root) {
         stack.pop_back();
         if (!box || box->style.isDisplayNone()) continue;
 
-        if (box->style.positionMode == 3 || box->style.transformSet) {
+        if (box->style.positionMode == 3 || box->style.positionMode == 4 || box->style.transformSet) {
             extent.safe = false;
             return extent;
         }
@@ -101,7 +102,7 @@ inline bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
                                          float scrollY,
                                          float topInset,
                                          float viewportH) {
-    if (box.style.positionMode == 3 || box.style.transformSet) return false;
+    if (box.style.positionMode == 3 || box.style.positionMode == 4 || box.style.transformSet) return false;
     if (box.kind == BoxKind::Inline || box.kind == BoxKind::Text || box.kind == BoxKind::Break)
         return false;
 
@@ -485,6 +486,11 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     float savedScrollForOverflow = ps.scrollY;
     if (box.style.overflowHidden && !hidden) {
         float effScroll = box.style.positionMode == 3 ? 0.f : ps.scrollY;
+        if (box.style.positionMode == 4 && box.style.topSet) {
+            float minY = ps.topInset + box.style.top * ps.zoom;
+            float natural = box.y - ps.scrollY + ps.topInset;
+            if (natural < minY) effScroll = box.y + ps.topInset - minY;
+        }
         float cx = box.x, cy = box.y - effScroll + ps.topInset;
         float cw = box.borderBoxW(), ch = box.borderBoxH();
         if (cw > 0 && ch > 0) {
@@ -510,7 +516,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     // Children (simplified stacking: in-flow, then floats, then positioned)
     bool simpleInFlowChildren = true;
     for (auto& k : box.kids) {
-        if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1
+        if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1 || k->style.positionMode == 4
             || k->style.zIndexSet) {
             simpleInFlowChildren = false;
             break;
@@ -569,7 +575,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
             else posZ.push_back(k);
         } else if (k->isFloat()) {
             floats.push_back(k);
-        } else if (k->style.positionMode == 1) {
+        } else if (k->style.positionMode == 1 || k->style.positionMode == 4) {
             posZ.push_back(k);
         } else {
             inflow.push_back(k);

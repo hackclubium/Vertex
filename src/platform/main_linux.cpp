@@ -184,6 +184,22 @@ static void SetWindowTitle(const std::string& t) {
     xcb_flush(g_conn);
 }
 
+// ── clipboard (ICCCM selection ownership) ─────────────────────────────────
+// X11 has no "set clipboard" call: to publish text you become the owner of
+// the CLIPBOARD selection, then answer XCB_SELECTION_REQUEST events (fired
+// when another app pastes) by writing g_clipboardText into the requestor's
+// property. See HandleEvent's XCB_SELECTION_REQUEST case.
+static std::string g_clipboardText;
+
+static void SetClipboardText(const std::string& text) {
+    if (!g_conn || !g_win) return;
+    g_clipboardText = text;
+    xcb_atom_t clipboard = InternAtom(g_conn, "CLIPBOARD");
+    xcb_set_selection_owner(g_conn, g_win, clipboard, XCB_CURRENT_TIME);
+    xcb_set_selection_owner(g_conn, g_win, XCB_ATOM_PRIMARY, XCB_CURRENT_TIME);
+    xcb_flush(g_conn);
+}
+
 // ── dark-theme detection (XSETTINGS protocol) + window icon ──────────────────
 // GTK read "gtk-application-prefer-dark-theme" via its own GObject property,
 // which came from the desktop environment's XSETTINGS daemon under the hood.
@@ -800,6 +816,7 @@ static void DoDraw() {
             ps.r = g_renderer.get();
             ps.scrollY = tab.scrollY;
             ps.topInset = (float)ToolbarHeight;
+            ps.zoom = g_zoom;
             ps.baseUrl = tab.page->url;
             ps.images = &g_images;
             g_canvasBitmaps.clear();
@@ -1059,7 +1076,7 @@ static void OnButtonPress(uint8_t button, int x, int y) {
                     int newIdx = g_chrome.newTab(g_contextMenu.linkUrl);
                     g_chrome.switchTab(newIdx);
                 }
-                // Copy Link - skipped for now (needs clipboard support)
+                else if (itemIdx == 2) { SetClipboardText(g_contextMenu.linkUrl); }
             } else {
                 if (itemIdx == 0) { g_chrome.back(); }
                 else if (itemIdx == 1) { g_chrome.forward(); }
@@ -1292,6 +1309,26 @@ static void HandleEvent(xcb_generic_event_t* ev) {
     case XCB_CLIENT_MESSAGE: {
         auto* cm = (xcb_client_message_event_t*)ev;
         if (cm->data.data32[0] == g_wmDeleteWindow) g_running = false;
+        break;
+    }
+    case XCB_SELECTION_REQUEST: {
+        auto* sr = (xcb_selection_request_event_t*)ev;
+        xcb_atom_t utf8 = InternAtom(g_conn, "UTF8_STRING");
+        xcb_selection_notify_event_t notify{};
+        notify.response_type = XCB_SELECTION_NOTIFY;
+        notify.time = sr->time;
+        notify.requestor = sr->requestor;
+        notify.selection = sr->selection;
+        notify.target = sr->target;
+        notify.property = XCB_ATOM_NONE;
+        if (sr->target == utf8 || sr->target == XCB_ATOM_STRING) {
+            xcb_change_property(g_conn, XCB_PROP_MODE_REPLACE, sr->requestor,
+                sr->property, sr->target, 8,
+                (uint32_t)g_clipboardText.size(), g_clipboardText.c_str());
+            notify.property = sr->property;
+        }
+        xcb_send_event(g_conn, 0, sr->requestor, XCB_EVENT_MASK_NO_EVENT, (const char*)&notify);
+        xcb_flush(g_conn);
         break;
     }
     case XCB_BUTTON_PRESS: {

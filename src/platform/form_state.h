@@ -132,7 +132,7 @@ struct FormState {
                     else posZ.push_back(k);
                 } else if (k->isFloat()) {
                     floats.push_back(k);
-                } else if (k->style.positionMode == 1) {
+                } else if ((k->style.positionMode == 1 || k->style.positionMode == 4)) {
                     posZ.push_back(k);
                 } else {
                     inflow.push_back(k);
@@ -166,7 +166,7 @@ struct FormState {
                 for (const LayoutBox* k : ordered) walk(*k);
             } else if (!box.style.overflowHidden) {
                 for (const LayoutBox* k : ordered) {
-                    if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1)
+                    if (k->isOutOfFlow() || k->isFloat() || (k->style.positionMode == 1 || k->style.positionMode == 4))
                         walk(*k);
                 }
             }
@@ -189,7 +189,7 @@ struct FormState {
                     else posZ.push_back(k);
                 } else if (k->isFloat()) {
                     floats.push_back(k);
-                } else if (k->style.positionMode == 1) {
+                } else if ((k->style.positionMode == 1 || k->style.positionMode == 4)) {
                     posZ.push_back(k);
                 } else {
                     inflow.push_back(k);
@@ -224,7 +224,7 @@ struct FormState {
                 for (const LayoutBox* k : ordered) walk(*k);
             } else if (!box.style.overflowHidden) {
                 for (const LayoutBox* k : ordered) {
-                    if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1)
+                    if (k->isOutOfFlow() || k->isFloat() || (k->style.positionMode == 1 || k->style.positionMode == 4))
                         walk(*k);
                 }
             }

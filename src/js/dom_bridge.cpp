@@ -406,6 +406,7 @@ static std::string positionName(const ComputedStyle& s) {
         case 1: return "relative";
         case 2: return "absolute";
         case 3: return "fixed";
+        case 4: return "sticky";
         default: return "static";
     }
 }
