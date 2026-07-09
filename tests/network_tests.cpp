@@ -403,15 +403,18 @@ TestResult RunNetworkTests() {
         CookieJar::instance().handleSetCookie("vertex_ok=1; Domain=example.test; Path=/app", "https://example.test/app/start");
         CookieJar::instance().handleSetCookie("vertex_bad=1; Domain=evil.test; Path=/", "https://example.test/app/start");
         CookieJar::instance().handleSetCookie("vertex_secure=1; Secure; Path=/", "https://example.test/app/start");
+        CookieJar::instance().handleSetCookie("vertex_default=1", "https://example.test/app/start");
         std::string actual;
         actual += CookieJar::instance().cookieHeader("https://example.test/app/page") + "\n";
         actual += CookieJar::instance().cookieHeader("http://example.test/application/page") + "\n";
+        actual += CookieJar::instance().cookieHeader("https://example.test/other/page") + "\n";
         actual += CookieJar::instance().documentCookies("http://example.test/app/page") + "\n";
         ExpectEqual("network/cookies/domain-path-and-secure-boundaries",
             actual,
-            "vertex_ok=1; vertex_secure=1\n"
+            "vertex_ok=1; vertex_secure=1; vertex_default=1\n"
             "\n"
-            "vertex_ok=1\n",
+            "vertex_secure=1\n"
+            "vertex_ok=1; vertex_default=1\n",
             result);
     }
 

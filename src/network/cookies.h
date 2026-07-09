@@ -43,10 +43,10 @@ public:
 
         // Parse: name=value; Path=/; Domain=.example.com; Secure; HttpOnly; Max-Age=3600
         Cookie c;
-        c.path = "/";
 
         // Extract domain from request URL for default.
         c.domain = domainFromUrl(requestUrl);
+        c.path = defaultPathFromUrl(requestUrl);
 
         size_t eq = header.find('=');
         if (eq == std::string::npos) return;
@@ -207,6 +207,14 @@ private:
         if (pathStart == std::string::npos) return "/";
         size_t query = url.find('?', pathStart);
         return url.substr(pathStart, query == std::string::npos ? std::string::npos : query - pathStart);
+    }
+
+    static std::string defaultPathFromUrl(const std::string& url) {
+        std::string path = pathFromUrl(url);
+        if (path.empty() || path[0] != '/') return "/";
+        size_t lastSlash = path.rfind('/');
+        if (lastSlash == std::string::npos || lastSlash == 0) return "/";
+        return path.substr(0, lastSlash);
     }
 
     static bool domainMatches(const std::string& requestDomain, const std::string& cookieDomain) {
