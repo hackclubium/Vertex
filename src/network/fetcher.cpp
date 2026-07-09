@@ -144,7 +144,7 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
             start = semi + 1;
         }
 
-        std::string decoded = PercentDecode(payload);
+        std::string decoded = PercentDecodeNoPlus(payload);
         r.body = base64 ? Base64Decode(decoded) : decoded;
         r.finalUrl = url;
         r.success = true;

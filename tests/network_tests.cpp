@@ -314,6 +314,15 @@ TestResult RunNetworkTests() {
     }
 
     {
+        auto res = FetchUrl("data:application/octet-stream;base64,+w%3D%3D");
+        std::string actual = (res.success ? "success " : "failure ")
+            + std::to_string(res.body.size()) + " "
+            + (res.body.empty() ? "missing" : std::to_string((unsigned char)res.body[0])) + "\n";
+        ExpectEqual("network/data-url/base64-plus-is-data-not-space", actual,
+            "success 1 251\n", result);
+    }
+
+    {
         std::filesystem::path path = std::filesystem::temp_directory_path() / "vertex-file-url-test.html";
         {
             std::ofstream out(path, std::ios::binary);
