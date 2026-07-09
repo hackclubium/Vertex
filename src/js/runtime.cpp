@@ -1136,7 +1136,7 @@ static void registerConsole(VM& vm) {
     addNative(vm, console, "table", NATIVE("table") {
         if (args.empty()) return JsValue::undefined();
         fprintf(stderr, "[JS table]\n");
-        if (ARG(0).isObject() && ARG(0).asObject()->isArray()) {
+        if (ARG(0).isObject() && ARG(0).asObject()->kind == ObjKind::Array) {
             auto* arr = ARG(0).asObject();
             int len = arr->getProp("length").toInt32();
             for (int i = 0; i < len && i < 100; i++) {
@@ -1823,7 +1823,7 @@ void registerBuiltins(VM& vm) {
         return vm.str(uuid);
     });
     addNative(vm, crypto, "getRandomValues", NATIVE("getRandomValues") {
-        if (!ARG(0).isObject() || !ARG(0).asObject()->isArray()) return ARG(0);
+        if (!ARG(0).isObject() || ARG(0).asObject()->kind != ObjKind::Array) return ARG(0);
         static std::random_device rd;
         static std::mt19937 gen(rd());
         static std::uniform_int_distribution<> byte(0, 255);

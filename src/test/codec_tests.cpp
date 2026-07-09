@@ -480,6 +480,64 @@ TestResult RunCodecTests() {
     }
 
     {
+        // 16x16, progressive (SOF2), produced by libjpeg-turbo's cjpeg
+        // -progressive with 4:2:0 subsampling — exercises the separate
+        // DC/AC scan decode path (spectral selection + successive
+        // approximation across multiple scans) instead of baseline's single
+        // full-spectrum Huffman pass. Reference decoded the same way as the
+        // baseline vectors above (djpeg -nosmooth).
+        auto jpg = HexToBytes(
+            "ffd8ffe000104a46494600010100000100010000ffdb004300060405060504060605060707"
+            "06080a100a0a09090a140e0f0c1017141818171416161a1d251f1a1b231c1616202c202326"
+            "27292a29191f2d302d283025282928ffdb0043010707070a080a130a0a13281a161a282828"
+            "28282828282828282828282828282828282828282828282828282828282828282828282828"
+            "28282828282828282828ffc20011080010001003012200021101031101ffc4001500010100"
+            "000000000000000000000000000506ffc40014010100000000000000000000000000000000"
+            "ffda000c030100021003100000018f79978fffc40016100003000000000000000000000000"
+            "0000000304ffda00080101000105024cc2661330998fffc400151101010000000000000000"
+            "0000000000000500ffda0008010301013f01313bffc4001511010100000000000000000000"
+            "000000000200ffda0008010201013f010effc4001410010000000000000000000000000000"
+            "0020ffda0008010100063f021fffc400161000030000000000000000000000000000002131"
+            "ffda0008010100013f219a2689a268ffda000c0301000200030000001053ffc40016110003"
+            "0000000000000000000000000000002131ffda0008010301013f10833fffc4001411010000"
+            "0000000000000000000000000000ffda0008010201013f107fffc400151001010000000000"
+            "00000000000000000000f1ffda0008010100013f1082828282ffd9");
+        auto ref = HexToBytes(
+            "00000005050519040d1f0a133a021d4008235d022e6207337c023f8107449e0150a40756be"
+            "0060c30565d9046ede09730b0b0b101010240f182a151e450d284b132e680d396d123e870d"
+            "4a8c124fa90c5baf1261c90b6bce1070e40f79e9147e061b120b2017202020262626411f2f"
+            "462434621f40672445821e52872357a41e63a92368c41c71ca2277df2181e4268610251c15"
+            "2a212a2a2a2f2f2f4a2838502e3e6c294a712e4f8c285c912d61ad276cb32d72ce267bd42c"
+            "81e82a8aed2f8f063e230b4328204232264838414141464646634152684657824064874569"
+            "a44076aa467cc43e83ca4489e04392e5489710482d154d322a4c3c2f51414a4a4a5050506d"
+            "4b5c7250618c4a6e914f73ad497fb34f85ce488dd44e93e94c9bee51a0035e320863371e61"
+            "3e2467443e604f446655606060656565816071856475a15f83a76589c25e92c76397dd63a0"
+            "e268a50e693d136e42296c492f724f496b5a4f71606b6b6b7070708c6b7c906f80ac6a8eb2"
+            "7094cd699dd26ea2e86eabed73b0037d400882451e824e2488543e805c4486626081706586"
+            "75808080858585a28091a78596c17ea1c784a7de83afe287b30e884b138d50298d592f935f"
+            "498b674f916d6b8c7b7091808b8b8b909090ad8b9cb290a1cc89acd28fb2e98ebaed92be02"
+            "9f5007a4551ca25d22a8633da16b43a7715fa17d64a6827fa19084a695a0a0a0a6a6a6c19f"
+            "afc7a5b5dba3bee0a8c30ba85910ad5e26ac672cb26d47ab754cb07a69ab876eb08c88aa99"
+            "8daf9eaaaaaab0b0b0caa8b8d0aebee5adc8eab2cd03c16108c6661dc57022ca753dc37e43"
+            "c98460c49065c99580c3a285c8a7a0c2b2a6c8b8c1c1c1c7c7c7dbc6cfe0cbd40dcb6b12d0"
+            "7026ce792cd47f47cd884dd38e69cd996ed29e89ccab8ed1b0aaccbcb0d2c2cbcbcbd0d0d0"
+            "e5d0d9ead5de07dc720ce17722e08028e68641de8f47e49564dea169e3a683deb288e3b7a6"
+            "dec3abe3c8c6dbd2cce1d8e1e1e1e6e6e612e77d17ec822deb8b33f1914ce99a52efa06fe9"
+            "ac74eeb18ee9bd93eec2b1e9ceb6eed3d1e6ddd7ece3ecececf1f1f1");
+        auto img = DecodeJpeg(jpg.data(), jpg.size());
+        // maxDiff=2 here (vs. 1 elsewhere) is IDCT rounding noise, not a decode
+        // bug: entropy-decoded coefficients match libjpeg's raw
+        // jpeg_read_coefficients() output exactly for all 3 components. Our
+        // exact-float IDCT vs. libjpeg's fixed-point ISLOW IDCT puts one Cb
+        // pixel 1 unit off, which the 1.772 Cb->Blue conversion factor
+        // amplifies to a 2-unit Blue diff.
+        ExpectEqual("codec/jpeg/progressive",
+            JpegDiffSummary(img, ref, 16, 16, 3) + "\n",
+            "maxDiff=2\n",
+            result);
+    }
+
+    {
         // Not a JPEG at all, and a truncated real JPEG, must both fail
         // cleanly — decoding attacker-supplied image bytes has to be safe
         // against garbage/incomplete input.

@@ -7,12 +7,13 @@
 // decoding, dequantization, a separable 2D IDCT, chroma upsampling, and
 // YCbCr->RGB are all implemented here.
 //
-// Scope: baseline sequential DCT only (SOF0). Progressive JPEG (SOF2) and
-// arithmetic coding are NOT supported — both are rare on the web relative to
-// baseline, matching the same "defer the rare case" scoping already used for
-// PNG's Adam7 interlacing. 1-component (grayscale) and 3-component (YCbCr)
-// images are supported with any of the common chroma subsampling ratios
-// (4:4:4, 4:2:2, 4:2:0); 4-component (CMYK/Adobe) JPEGs are not supported.
+// Scope: baseline (SOF0/SOF1) and progressive (SOF2) DCT scans. Arithmetic
+// coding is NOT supported — vanishingly rare relative to Huffman coding, and
+// not something any mainstream encoder emits by default. 1-component
+// (grayscale) and 3-component (YCbCr) images are supported with any of the
+// common chroma subsampling ratios (4:4:4, 4:2:2, 4:2:0); 4-component
+// (CMYK/Adobe) JPEGs are not supported — matching the same "defer the rare
+// case" scoping already used for PNG's Adam7 interlacing.
 // Chroma upsampling is nearest-neighbor, not the smoother bilinear-ish
 // ("fancy") upsampling most decoders (including libjpeg's default) use —
 // deliberately simple for now; verified against libjpeg-turbo's own
