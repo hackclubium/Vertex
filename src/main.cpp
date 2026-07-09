@@ -697,7 +697,7 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     }
 
     // If it's a URL, ensure it has a scheme; otherwise treat it as a search
-    // query and route it to Bing's server-rendered results page.
+    // query and route it to DuckDuckGo's server-rendered results page.
     std::string displayUrl = url;
     if (LooksLikeUrl(url)) {
         if (url.find("://") == std::string::npos)
@@ -705,7 +705,7 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         displayUrl = url;
     } else {
         displayUrl = url;
-        url = "https://www.bing.com/search?q=" + UrlEncodeQuery(url);
+        url = "https://duckduckgo.com/html/?q=" + UrlEncodeQuery(url);
     }
 
     tab.loading    = true;

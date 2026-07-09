@@ -227,7 +227,7 @@ public:
         if (LooksLikeUrl(url)) {
             if (url.find("://") == std::string::npos) url = "https://" + url;
         } else {
-            url = "https://www.bing.com/search?q=" + UrlEncodeQuery(url);
+            url = "https://duckduckgo.com/html/?q=" + UrlEncodeQuery(url);
         }
 
         tab.url = url;
