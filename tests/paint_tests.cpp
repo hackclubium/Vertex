@@ -318,6 +318,20 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
+        const bool linuxPageLoadMatchesWindows =
+            linuxMain.find("if (!res.finalUrl.empty() && res.finalUrl != url)") != std::string::npos
+            && linuxMain.find("page->url = res.finalUrl") != std::string::npos
+            && linuxMain.find("LoadExternalStylesheets(page->dom, page->url)") != std::string::npos
+            && linuxMain.find("LoadExternalScriptSources(page->dom, page->url)") != std::string::npos;
+        ExpectEqual("paint/linux-page-load-preserves-final-url-and-preloads-scripts",
+            linuxPageLoadMatchesWindows ? "parity\n" : "drift\n",
+            "parity\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         std::string chromeH = ReadTextFile(root / "src/platform/chrome.h");
         std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");

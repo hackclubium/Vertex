@@ -1003,7 +1003,10 @@ static void platformFetch(int tabIdx, const std::string& url) {
         page->url = url;
         if (res.success && !res.body.empty()) {
             page->dom = ParseHtml(DecodeTextToUtf8(res.body, res.contentType, true));
+            if (!res.finalUrl.empty() && res.finalUrl != url)
+                page->url = res.finalUrl;
             LoadExternalStylesheets(page->dom, page->url);
+            LoadExternalScriptSources(page->dom, page->url);
         } else {
             page->error = res.error;
         }
