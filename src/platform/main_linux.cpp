@@ -80,6 +80,7 @@ static xcb_atom_t        g_wmDeleteWindow = XCB_ATOM_NONE;
 static int               g_width = 1280, g_height = 800;
 static bool              g_running = true;
 static bool              g_needsRedraw = true;
+static bool              g_prefersDarkScheme = false;
 
 static void RequestRedraw() { g_needsRedraw = true; }
 
@@ -635,6 +636,7 @@ static Stylesheet CollectCSS(const Node* root) {
         for (auto& c : n->children) walk(c.get());
     };
     walk(root);
+    sheet.setPreferredColorScheme(g_prefersDarkScheme);
     sheet.rebuildRuleBuckets();
     return sheet;
 }
@@ -1439,7 +1441,8 @@ static bool CreateXcbWindow(int width, int height) {
     xcb_map_window(g_conn, g_win);
     xcb_flush(g_conn);
     LoadKeyboardMap();
-    SetWindowIcon(ReadXSettingsPreferDark());
+    g_prefersDarkScheme = ReadXSettingsPreferDark();
+    SetWindowIcon(g_prefersDarkScheme);
     return true;
 }
 

@@ -541,6 +541,13 @@ bool Renderer::UsesHoverStyles() const {
     return m_cachedUsesHoverStyles;
 }
 
+void Renderer::SetPrefersDarkScheme(bool dark) {
+    if (m_prefersDarkScheme == dark) return;
+    m_prefersDarkScheme = dark;
+    InvalidateLayout();
+    m_styleDocKey = nullptr;
+}
+
 Stylesheet Renderer::CollectStylesheet(const Node* root) {
     Stylesheet sheet;
     std::function<void(const Node*)> walk = [&](const Node* n) {
@@ -720,6 +727,7 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
         if (m_styleDocKey != doc.get() || m_styleBaseUrlKey != baseUrl) {
             auto styleStart = std::chrono::steady_clock::now();
             m_cachedSheet  = CollectStylesheet(doc.get());
+            m_cachedSheet.setPreferredColorScheme(m_prefersDarkScheme);
             m_cachedPageBg = FindBodyBgColor(doc.get(), m_cachedSheet);
             m_cachedUsesHoverStyles = StylesheetUsesHover(m_cachedSheet);
             m_cachedHoverAffectsLayout = StylesheetHoverAffectsLayout(m_cachedSheet);

@@ -824,5 +824,23 @@ TestResult RunCssTests() {
             result);
     }
 
+    {
+        auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
+        auto* target = FindElementById(dom.get(), "target");
+        auto sheet = ParseStylesheet(
+            "#target { background: white; }"
+            "@media (prefers-color-scheme: dark) { #target { background: black; } }"
+            "@media (prefers-color-scheme: light) and (min-width: 600px) { #target { color: blue; } }");
+        sheet.setPreferredColorScheme(false);
+        sheet.setViewport(600.f, 800.f);
+        const std::string light = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
+        sheet.setPreferredColorScheme(true);
+        const std::string dark = target ? SerializeComputedStyle(sheet.resolve(target)) : "missing\n";
+        ExpectEqual("css/media/prefers-color-scheme",
+            "light: " + light + "dark: " + dark,
+            "light: color=0,0,1,1 bg=1,1,1,1 \ndark: bg=0,0,0,1 \n",
+            result);
+    }
+
     return result;
 }

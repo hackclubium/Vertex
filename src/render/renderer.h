@@ -84,6 +84,7 @@ public:
     void SetImageRequestCallback(std::function<void(std::string)> cb) {
         m_imageRequestCb = std::move(cb);
     }
+    void SetPrefersDarkScheme(bool dark);
 
     void  SetZoom(float z);
     float GetZoom() const { return m_zoom; }
@@ -193,6 +194,7 @@ private:
     bool        m_cachedUsesHoverStyles = false;
     bool        m_cachedHoverAffectsLayout = false;
     bool        m_cachedHoverRestylesSubtree = false;
+    bool        m_prefersDarkScheme = false;
 
     std::unique_ptr<LayoutBox> m_layoutRoot;
     std::map<const LayoutBox*, ComputedStyle> m_layoutBaseStyles;

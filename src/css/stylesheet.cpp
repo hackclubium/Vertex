@@ -2648,7 +2648,7 @@ ComputedStyle Stylesheet::resolve(const Node* node) const {
         const CssRule& r = *rule;
         const bool mediaMatches = r.media.empty() || std::any_of(r.media.begin(), r.media.end(),
             [&](const CssMediaCondition& condition) {
-                return condition.matches(viewportWidth, viewportHeight);
+                return condition.matches(viewportWidth, viewportHeight, prefersDarkScheme);
             });
         if (mediaMatches && r.matches(node)) matched.push_back(rule);
     }
@@ -3051,8 +3051,13 @@ static std::vector<CssMediaCondition> ParseMediaConditions(const std::string& pr
                     condition.supported = false;
             } else {
                 const std::string name = sTrim(feature.substr(0, colon));
+                const std::string value = sTrim(feature.substr(colon + 1));
                 float length = 0.f;
-                if (!ParseMediaLength(sTrim(feature.substr(colon + 1)), length)) {
+                if (name == "prefers-color-scheme") {
+                    if (value == "dark") condition.colorScheme = 2;
+                    else if (value == "light") condition.colorScheme = 1;
+                    else condition.supported = false;
+                } else if (!ParseMediaLength(value, length)) {
                     condition.supported = false;
                 } else if (name == "min-width") {
                     condition.minWidth = std::max(condition.minWidth, length);
@@ -3082,9 +3087,11 @@ static CssMediaCondition MergeMediaCondition(const CssMediaCondition& a,
         : (b.maxWidth < 0.f ? a.maxWidth : std::min(a.maxWidth, b.maxWidth));
     merged.maxHeight = a.maxHeight < 0.f ? b.maxHeight
         : (b.maxHeight < 0.f ? a.maxHeight : std::min(a.maxHeight, b.maxHeight));
+    merged.colorScheme = a.colorScheme ? a.colorScheme : b.colorScheme;
     merged.supported = a.supported && b.supported
         && (merged.maxWidth < 0.f || merged.minWidth <= merged.maxWidth)
-        && (merged.maxHeight < 0.f || merged.minHeight <= merged.maxHeight);
+        && (merged.maxHeight < 0.f || merged.minHeight <= merged.maxHeight)
+        && (!a.colorScheme || !b.colorScheme || a.colorScheme == b.colorScheme);
     return merged;
 }
 

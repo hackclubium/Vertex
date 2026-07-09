@@ -41,14 +41,16 @@ struct CssMediaCondition {
     float maxWidth = -1.f;
     float minHeight = -1.f;
     float maxHeight = -1.f;
+    int colorScheme = 0;  // 0=any, 1=light, 2=dark
     bool supported = true;
 
-    bool matches(float width, float height) const {
+    bool matches(float width, float height, bool prefersDark) const {
         return supported
             && (minWidth < 0.f || width >= minWidth)
             && (maxWidth < 0.f || width <= maxWidth)
             && (minHeight < 0.f || height >= minHeight)
-            && (maxHeight < 0.f || height <= maxHeight);
+            && (maxHeight < 0.f || height <= maxHeight)
+            && (colorScheme == 0 || (colorScheme == 2) == prefersDark);
     }
 };
 
@@ -82,10 +84,16 @@ struct Stylesheet {
     float viewportHeight = 600.f;
     float rootRemBase = 16.f;
     bool rootRemBaseSet = false;
+    bool prefersDarkScheme = false;
 
     void setViewport(float width, float height) {
         viewportWidth = width;
         viewportHeight = height;
+        candidateRuleIndexCache.clear();
+    }
+
+    void setPreferredColorScheme(bool dark) {
+        prefersDarkScheme = dark;
         candidateRuleIndexCache.clear();
     }
 
