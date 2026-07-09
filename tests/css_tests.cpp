@@ -100,6 +100,20 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><p id=\"target\"></p></body></html>");
+        auto sheet = ParseStylesheet(
+            "#target { --accent: red !important; color: var(--accent) !important; margin-left: 4px !important; }");
+        auto* node = FindElementById(dom.get(), "target");
+        ComputedStyle style = node ? sheet.resolve(node) : ComputedStyle{};
+        ResolveStyleVariables(style);
+        std::string actual = node ? SerializeComputedStyle(style) : "missing\n";
+        ExpectEqual("css/cascade/important-marker-does-not-break-values",
+            actual,
+            "color=1,0,0,1 marginLeft=4 \n",
+            result);
+    }
+
+    {
         auto html = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.in.html");
         auto css = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.in.css");
         auto expected = ReadTextFile(root / "tests/fixtures/css/cascade/ancestor-combinators.expected.txt");

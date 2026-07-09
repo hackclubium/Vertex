@@ -1920,12 +1920,19 @@ static void ApplyDeclaration(const std::string& prop,
 
 static void StoreDeclaration(const std::string& property, const std::string& value,
                              ComputedStyle& style) {
+    std::string cleanValue = sTrim(value);
+    std::string lowerValue = sLower(cleanValue);
+    const size_t important = lowerValue.rfind("!important");
+    if (important != std::string::npos) {
+        const bool onlyWhitespaceAfter = sTrim(cleanValue.substr(important + 10)).empty();
+        if (onlyWhitespaceAfter) cleanValue = sTrim(cleanValue.substr(0, important));
+    }
     if (property.rfind("--", 0) == 0) {
-        style.customProperties[property] = value;
-    } else if (value.find("var(") != std::string::npos) {
-        style.deferredDeclarations.emplace_back(property, value);
+        style.customProperties[property] = cleanValue;
+    } else if (cleanValue.find("var(") != std::string::npos) {
+        style.deferredDeclarations.emplace_back(property, cleanValue);
     } else {
-        ApplyDeclaration(property, value, style);
+        ApplyDeclaration(property, cleanValue, style);
     }
 }
 
