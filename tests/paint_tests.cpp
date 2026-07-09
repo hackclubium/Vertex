@@ -536,7 +536,7 @@ TestResult RunPaintTests() {
         const bool hoverHitTestPrunes =
             formState.find("bool inside = x >= bx") != std::string::npos
             && formState.find("if (inside || &box == &root)") != std::string::npos
-            && formState.find("if (k->isOutOfFlow() || k->isFloat() || k->style.positionMode == 1)") != std::string::npos;
+            && formState.find("if (k->isOutOfFlow() || k->isFloat() || (k->style.positionMode == 1 || k->style.positionMode == 4))") != std::string::npos;
         ExpectEqual("paint/hover-hit-test-prunes-off-target-subtrees",
             hoverHitTestPrunes ? "prunes\n" : "walks-all\n",
             "prunes\n",
