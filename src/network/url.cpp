@@ -1,6 +1,7 @@
 #include "network/url.h"
 
 #include <cctype>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -65,6 +66,50 @@ std::string Base64UrlDecode(std::string encoded) {
     }
     return out;
 }
+
+std::string StripFragment(const std::string& url) {
+    const size_t hash = url.find('#');
+    return hash == std::string::npos ? url : url.substr(0, hash);
+}
+
+std::string StripQueryAndFragment(const std::string& url) {
+    const size_t cut = url.find_first_of("?#");
+    return cut == std::string::npos ? url : url.substr(0, cut);
+}
+
+std::string NormalizePath(std::string path) {
+    std::string suffix;
+    const size_t suffixStart = path.find_first_of("?#");
+    if (suffixStart != std::string::npos) {
+        suffix = path.substr(suffixStart);
+        path.erase(suffixStart);
+    }
+
+    const bool absolute = !path.empty() && path.front() == '/';
+    const bool trailingSlash = !path.empty() && path.back() == '/';
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    while (pos <= path.size()) {
+        const size_t slash = path.find('/', pos);
+        std::string part = path.substr(pos, slash == std::string::npos ? std::string::npos : slash - pos);
+        if (part == "..") {
+            if (!parts.empty()) parts.pop_back();
+        } else if (!part.empty() && part != ".") {
+            parts.push_back(std::move(part));
+        }
+        if (slash == std::string::npos) break;
+        pos = slash + 1;
+    }
+
+    std::string out = absolute ? "/" : "";
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) out += '/';
+        out += parts[i];
+    }
+    if (out.empty() && absolute) out = "/";
+    if (trailingSlash && !out.empty() && out.back() != '/') out += '/';
+    return out + suffix;
+}
 } // namespace
 
 bool HasUrlScheme(const std::string& url) {
@@ -83,22 +128,35 @@ bool HasUrlScheme(const std::string& url) {
 std::string ResolveUrlAgainstBase(const std::string& href, const std::string& base) {
     if (href.empty()) return {};
     if (HasUrlScheme(href)) return href;
+    if (href[0] == '#') return StripFragment(base) + href;
+    if (href[0] == '?') return StripQueryAndFragment(base) + href;
+
+    size_t p = base.find("://");
     if (href.size() >= 2 && href[0] == '/' && href[1] == '/') {
         // Protocol-relative URL: use base URL's scheme
-        size_t p = base.find("://");
         if (p != std::string::npos) {
             return base.substr(0, p + 1) + href;
         }
         return "https:" + href; // Fallback if base has no scheme
     }
-    if (href[0] == '/') {
-        size_t p = base.find("://");
-        if (p == std::string::npos) return href;
-        size_t slash = base.find('/', p + 3);
-        return (slash == std::string::npos ? base : base.substr(0, slash)) + href;
+
+    if (p == std::string::npos) {
+        if (href[0] == '/') return NormalizePath(href);
+        const size_t last = StripQueryAndFragment(base).rfind('/');
+        return NormalizePath((last == std::string::npos ? base + "/" : base.substr(0, last + 1)) + href);
     }
-    size_t last = base.rfind('/');
-    return (last == std::string::npos ? base + "/" : base.substr(0, last + 1)) + href;
+
+    const size_t authorityEnd = base.find_first_of("/?#", p + 3);
+    const std::string origin = authorityEnd == std::string::npos ? base : base.substr(0, authorityEnd);
+    if (href[0] == '/') {
+        return origin + NormalizePath(href);
+    }
+
+    std::string basePath = authorityEnd == std::string::npos ? "/" : base.substr(authorityEnd);
+    basePath = StripQueryAndFragment(basePath);
+    const size_t last = basePath.rfind('/');
+    const std::string dir = last == std::string::npos ? "/" : basePath.substr(0, last + 1);
+    return origin + NormalizePath(dir + href);
 }
 
 std::string UnwrapBingRedirect(const std::string& url) {

@@ -406,11 +406,20 @@ TestResult RunNetworkTests() {
             "https://www.webstandards.org/files/acid2/test.html") + "\n";
         actual += ResolveUrlAgainstBase("reference.html",
             "https://www.webstandards.org/files/acid2/test.html") + "\n";
+        actual += ResolveUrlAgainstBase("../img/logo.png?x=1#top",
+            "https://example.test/a/b/page.html?old=1#frag") + "\n";
+        actual += ResolveUrlAgainstBase("?next=1",
+            "https://example.test/a/b/page.html?old=1#frag") + "\n";
+        actual += ResolveUrlAgainstBase("#section",
+            "https://example.test/a/b/page.html?old=1#frag") + "\n";
         ExpectEqual("network/resolve-url/scheme-and-relative",
             actual,
             "data:text/css,.picture%7Bbackground%3Anone%7D\n"
             "https://www.webstandards.org/files/acid2/reference.html\n"
-            "https://www.webstandards.org/files/acid2/reference.html\n",
+            "https://www.webstandards.org/files/acid2/reference.html\n"
+            "https://example.test/a/img/logo.png?x=1#top\n"
+            "https://example.test/a/b/page.html?next=1\n"
+            "https://example.test/a/b/page.html?old=1#section\n",
             result);
     }
 
