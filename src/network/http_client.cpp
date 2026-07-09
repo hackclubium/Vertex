@@ -13,6 +13,7 @@ namespace {
 struct HttpUrl {
     bool secure = false;
     std::string host;
+    std::string hostHeader;
     int port = 80;
     std::string path = "/";
 };
@@ -24,19 +25,42 @@ bool ParseHttpUrl(const std::string& url, HttpUrl& out) {
     else return false;
     if (rest.empty()) return false;
 
-    size_t slash = rest.find('/');
-    std::string hostport = slash == std::string::npos ? rest : rest.substr(0, slash);
-    out.path = slash == std::string::npos ? "/" : rest.substr(slash);
+    size_t pathStart = rest.find_first_of("/?#");
+    std::string hostport = pathStart == std::string::npos ? rest : rest.substr(0, pathStart);
+    if (pathStart == std::string::npos || rest[pathStart] == '#') {
+        out.path = "/";
+    } else if (rest[pathStart] == '?') {
+        out.path = "/" + rest.substr(pathStart);
+    } else {
+        out.path = rest.substr(pathStart);
+    }
+    size_t fragment = out.path.find('#');
+    if (fragment != std::string::npos) out.path.erase(fragment);
+    if (out.path.empty()) out.path = "/";
     if (hostport.empty()) return false;
 
-    size_t colon = hostport.rfind(':');
-    if (colon != std::string::npos) {
-        out.host = hostport.substr(0, colon);
-        try { out.port = std::stoi(hostport.substr(colon + 1)); } catch (...) { return false; }
+    if (hostport.front() == '[') {
+        size_t close = hostport.find(']');
+        if (close == std::string::npos) return false;
+        out.host = hostport.substr(1, close - 1);
+        if (close + 1 < hostport.size()) {
+            if (hostport[close + 1] != ':') return false;
+            try { out.port = std::stoi(hostport.substr(close + 2)); } catch (...) { return false; }
+        }
     } else {
-        out.host = hostport;
+        size_t colon = hostport.rfind(':');
+        if (colon != std::string::npos) {
+            out.host = hostport.substr(0, colon);
+            try { out.port = std::stoi(hostport.substr(colon + 1)); } catch (...) { return false; }
+        } else {
+            out.host = hostport;
+        }
     }
-    return !out.host.empty();
+    if (out.host.empty() || out.port <= 0 || out.port > 65535) return false;
+    const bool defaultPort = (!out.secure && out.port == 80) || (out.secure && out.port == 443);
+    out.hostHeader = hostport.front() == '[' ? "[" + out.host + "]" : out.host;
+    if (!defaultPort) out.hostHeader += ":" + std::to_string(out.port);
+    return true;
 }
 
 std::string ToLower(std::string s) {
@@ -152,7 +176,7 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
                      size_t maxResponseBytes, FetchResult& r,
                      std::string& outBody, std::vector<HeaderLine>& headers) {
     // Validate host and path to prevent header injection via CRLF
-    for (char c : parsed.host) {
+    for (char c : parsed.hostHeader) {
         if (c == '\r' || c == '\n') { r.error = "Invalid host"; return false; }
     }
     for (char c : parsed.path) {
@@ -161,7 +185,7 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
     std::string cookieHeader = CookieJar::instance().cookieHeader(currentUrl);
     std::string request =
         "GET " + parsed.path + " HTTP/1.1\r\n"
-        "Host: " + parsed.host + "\r\n"
+        "Host: " + parsed.hostHeader + "\r\n"
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Vertex/0.1 (+https://github.com/vertex-browser)\r\n"
         "Accept-Encoding: gzip\r\n"
         "Connection: close\r\n";

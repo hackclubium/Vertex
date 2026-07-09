@@ -231,6 +231,12 @@ void HandleHttpTestConnection(SockFd clientSock, int serverPort) {
         resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     } else if (path == "/noframing") {
         resp = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nbody with no explicit framing";
+    } else if (path == "/?q=1") {
+        std::string body = "query-without-slash-and-no-fragment";
+        resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    } else if (path == "/host") {
+        std::string body = ExtractHeaderValue(req, "host");
+        resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     } else {
         std::string body = "not found";
         resp = "HTTP/1.1 404 Not Found\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
@@ -419,7 +425,7 @@ TestResult RunNetworkTests() {
     {
         auto root = FindRepoRoot();
         std::string source = ReadTextFile(root / "src/network/http_client.cpp");
-        const bool hasSocketConnect = source.find("TcpSocket()") != std::string::npos;
+        const bool hasSocketConnect = source.find("TcpSocket sock") != std::string::npos;
         const bool enablesDecode = source.find("Accept-Encoding: gzip") != std::string::npos;
         const bool resolvesRedirects = source.find("r.finalUrl") != std::string::npos;
         const bool handlesCookies = source.find("Cookie:") != std::string::npos
@@ -440,7 +446,8 @@ TestResult RunNetworkTests() {
         auto root = FindRepoRoot();
         std::string htSource = ReadTextFile(root / "src/network/http_client.cpp");
         const bool hasTlsTransport = htSource.find("TlsConnection") != std::string::npos;
-        const bool hasTlsVerify = htSource.find("VerifyCertificates()") != std::string::npos;
+        const bool hasTlsVerify = ReadTextFile(root / "src/network/tls_windows.cpp").find("SCH_CRED_AUTO_CRED_VALIDATION") != std::string::npos
+            && ReadTextFile(root / "src/network/tls_linux.cpp").find("MBEDTLS_SSL_VERIFY_REQUIRED") != std::string::npos;
         ExpectEqual("network/https-fetches-use-tls-and-verify-peer",
             std::string(hasTlsTransport ? "tls " : "no-tls ")
                 + (hasTlsVerify ? "verify\n" : "no-verify\n"),
@@ -677,6 +684,18 @@ TestResult RunNetworkTests() {
         ExpectEqual("network/http/no-explicit-framing-reads-until-close",
             (noFraming.success ? "ok:" : "fail:") + noFraming.body + "\n",
             "ok:body with no explicit framing\n",
+            result);
+
+        auto queryOnly = FetchHttp("http://127.0.0.1:" + std::to_string(server.port) + "?q=1#client-fragment");
+        ExpectEqual("network/http/query-only-url-strips-client-fragment",
+            (queryOnly.success ? "ok:" : "fail:") + queryOnly.body + "\n",
+            "ok:query-without-slash-and-no-fragment\n",
+            result);
+
+        auto hostHeader = FetchHttp(base + "/host");
+        ExpectEqual("network/http/host-header-keeps-non-default-port",
+            (hostHeader.success ? "ok:" : "fail:") + hostHeader.body + "\n",
+            "ok:127.0.0.1:" + std::to_string(server.port) + "\n",
             result);
 
         auto notFound = FetchHttp(base + "/does-not-exist");

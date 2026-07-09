@@ -432,10 +432,9 @@ bool RunWebSocketSession(Sock& sock, const WsUrl& parsed, std::string& leftover,
         }
 
         int n = sock.Recv(readBuf, sizeof(readBuf), 50);
-        if (n < 0) break;
+        if (n < 0) continue;
         if (n == 0) {
-            // n==0 might mean EOF (peer closed without close frame) or timeout.
-            // If we've already started close handshake, EOF means disconnect.
+            // EOF: peer closed without sending more frames.
             if (closeSent || closeReceived) break;
             continue;
         }
