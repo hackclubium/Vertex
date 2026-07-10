@@ -606,18 +606,25 @@ TestResult RunCodecTests() {
     }
 
     {
-        // WebP decoder is hand-rolled and rejects unsupported VP8/VP8L payloads
+        // WebP decoder is hand-rolled and rejects unsupported/truncated payloads
         // instead of pretending to decode pixels.
         auto notWebp = HexToBytes("00112233");
         auto badImg = DecodeWebp(notWebp.data(), notWebp.size());
         auto tinyVp8 = HexToBytes(
             "5249464612000000574542505650382006000000"
             "0000009d012a01000100");
+        // ffmpeg libwebp real lossy VP8 still; currently rejected because it has
+        // residual coefficients, not prediction-only macroblocks.
+        auto realVp8 = HexToBytes(
+            "524946462600000057454250565038201a0000005001009d012a10001000"
+            "00000025a400000000005f7722048000");
         auto vp8Img = DecodeWebp(tinyVp8.data(), tinyVp8.size());
+        auto realVp8Img = DecodeWebp(realVp8.data(), realVp8.size());
         ExpectEqual("codec/webp/unsupported-fails-safely",
             std::string(badImg.success ? "unexpected-ok " : "rejected ") +
-                (vp8Img.success ? "unexpected-ok\n" : "rejected\n"),
-            "rejected rejected\n",
+                (vp8Img.success ? "unexpected-ok " : "rejected ") +
+                (realVp8Img.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected rejected rejected\n",
             result);
     }
 
