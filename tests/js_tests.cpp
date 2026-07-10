@@ -1915,6 +1915,14 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "wasm/function-import",
+        "var bytes = [0,97,115,109,1,0,0,0,1,6,1,96,1,127,1,127,2,11,1,3,101,110,118,3,105,110,99,0,0,3,2,1,0,7,7,1,3,114,117,110,0,1,10,8,1,6,0,32,0,16,0,11];\n"
+        "var inst = new WebAssembly.Instance(new WebAssembly.Module(bytes), { env: { inc: function(x) { return x + 1; } } });\n"
+        "__result = inst.exports.run(41);\n",
+        "number: 42\n",
+        result);
+
+    ExpectJsResult(
         "date/constructor-parse-and-iso",
         "var epoch = new Date(0);\n"
         "var parsed = new Date('1970-01-01T00:00:01.000Z');\n"
