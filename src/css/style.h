@@ -190,6 +190,15 @@ struct ComputedStyle {
     bool     captionSideSet   = false;
     int      direction        = 0; // 0=ltr, 1=rtl
     bool     directionSet     = false;
+    int      order            = 0;
+    bool     orderSet         = false;
+    float    objectPosX       = 50;
+    float    objectPosY       = 50;
+    bool     objectPosXPct    = true;
+    bool     objectPosYPct    = true;
+    bool     objectPositionSet = false;
+    float    scrollMarginTop = -1, scrollMarginRight = -1, scrollMarginBottom = -1, scrollMarginLeft = -1;
+    float    scrollPaddingTop = -1, scrollPaddingRight = -1, scrollPaddingBottom = -1, scrollPaddingLeft = -1;
     // Baseline flex formatting values.
     int      flexDirection   = 0; // 0=row, 1=column
     bool     flexDirectionSet = false;
@@ -399,6 +408,20 @@ struct ComputedStyle {
         if (child.borderCollapseSet) { out.borderCollapse = child.borderCollapse; out.borderCollapseSet = true; }
         if (child.captionSideSet) { out.captionSide = child.captionSide; out.captionSideSet = true; }
         if (child.directionSet) { out.direction = child.direction; out.directionSet = true; }
+        if (child.orderSet) { out.order = child.order; out.orderSet = true; }
+        if (child.objectPositionSet) {
+            out.objectPosX = child.objectPosX; out.objectPosY = child.objectPosY;
+            out.objectPosXPct = child.objectPosXPct; out.objectPosYPct = child.objectPosYPct;
+            out.objectPositionSet = true;
+        }
+        if (child.scrollMarginTop >= 0) out.scrollMarginTop = child.scrollMarginTop;
+        if (child.scrollMarginRight >= 0) out.scrollMarginRight = child.scrollMarginRight;
+        if (child.scrollMarginBottom >= 0) out.scrollMarginBottom = child.scrollMarginBottom;
+        if (child.scrollMarginLeft >= 0) out.scrollMarginLeft = child.scrollMarginLeft;
+        if (child.scrollPaddingTop >= 0) out.scrollPaddingTop = child.scrollPaddingTop;
+        if (child.scrollPaddingRight >= 0) out.scrollPaddingRight = child.scrollPaddingRight;
+        if (child.scrollPaddingBottom >= 0) out.scrollPaddingBottom = child.scrollPaddingBottom;
+        if (child.scrollPaddingLeft >= 0) out.scrollPaddingLeft = child.scrollPaddingLeft;
         if (child.flexDirectionSet) {
             out.flexDirection = child.flexDirection;
             out.flexDirectionSet = true;

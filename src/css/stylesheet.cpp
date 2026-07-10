@@ -930,6 +930,45 @@ static void ApplyDeclaration(const std::string& prop,
         out.directionSet = true;
         return;
     }
+    if (prop == "order") {
+        try { out.order = std::stoi(sTrim(val)); out.orderSet = true; } catch (...) {}
+        return;
+    }
+    if (prop == "object-position") {
+        auto vals = SplitCssWhitespace(sLower(val));
+        if (!vals.empty()) {
+            float x = 50, y = 50;
+            bool xp = true, yp = true;
+            if (ParseBgPosComponent(vals[0], x, xp)) {
+                if (vals.size() > 1) ParseBgPosComponent(vals[1], y, yp);
+                out.objectPosX = x; out.objectPosY = y;
+                out.objectPosXPct = xp; out.objectPosYPct = yp;
+                out.objectPositionSet = true;
+            }
+        }
+        return;
+    }
+    auto applyQuadLengths = [&](float& top, float& right, float& bottom, float& left) {
+        std::vector<float> nums;
+        for (const auto& token : SplitCssWhitespace(val)) {
+            float f = ParseLength(token);
+            if (f >= 0) nums.push_back(f);
+        }
+        if (nums.size() == 1) top = right = bottom = left = nums[0];
+        else if (nums.size() == 2) { top = bottom = nums[0]; right = left = nums[1]; }
+        else if (nums.size() == 3) { top = nums[0]; right = left = nums[1]; bottom = nums[2]; }
+        else if (nums.size() >= 4) { top = nums[0]; right = nums[1]; bottom = nums[2]; left = nums[3]; }
+    };
+    if (prop == "scroll-margin") { applyQuadLengths(out.scrollMarginTop, out.scrollMarginRight, out.scrollMarginBottom, out.scrollMarginLeft); return; }
+    if (prop == "scroll-padding") { applyQuadLengths(out.scrollPaddingTop, out.scrollPaddingRight, out.scrollPaddingBottom, out.scrollPaddingLeft); return; }
+    if (prop == "scroll-margin-top") { float f = ParseLength(val); if (f >= 0) out.scrollMarginTop = f; return; }
+    if (prop == "scroll-margin-right") { float f = ParseLength(val); if (f >= 0) out.scrollMarginRight = f; return; }
+    if (prop == "scroll-margin-bottom") { float f = ParseLength(val); if (f >= 0) out.scrollMarginBottom = f; return; }
+    if (prop == "scroll-margin-left") { float f = ParseLength(val); if (f >= 0) out.scrollMarginLeft = f; return; }
+    if (prop == "scroll-padding-top") { float f = ParseLength(val); if (f >= 0) out.scrollPaddingTop = f; return; }
+    if (prop == "scroll-padding-right") { float f = ParseLength(val); if (f >= 0) out.scrollPaddingRight = f; return; }
+    if (prop == "scroll-padding-bottom") { float f = ParseLength(val); if (f >= 0) out.scrollPaddingBottom = f; return; }
+    if (prop == "scroll-padding-left") { float f = ParseLength(val); if (f >= 0) out.scrollPaddingLeft = f; return; }
 
     if (prop == "color") {
         out.color = ParseCssColor(val);
@@ -1984,7 +2023,7 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "place-items" || prop == "place-content"
             || prop == "grid-area" || prop == "grid-auto-rows"
             || prop == "grid-auto-columns"
-            || prop == "order" || prop == "counter-reset" || prop == "counter-increment"
+            || prop == "counter-reset" || prop == "counter-increment"
             || prop == "quotes" || prop == "hyphens") {
         // Known properties parsed to prevent rule dropping. No visual effect yet.
     } else if (prop == "visibility") {
@@ -3578,6 +3617,10 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.borderCollapseSet) out << "borderCollapse=" << BoolText(style.borderCollapse) << " ";
     if (style.captionSideSet) out << "captionSide=" << (style.captionSide == 1 ? "bottom" : "top") << " ";
     if (style.directionSet) out << "direction=" << (style.direction == 1 ? "rtl" : "ltr") << " ";
+    if (style.orderSet) out << "order=" << style.order << " ";
+    if (style.objectPositionSet) out << "objectPosition=" << style.objectPosX << (style.objectPosXPct ? "%" : "px") << "," << style.objectPosY << (style.objectPosYPct ? "%" : "px") << " ";
+    if (style.scrollMarginTop >= 0) out << "scrollMarginTop=" << style.scrollMarginTop << " ";
+    if (style.scrollPaddingLeft >= 0) out << "scrollPaddingLeft=" << style.scrollPaddingLeft << " ";
     if (style.topSet)    out << "top="    << style.top    << " ";
     if (style.rightSet)  out << "right="  << style.right  << " ";
     if (style.bottomSet) out << "bottom=" << style.bottom << " ";

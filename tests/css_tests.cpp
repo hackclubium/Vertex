@@ -785,6 +785,24 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><img id=\"hero\"><div id=\"card\"></div></body></html>");
+        auto sheet = ParseStylesheet(
+            "#hero { object-position: right bottom; order: 3; scroll-margin: 1px 2px 3px 4px; scroll-padding-left: 9px; }"
+            "#card { object-position: 25% 10px; scroll-padding: 5px 6px; }");
+        std::string actual;
+        for (const std::string id : { "hero", "card" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/broad-layout-compat-properties",
+            actual,
+            "hero: order=3 objectPosition=100%,100% scrollMarginTop=1 scrollPaddingLeft=9 \n"
+            "card: objectPosition=25%,10px scrollPaddingLeft=6 \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"portal\"><form id=\"search\"></form><div id=\"picker\"></div></div></body></html>");
         auto* search = FindElementById(dom.get(), "search");
         auto* picker = FindElementById(dom.get(), "picker");

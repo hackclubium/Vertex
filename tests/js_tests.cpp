@@ -991,17 +991,24 @@ static std::string RunDomFragmentCloneMutationSnapshot() {
 
 static std::string RunDomNodeSurfaceSnapshot() {
     JsEngine engine;
-    auto dom = ParseHtml("<html><body><div id=\"root\">old</div></body></html>");
+    auto dom = ParseHtml("<html><body><div id=\"root\">old</div><div id=\"after\"></div></body></html>");
     engine.setDocument(dom, []() {});
     bool ok = engine.runScript(
         "var root = document.getElementById('root');\n"
         "var text = root.firstChild;\n"
         "var loose = document.createElement('section');\n"
         "text.data = 'new';\n"
+        "root.append('A', 'B');\n"
+        "root.normalize();\n"
+        "root.role = 'button'; root.tabIndex = 2; root.hidden = true; root.ariaLabel = 'Root';\n"
+        "var pos = root.compareDocumentPosition(document.getElementById('after'));\n"
+        "var rects = root.getClientRects();\n"
+        "root.scrollTo(3, 4); root.scrollBy(2, 1);\n"
+        "loose.replaceChildren('fresh', document.createElement('b'));\n"
         "var same = root.isSameNode(document.querySelector('#root'));\n"
         "var roots = root.getRootNode().nodeType + ':' + text.ownerDocument.nodeType + ':' + loose.ownerDocument.nodeType;\n"
         "var connected = root.isConnected + ':' + loose.isConnected;\n"
-        "document.body.setAttribute('data-result', same + '|' + roots + '|' + connected + '|' + text.nodeValue + '|' + root.textContent);\n",
+        "document.body.setAttribute('data-result', same + '|' + roots + '|' + connected + '|' + text.nodeValue + '|' + root.textContent + '|' + root.getAttribute('role') + ':' + root.tabIndex + ':' + root.hidden + ':' + root.getAttribute('aria-label') + '|' + pos + ':' + rects.length + ':' + root.scrollLeft + ',' + root.scrollTop + '|' + loose.childNodes.length + ':' + loose.textContent);\n",
         "dom-node-surface");
     if (!ok) return "script failed\n";
     Node* body = FindByTag(dom.get(), "body");
@@ -1412,7 +1419,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/dom/node-surface-connectivity-and-identity",
         RunDomNodeSurfaceSnapshot(),
-        "true|9:9:9|true:false|new|new\n",
+        "true|9:9:9|true:false|newAB|newAB|button:2:true:Root|4:1:5,5|2:fresh\n",
         result);
 
     ExpectEqual(

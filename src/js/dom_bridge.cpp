@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <sstream>
 #include <chrono>
@@ -967,6 +968,56 @@ static void replaceNodeWithArgs(Node* node, const std::vector<JsValue>& args) {
     Node* before = siblingNode(node, 1);
     detachFromParent(node);
     insertDomArgs(parent, before, args);
+}
+
+static void normalizeTextChildren(Node* node) {
+    if (!node) return;
+    std::vector<std::shared_ptr<Node>> normalized;
+    for (auto& child : node->children) {
+        if (!child) continue;
+        if (child->type == NodeType::Text) {
+            if (child->text.empty()) continue;
+            if (!normalized.empty() && normalized.back()->type == NodeType::Text) {
+                normalized.back()->text += child->text;
+                continue;
+            }
+        } else {
+            normalizeTextChildren(child.get());
+        }
+        child->parent = node;
+        normalized.push_back(child);
+    }
+    node->children = std::move(normalized);
+}
+
+static bool isBeforeInDocumentOrder(Node* a, Node* b) {
+    if (!a || !b) return false;
+    Node* root = rootNode(a);
+    std::vector<Node*> stack{ root };
+    while (!stack.empty()) {
+        Node* cur = stack.back();
+        stack.pop_back();
+        if (cur == a) return true;
+        if (cur == b) return false;
+        for (auto it = cur->children.rbegin(); it != cur->children.rend(); ++it)
+            stack.push_back(it->get());
+    }
+    return false;
+}
+
+static std::string ariaAttrForProperty(const std::string& key) {
+    if (key.rfind("aria", 0) != 0 || key.size() <= 4) return "";
+    std::string out = "aria-";
+    for (size_t i = 4; i < key.size(); ++i) {
+        char c = key[i];
+        if (c >= 'A' && c <= 'Z') {
+            if (i > 4) out += '-';
+            out += (char)(c - 'A' + 'a');
+        } else {
+            out += c;
+        }
+    }
+    return out;
 }
 
 static bool isIdentChar(char c) {
@@ -1999,6 +2050,14 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         markDomDirty(vm, parent, "childList");
         return JsValue::undefined();
     });
+    addNativeM("replaceChildren", NATIVE("replaceChildren") {
+        Node* n = unwrapNode(thisVal);
+        if (!n) return JsValue::undefined();
+        n->children.clear();
+        insertDomArgs(n, nullptr, args);
+        markDomDirty(vm, n, "childList");
+        return JsValue::undefined();
+    });
     addNativeM("insertAdjacentHTML", NATIVE("insertAdjacentHTML") {
         Node* n = unwrapNode(thisVal);
         Node* parent = nullptr;
@@ -2222,10 +2281,25 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     addNativeM("isSameNode", NATIVE("isSameNode") {
         return JsValue::boolean(unwrapNode(thisVal) == unwrapNode(ARG(0)));
     });
+    addNativeM("compareDocumentPosition", NATIVE("compareDocumentPosition") {
+        Node* a = unwrapNode(thisVal);
+        Node* b = unwrapNode(ARG(0));
+        if (!a || !b) return JsValue::integer(1); // DISCONNECTED
+        if (a == b) return JsValue::integer(0);
+        if (nodeContains(a, b)) return JsValue::integer(20); // FOLLOWING | CONTAINED_BY
+        if (nodeContains(b, a)) return JsValue::integer(10); // PRECEDING | CONTAINS
+        return JsValue::integer(isBeforeInDocumentOrder(a, b) ? 4 : 2);
+    });
     addNativeM("getRootNode", NATIVE("getRootNode") {
         Node* root = rootNode(unwrapNode(thisVal));
         auto shared = getShared(root);
         return shared ? wrapNode(vm, shared) : JsValue::null();
+    });
+    addNativeM("normalize", NATIVE("normalize") {
+        Node* n = unwrapNode(thisVal);
+        normalizeTextChildren(n);
+        markDomDirty(vm, n, "childList");
+        return JsValue::undefined();
     });
 
     addNativeM("getBoundingClientRect", NATIVE("getBoundingClientRect") {
@@ -2241,6 +2315,39 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         r->setProp("x",      JsValue::number(rect.left));
         r->setProp("y",      JsValue::number(rect.top));
         return JsValue::object(r);
+    });
+    addNativeM("getClientRects", NATIVE("getClientRects") {
+        Node* n = unwrapNode(thisVal);
+        auto* arr = newArrayWithPrototype(vm);
+        if (!n) return JsValue::object(arr);
+        JsValue rectFn = thisVal.isObject() ? thisVal.asObject()->getProp("getBoundingClientRect") : JsValue::undefined();
+        arr->arrayPush(rectFn.isCallable() ? vm.call(rectFn, thisVal, {}) : JsValue::object(vm.gc().newObject(ObjKind::Plain)));
+        return JsValue::object(arr);
+    });
+    addNativeM("scrollTo", NATIVE("element_scrollTo") {
+        Node* n = unwrapNode(thisVal);
+        if (!n || !thisVal.isObject()) return JsValue::undefined();
+        int left = args.size() > 0 ? ARG(0).toInt32() : 0;
+        int top = args.size() > 1 ? ARG(1).toInt32() : 0;
+        if (!args.empty() && ARG(0).isObject()) {
+            JsObject* opts = ARG(0).asObject();
+            left = opts->getProp("left").isUndefined() ? thisVal.asObject()->getProp("scrollLeft").toInt32() : opts->getProp("left").toInt32();
+            top = opts->getProp("top").isUndefined() ? thisVal.asObject()->getProp("scrollTop").toInt32() : opts->getProp("top").toInt32();
+        }
+        thisVal.asObject()->setProp("scrollLeft", JsValue::integer(std::max(0, left)));
+        thisVal.asObject()->setProp("scrollTop", JsValue::integer(std::max(0, top)));
+        return JsValue::undefined();
+    });
+    addNativeM("scroll", NATIVE("element_scroll") {
+        JsValue fn = thisVal.isObject() ? thisVal.asObject()->getProp("scrollTo") : JsValue::undefined();
+        return fn.isCallable() ? vm.call(fn, thisVal, args) : JsValue::undefined();
+    });
+    addNativeM("scrollBy", NATIVE("element_scrollBy") {
+        if (!thisVal.isObject()) return JsValue::undefined();
+        int left = thisVal.asObject()->getProp("scrollLeft").toInt32() + (args.size() > 0 ? ARG(0).toInt32() : 0);
+        int top = thisVal.asObject()->getProp("scrollTop").toInt32() + (args.size() > 1 ? ARG(1).toInt32() : 0);
+        JsValue fn = thisVal.asObject()->getProp("scrollTo");
+        return fn.isCallable() ? vm.call(fn, thisVal, { JsValue::integer(left), JsValue::integer(top) }) : JsValue::undefined();
     });
     addNativeM("scrollIntoView", NATIVE("scrollIntoView") {
         Node* n = unwrapNode(thisVal);
@@ -3087,6 +3194,13 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         }
         if (key == "className" || key == "class") n->attrs["class"] = val.toString();
         else if (key == "id")    n->attrs["id"] = val.toString();
+        else if (key == "role")  n->attrs["role"] = val.toString();
+        else if (key == "tabIndex") n->attrs["tabindex"] = val.toString();
+        else if (key == "hidden") {
+            if (val.toBool()) n->attrs["hidden"] = "";
+            else n->attrs.erase("hidden");
+        }
+        else if (!ariaAttrForProperty(key).empty()) n->attrs[ariaAttrForProperty(key)] = val.toString();
         else if (key == "value") setElementValue(n, val.toString());
         else if (n->type == NodeType::Text
             && (key == "data" || key == "nodeValue" || key == "textContent")) {
@@ -3158,6 +3272,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         }
         if (key == "className") { out = vmPtr->str(n->attr("class")); return true; }
         if (key == "id")        { out = vmPtr->str(n->attr("id"));    return true; }
+        if (key == "role")      { out = vmPtr->str(n->attr("role"));  return true; }
+        if (key == "tabIndex") {
+            std::string value = n->attr("tabindex");
+            out = JsValue::integer(value.empty() ? -1 : std::atoi(value.c_str()));
+            return true;
+        }
+        if (key == "hidden") { out = JsValue::boolean(hasAttr(n, "hidden")); return true; }
+        std::string ariaAttr = ariaAttrForProperty(key);
+        if (!ariaAttr.empty()) { out = vmPtr->str(n->attr(ariaAttr)); return true; }
         if (key == "value")     { out = vmPtr->str(elementValue(n));  return true; }
         if (n->type == NodeType::Text && (key == "data" || key == "nodeValue" || key == "textContent")) {
             out = vmPtr->str(n->text);
