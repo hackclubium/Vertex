@@ -1888,6 +1888,23 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "wasm/mvp-i32-add",
+        "var bytes = [0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11];\n"
+        "var mod = new WebAssembly.Module(bytes);\n"
+        "var inst = new WebAssembly.Instance(mod);\n"
+        "__result = WebAssembly.validate(bytes) + ':' + inst.exports.add(20, 22);\n",
+        "string: true:42\n",
+        result);
+
+    ExpectJsResult(
+        "wasm/internal-call-and-i32-ops",
+        "var bytes = [0,97,115,109,1,0,0,0,1,12,2,96,1,127,1,127,96,2,127,127,1,127,3,3,2,0,1,7,7,1,3,109,105,120,0,1,10,19,2,7,0,32,0,32,0,106,11,9,0,32,0,16,0,32,1,106,11];\n"
+        "var inst = new WebAssembly.Instance(new WebAssembly.Module(bytes));\n"
+        "__result = inst.exports.mix(19, 4);\n",
+        "number: 42\n",
+        result);
+
+    ExpectJsResult(
         "date/constructor-parse-and-iso",
         "var epoch = new Date(0);\n"
         "var parsed = new Date('1970-01-01T00:00:01.000Z');\n"

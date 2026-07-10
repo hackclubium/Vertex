@@ -2071,6 +2071,178 @@ static void registerRegExp(VM& vm) {
 
 // â”€â”€ Top-level entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+namespace {
+
+struct WasmType { std::vector<uint8_t> params; std::vector<uint8_t> results; };
+struct WasmFunc { uint32_t type = 0; std::vector<uint8_t> locals; std::vector<uint8_t> code; };
+struct WasmModuleData { std::vector<WasmType> types; std::vector<WasmFunc> funcs; std::unordered_map<std::string, uint32_t> exports; };
+static std::unordered_map<JsObject*, std::shared_ptr<WasmModuleData>> g_wasmModules;
+
+struct WasmReader {
+    const std::vector<uint8_t>& b; size_t p = 0; bool ok = true;
+    bool byte(uint8_t& out) { if (p >= b.size()) { ok = false; return false; } out = b[p++]; return true; }
+    bool bytes(size_t n, const uint8_t*& out) { if (p + n > b.size()) { ok = false; return false; } out = b.data() + p; p += n; return true; }
+    bool u32(uint32_t& out) { out = 0; int shift = 0; for (int i = 0; i < 5; ++i) { uint8_t c = 0; if (!byte(c)) return false; out |= (uint32_t)(c & 0x7f) << shift; if (!(c & 0x80)) return true; shift += 7; } ok = false; return false; }
+    bool i32(int32_t& out) { uint32_t value = 0; int shift = 0; uint8_t c = 0; for (int i = 0; i < 5; ++i) { if (!byte(c)) return false; value |= (uint32_t)(c & 0x7f) << shift; shift += 7; if (!(c & 0x80)) { if (shift < 32 && (c & 0x40)) value |= (~0u << shift); out = (int32_t)value; return true; } } ok = false; return false; }
+};
+
+static bool readWasmName(WasmReader& r, std::string& out) {
+    uint32_t len = 0; const uint8_t* p = nullptr;
+    if (!r.u32(len) || len > 1024 * 1024 || !r.bytes(len, p)) return false;
+    out.assign((const char*)p, (size_t)len);
+    return true;
+}
+
+static std::vector<uint8_t> wasmBytesFromJs(JsValue v) {
+    std::vector<uint8_t> out;
+    if (v.isString()) { const std::string& s = v.asString()->value; out.assign(s.begin(), s.end()); return out; }
+    if (!v.isObject()) return out;
+    JsObject* o = v.asObject();
+    uint32_t len = o->kind == ObjKind::Array ? o->arrayLength() : (uint32_t)std::max(0, o->getProp("length").toInt32());
+    if (len > 16 * 1024 * 1024) return {};
+    out.reserve(len);
+    for (uint32_t i = 0; i < len; ++i) out.push_back((uint8_t)(o->arrayGet(i).toInt32() & 255));
+    return out;
+}
+
+static std::shared_ptr<WasmModuleData> parseWasmModule(const std::vector<uint8_t>& bytes, std::string& error) {
+    if (bytes.size() < 8 || bytes[0] != 0x00 || bytes[1] != 0x61 || bytes[2] != 0x73 || bytes[3] != 0x6d || bytes[4] != 1 || bytes[5] || bytes[6] || bytes[7]) { error = "bad wasm header"; return nullptr; }
+    auto module = std::make_shared<WasmModuleData>();
+    WasmReader r{bytes, 8, true};
+    std::vector<uint32_t> funcTypes;
+    while (r.p < bytes.size() && r.ok) {
+        uint8_t id = 0; uint32_t size = 0;
+        if (!r.byte(id) || !r.u32(size) || r.p + size > bytes.size()) break;
+        size_t end = r.p + size;
+        std::vector<uint8_t> sec(bytes.begin() + (ptrdiff_t)r.p, bytes.begin() + (ptrdiff_t)end);
+        WasmReader s{sec, 0, true}; r.p = end;
+        if (id == 1) {
+            uint32_t count = 0; if (!s.u32(count) || count > 10000) { error = "bad type section"; return nullptr; }
+            for (uint32_t i = 0; i < count; ++i) {
+                uint8_t form = 0; uint32_t n = 0; WasmType t;
+                if (!s.byte(form) || form != 0x60 || !s.u32(n) || n > 64) { error = "bad function type"; return nullptr; }
+                for (uint32_t j = 0; j < n; ++j) { uint8_t vt = 0; if (!s.byte(vt) || vt != 0x7f) { error = "only i32 params supported"; return nullptr; } t.params.push_back(vt); }
+                if (!s.u32(n) || n > 1) { error = "only 0/1 result supported"; return nullptr; }
+                for (uint32_t j = 0; j < n; ++j) { uint8_t vt = 0; if (!s.byte(vt) || vt != 0x7f) { error = "only i32 results supported"; return nullptr; } t.results.push_back(vt); }
+                module->types.push_back(std::move(t));
+            }
+        } else if (id == 3) {
+            uint32_t count = 0; if (!s.u32(count) || count > 10000) { error = "bad function section"; return nullptr; }
+            funcTypes.resize(count);
+            for (uint32_t& t : funcTypes) if (!s.u32(t) || t >= module->types.size()) { error = "bad function type index"; return nullptr; }
+        } else if (id == 7) {
+            uint32_t count = 0; if (!s.u32(count) || count > 10000) { error = "bad export section"; return nullptr; }
+            for (uint32_t i = 0; i < count; ++i) { std::string name; uint8_t kind = 0; uint32_t index = 0; if (!readWasmName(s, name) || !s.byte(kind) || !s.u32(index)) { error = "bad export"; return nullptr; } if (kind == 0) module->exports[name] = index; }
+        } else if (id == 10) {
+            uint32_t count = 0; if (!s.u32(count) || count != funcTypes.size()) { error = "bad code section"; return nullptr; }
+            module->funcs.resize(count);
+            for (uint32_t i = 0; i < count; ++i) {
+                uint32_t bodySize = 0; if (!s.u32(bodySize) || s.p + bodySize > sec.size()) { error = "bad code body"; return nullptr; }
+                size_t bodyEnd = s.p + bodySize; uint32_t localGroups = 0; if (!s.u32(localGroups) || localGroups > 1024) { error = "bad locals"; return nullptr; }
+                WasmFunc f; f.type = funcTypes[i];
+                for (uint32_t g = 0; g < localGroups; ++g) { uint32_t n = 0; uint8_t vt = 0; if (!s.u32(n) || !s.byte(vt) || vt != 0x7f || f.locals.size() + n > 65536) { error = "only i32 locals supported"; return nullptr; } f.locals.insert(f.locals.end(), n, vt); }
+                f.code.assign(sec.begin() + (ptrdiff_t)s.p, sec.begin() + (ptrdiff_t)bodyEnd); s.p = bodyEnd; module->funcs[i] = std::move(f);
+            }
+        }
+        if (!s.ok) { error = "malformed wasm section"; return nullptr; }
+    }
+    if (!r.ok || module->types.empty() || module->funcs.empty()) { error = "incomplete wasm module"; return nullptr; }
+    for (const auto& e : module->exports) if (e.second >= module->funcs.size()) { error = "bad export index"; return nullptr; }
+    return module;
+}
+
+static int32_t runWasmFunction(const WasmModuleData& module, uint32_t funcIndex, const std::vector<JsValue>& args) {
+    if (funcIndex >= module.funcs.size()) throw std::runtime_error("wasm bad function index");
+    const WasmFunc& f = module.funcs[funcIndex]; const WasmType& t = module.types[f.type];
+    std::vector<int32_t> locals; locals.reserve(t.params.size() + f.locals.size());
+    for (size_t i = 0; i < t.params.size(); ++i) locals.push_back(i < args.size() ? args[i].toInt32() : 0);
+    locals.insert(locals.end(), f.locals.size(), 0);
+    std::vector<int32_t> stack; WasmReader r{f.code, 0, true};
+    auto pop = [&]() -> int32_t { if (stack.empty()) throw std::runtime_error("wasm stack underflow"); int32_t v = stack.back(); stack.pop_back(); return v; };
+    while (r.p < f.code.size()) {
+        uint8_t op = 0; if (!r.byte(op)) break;
+        if (op == 0x0b) break;
+        if (op == 0x0f) return stack.empty() ? 0 : stack.back();
+        if (op == 0x10) {
+            uint32_t callee = 0;
+            if (!r.u32(callee) || callee >= module.funcs.size()) throw std::runtime_error("wasm bad call");
+            const WasmType& ct = module.types[module.funcs[callee].type];
+            std::vector<JsValue> callArgs(ct.params.size());
+            for (size_t i = ct.params.size(); i > 0; --i) callArgs[i - 1] = JsValue::integer(pop());
+            int32_t ret = runWasmFunction(module, callee, callArgs);
+            if (!ct.results.empty()) stack.push_back(ret);
+        }
+        else if (op == 0x20) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.get"); stack.push_back(locals[i]); }
+        else if (op == 0x21) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.set"); locals[i] = pop(); }
+        else if (op == 0x22) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.tee"); locals[i] = stack.empty() ? 0 : stack.back(); }
+        else if (op == 0x41) { int32_t v = 0; if (!r.i32(v)) throw std::runtime_error("wasm bad i32.const"); stack.push_back(v); }
+        else if (op == 0x45) stack.push_back(pop() == 0);
+        else if (op == 0x46) { int32_t b = pop(), a = pop(); stack.push_back(a == b); }
+        else if (op == 0x47) { int32_t b = pop(), a = pop(); stack.push_back(a != b); }
+        else if (op == 0x48) { int32_t b = pop(), a = pop(); stack.push_back(a < b); }
+        else if (op == 0x4a) { int32_t b = pop(), a = pop(); stack.push_back(a > b); }
+        else if (op == 0x4c) { int32_t b = pop(), a = pop(); stack.push_back(a <= b); }
+        else if (op == 0x4e) { int32_t b = pop(), a = pop(); stack.push_back(a >= b); }
+        else if (op == 0x6a) { int32_t b = pop(), a = pop(); stack.push_back(a + b); }
+        else if (op == 0x6b) { int32_t b = pop(), a = pop(); stack.push_back(a - b); }
+        else if (op == 0x6c) { int32_t b = pop(), a = pop(); stack.push_back(a * b); }
+        else if (op == 0x6d) { int32_t b = pop(), a = pop(); if (!b) throw std::runtime_error("wasm divide by zero"); stack.push_back(a / b); }
+        else if (op == 0x6f) { int32_t b = pop(), a = pop(); if (!b) throw std::runtime_error("wasm divide by zero"); stack.push_back(a % b); }
+        else if (op == 0x71) { int32_t b = pop(), a = pop(); stack.push_back(a & b); }
+        else if (op == 0x72) { int32_t b = pop(), a = pop(); stack.push_back(a | b); }
+        else if (op == 0x73) { int32_t b = pop(), a = pop(); stack.push_back(a ^ b); }
+        else if (op == 0x74) { int32_t b = pop(), a = pop(); stack.push_back(a << (b & 31)); }
+        else if (op == 0x75) { int32_t b = pop(), a = pop(); stack.push_back(a >> (b & 31)); }
+        else if (op == 0x76) { int32_t b = pop(); uint32_t a = (uint32_t)pop(); stack.push_back((int32_t)(a >> (b & 31))); }
+        else throw std::runtime_error("unsupported wasm opcode");
+        if (stack.size() > 1024 * 1024) throw std::runtime_error("wasm stack limit");
+    }
+    if (!r.ok) throw std::runtime_error("truncated wasm code");
+    return stack.empty() ? 0 : stack.back();
+}
+
+static JsObject* makeWasmModuleObject(VM& vm, std::shared_ptr<WasmModuleData> module) { auto* obj = vm.gc().newObject(ObjKind::Plain); g_wasmModules[obj] = std::move(module); return obj; }
+
+static JsObject* makeWasmInstanceObject(VM& vm, std::shared_ptr<WasmModuleData> module) {
+    auto* inst = vm.gc().newObject(ObjKind::Plain); JsValue instVal = JsValue::object(inst); vm.gc().addRoot(&instVal);
+    auto* exports = vm.gc().newObject(ObjKind::Plain); JsValue exportsVal = JsValue::object(exports); vm.gc().addRoot(&exportsVal);
+    for (const auto& it : module->exports) {
+        std::string name = it.first; uint32_t index = it.second;
+        auto* fn = vm.gc().newNativeFunction([module, index](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            try { return JsValue::integer(runWasmFunction(*module, index, args)); }
+            catch (const std::exception& e) { vm.throwError("RuntimeError", e.what()); }
+            return JsValue::undefined();
+        }, name);
+        exports->setProp(name, JsValue::object(fn));
+    }
+    inst->setProp("exports", exportsVal); vm.gc().removeRoot(&exportsVal); vm.gc().removeRoot(&instVal); return inst;
+}
+
+static void registerWebAssembly(VM& vm) {
+    auto* wasm = vm.gc().newObject(ObjKind::Plain);
+    auto* moduleCtor = vm.gc().newNativeFunction(NATIVE("WebAssembly.Module") {
+        std::string error; auto module = parseWasmModule(wasmBytesFromJs(ARG(0)), error);
+        if (!module) vm.throwError("CompileError", error);
+        return JsValue::object(makeWasmModuleObject(vm, module));
+    }, "Module");
+    auto* instanceCtor = vm.gc().newNativeFunction(NATIVE("WebAssembly.Instance") {
+        if (!ARG(0).isObject() || !g_wasmModules.count(ARG(0).asObject())) vm.throwTypeError("WebAssembly.Instance needs Module");
+        return JsValue::object(makeWasmInstanceObject(vm, g_wasmModules[ARG(0).asObject()]));
+    }, "Instance");
+    wasm->setProp("Module", JsValue::object(moduleCtor));
+    wasm->setProp("Instance", JsValue::object(instanceCtor));
+    addNative(vm, wasm, "validate", NATIVE("WebAssembly.validate") { std::string error; return JsValue::boolean((bool)parseWasmModule(wasmBytesFromJs(ARG(0)), error)); });
+    addNative(vm, wasm, "instantiate", NATIVE("WebAssembly.instantiate") {
+        std::shared_ptr<WasmModuleData> module;
+        if (ARG(0).isObject() && g_wasmModules.count(ARG(0).asObject())) module = g_wasmModules[ARG(0).asObject()];
+        else { std::string error; module = parseWasmModule(wasmBytesFromJs(ARG(0)), error); if (!module) vm.throwError("CompileError", error); }
+        return JsValue::object(makeWasmInstanceObject(vm, module));
+    });
+    vm.setGlobal("WebAssembly", JsValue::object(wasm));
+}
+
+} // namespace
+
 void registerBuiltins(VM& vm) {
     registerGlobals(vm);
     registerObject(vm);
@@ -2086,6 +2258,7 @@ void registerBuiltins(VM& vm) {
     registerMapSet(vm);
     registerDate(vm);
     registerRegExp(vm);
+    registerWebAssembly(vm);
     
     // Crypto API - crypto.randomUUID() and crypto.getRandomValues()
     auto* crypto = vm.gc().newObject(ObjKind::Plain);
