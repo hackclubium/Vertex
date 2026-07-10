@@ -177,7 +177,7 @@ StmtPtr Parser::parseStmt() {
     if (check(TT::Throw))  return parseThrowStmt();
     if (check(TT::Try))    return parseTryCatchStmt();
     if (check(TT::Switch)) return parseSwitchStmt();
-    if (check(TT::Import)) return parseImportDecl();
+    if (check(TT::Import) && !peek().is(TT::LParen)) return parseImportDecl();
     if (check(TT::Export)) return parseExportDecl();
 
     if (check(TT::Break)) {
@@ -754,6 +754,10 @@ ExprPtr Parser::parsePrimary() {
     if (check(TT::Undefined)) { consume(); LiteralExpr lit; lit.isUndefined=true; return std::make_unique<Expr>(lit,ln); }
     if (check(TT::This))  { consume(); return std::make_unique<Expr>(ThisExpr{}, ln); }
     if (check(TT::Super)) { consume(); return std::make_unique<Expr>(SuperExpr{}, ln); }
+    if (check(TT::Import) && peek().is(TT::LParen)) {
+        consume();
+        return std::make_unique<Expr>(IdentExpr{"__dynamicImport"}, ln);
+    }
 
     if (check(TT::Ident)) {
         std::string name = consume().value;

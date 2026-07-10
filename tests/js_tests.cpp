@@ -1645,6 +1645,59 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "runtime/iterator-and-builtins-breadth",
+        "var arr = [1, 2, 3, 4];\n"
+        "var firstEntry = arr.entries().next().value;\n"
+        "var copied = arr.copyWithin(1, 2).join(',');\n"
+        "__result = firstEntry[0] + ':' + firstEntry[1] + '|' + copied + '|' + arr.at(-1) + ':' + arr.findLast(function(v){ return v < 4; }) + ':' + arr.findLastIndex(function(v){ return v < 4; });\n",
+        "string: 0:1|1,3,4,4|4:3:1\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/object-descriptor-helpers",
+        "var obj = {}; Object.defineProperty(obj, 'a', { value: 3 }); Object.defineProperties(obj, { b: { value: 4 } });\n"
+        "var desc = Object.getOwnPropertyDescriptor(obj, 'a');\n"
+        "__result = Object.hasOwn(obj, 'b') + ':' + desc.value + ':' + Object.isExtensible(obj);\n",
+        "string: true:3:true\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/modern-copy-and-group-builtins",
+        "var a = [3, 1, 2];\n"
+        "__result = a.toSorted().join('') + '|' + a.join('') + '|' + a.toReversed().join('') + '|' + a.toSpliced(1, 1, 7, 8).join('');\n",
+        "string: 123|312|213|3782\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/object-groupby",
+        "var grouped = Object.groupBy(['aa', 'b', 'cc'], function(x) { return x.length; });\n"
+        "__result = grouped['2'].join('-') + ':' + grouped['1'][0];\n",
+        "string: aa-cc:b\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/structured-clone-surface",
+        "var cloned = structuredClone({ list: [1, { x: 2 }] }); cloned.list[1].x = 9;\n"
+        "__result = cloned.list[0] + ':' + cloned.list[1].x;\n",
+        "string: 1:9\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/promise-any-and-microtask-globals",
+        "queueMicrotask(function() { __result = 'q:' + (globalThis === self); });\n"
+        "Promise.any([Promise.reject('bad'), Promise.resolve('ok')]).then(function(v) { __result += ':' + v; });\n"
+        "Promise.any([Promise.reject('x')]).catch(function(e) { __result += ':' + e.name; });\n",
+        "string: q:true:ok:AggregateError\n",
+        result);
+
+    ExpectJsResult(
+        "runtime/dynamic-import-shim",
+        "var out = 'pending';\n"
+        "import('/module.js').then(function(mod) { __result = mod.url; });\n",
+        "string: /module.js\n",
+        result);
+
+    ExpectJsResult(
         "date/constructor-parse-and-iso",
         "var epoch = new Date(0);\n"
         "var parsed = new Date('1970-01-01T00:00:01.000Z');\n"

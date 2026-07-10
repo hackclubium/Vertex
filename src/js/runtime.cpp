@@ -28,6 +28,80 @@ static JsValue addNative(VM& vm, JsObject* obj, const std::string& name, NativeF
 
 static std::unordered_map<std::string, std::string> g_symbolRegistry;
 
+static JsValue arrayIteratorObject(VM& vm, JsValue target, const std::string& kind) {
+    JsValue targetRoot = target;
+    vm.gc().addRoot(&targetRoot);
+    auto* iter = vm.gc().newObject(ObjKind::Iterator);
+    JsValue iterVal = JsValue::object(iter);
+    vm.gc().addRoot(&iterVal);
+    iter->iterTarget = target;
+    iter->iterIndex = 0;
+    iter->setProp("__kind", vm.str(kind));
+    addNative(vm, iter, "next", NATIVE("iterator_next") {
+        if (!thisVal.isObject()) return JsValue::undefined();
+        JsObject* self = thisVal.asObject();
+        JsValue source = self->iterTarget;
+        uint32_t index = self->iterIndex;
+        uint32_t len = source.isString() ? (uint32_t)source.asString()->value.size()
+            : (source.isObject() ? source.asObject()->arrayLength() : 0);
+        auto* result = vm.gc().newObject(ObjKind::Plain);
+        if (index >= len) {
+            result->setProp("done", JsValue::boolean(true));
+            result->setProp("value", JsValue::undefined());
+            return JsValue::object(result);
+        }
+        self->iterIndex++;
+        std::string kind = self->getProp("__kind").toString();
+        JsValue value;
+        if (kind == "key") value = JsValue::integer((int32_t)index);
+        else if (kind == "entry") {
+            auto* pair = vm.gc().newArray();
+            pair->arrayPush(JsValue::integer((int32_t)index));
+            pair->arrayPush(source.isString() ? vm.str(std::string(1, source.asString()->value[index])) : source.asObject()->arrayGet(index));
+            value = JsValue::object(pair);
+        } else value = source.isString() ? vm.str(std::string(1, source.asString()->value[index])) : source.asObject()->arrayGet(index);
+        result->setProp("done", JsValue::boolean(false));
+        result->setProp("value", value);
+        return JsValue::object(result);
+    });
+    iter->setProp("Symbol(Symbol.iterator)_registry", JsValue::object(iter));
+    iter->setProp("Symbol(iterator)_registry", JsValue::object(iter));
+    vm.gc().removeRoot(&iterVal);
+    vm.gc().removeRoot(&targetRoot);
+    return iterVal;
+}
+
+static JsObject* newArrayWithPrototype(VM& vm) {
+    auto* arr = vm.gc().newArray();
+    JsValue arrayCtor = vm.getGlobal("Array");
+    if (arrayCtor.isObject()) {
+        JsValue proto = arrayCtor.asObject()->getProp("prototype");
+        if (proto.isObject()) arr->proto = proto.asObject();
+    }
+    return arr;
+}
+
+static JsValue cloneJsValue(VM& vm, JsValue value, int depth = 0) {
+    if (!value.isObject() || depth > 32) return value;
+    JsObject* source = value.asObject();
+    if (source->kind == ObjKind::Array) {
+        auto* arr = vm.gc().newArray();
+        JsValue arrVal = JsValue::object(arr);
+        vm.gc().addRoot(&arrVal);
+        for (uint32_t i = 0; i < source->arrayLength(); ++i)
+            arr->arrayPush(cloneJsValue(vm, source->arrayGet(i), depth + 1));
+        vm.gc().removeRoot(&arrVal);
+        return arrVal;
+    }
+    auto* out = vm.gc().newObject(ObjKind::Plain);
+    JsValue outVal = JsValue::object(out);
+    vm.gc().addRoot(&outVal);
+    for (const auto& key : source->ownEnumKeys())
+        out->setProp(key, cloneJsValue(vm, source->getProp(key), depth + 1));
+    vm.gc().removeRoot(&outVal);
+    return outVal;
+}
+
 // â”€â”€ Object.prototype methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static void registerObject(VM& vm) {
@@ -110,8 +184,35 @@ static void registerObject(VM& vm) {
         if (ARG(0).isObject()) for (auto& k : ARG(0).asObject()->ownAllKeys()) arr->arrayPush(vm.str(k));
         return JsValue::object(arr);
     });
+    addNative(vm, ctor, "getOwnPropertyDescriptor", NATIVE("getOwnPropertyDescriptor") {
+        if (!ARG(0).isObject()) return JsValue::undefined();
+        auto* o = ARG(0).asObject();
+        std::string key = ARG_STR(1);
+        if (!o->hasOwnProp(key)) return JsValue::undefined();
+        auto* desc = vm.gc().newObject(ObjKind::Plain);
+        desc->setProp("value", o->getProp(key));
+        desc->setProp("writable", JsValue::boolean(true));
+        desc->setProp("enumerable", JsValue::boolean(true));
+        desc->setProp("configurable", JsValue::boolean(true));
+        return JsValue::object(desc);
+    });
+    addNative(vm, ctor, "defineProperties", NATIVE("defineProperties") {
+        if (!ARG(0).isObject() || !ARG(1).isObject()) return ARG(0);
+        JsValue objectCtor = vm.getGlobal("Object");
+        JsValue define = objectCtor.isObject() ? objectCtor.asObject()->getProp("defineProperty") : JsValue::undefined();
+        for (const auto& key : ARG(1).asObject()->ownEnumKeys())
+            if (define.isCallable()) vm.call(define, objectCtor, { ARG(0), vm.str(key), ARG(1).asObject()->getProp(key) });
+        return ARG(0);
+    });
+    addNative(vm, ctor, "hasOwn", NATIVE("hasOwn") {
+        return JsValue::boolean(ARG(0).isObject() && ARG(0).asObject()->hasOwnProp(ARG_STR(1)));
+    });
     addNative(vm, ctor, "freeze", NATIVE("freeze") { return ARG(0); });
+    addNative(vm, ctor, "seal", NATIVE("seal") { return ARG(0); });
+    addNative(vm, ctor, "preventExtensions", NATIVE("preventExtensions") { return ARG(0); });
     addNative(vm, ctor, "isFrozen", NATIVE("isFrozen") { return JsValue::boolean(false); });
+    addNative(vm, ctor, "isSealed", NATIVE("isSealed") { return JsValue::boolean(false); });
+    addNative(vm, ctor, "isExtensible", NATIVE("isExtensible") { return JsValue::boolean(true); });
     addNative(vm, ctor, "getPrototypeOf", NATIVE("getPrototypeOf") {
         if (ARG(0).isObject() && ARG(0).asObject()->proto)
             return JsValue::object(ARG(0).asObject()->proto);
@@ -130,6 +231,28 @@ static void registerObject(VM& vm) {
             }
         }
         return JsValue::object(o);
+    });
+    addNative(vm, ctor, "groupBy", NATIVE("Object.groupBy") {
+        auto* out = vm.gc().newObject(ObjKind::Plain);
+        JsValue outVal = JsValue::object(out);
+        vm.gc().addRoot(&outVal);
+        if (ARG(0).isObject() && ARG(1).isCallable()) {
+            auto* arr = ARG(0).asObject();
+            for (uint32_t i = 0; i < arr->arrayLength(); ++i) {
+                JsValue item = arr->arrayGet(i);
+                std::string key = vm.call(ARG(1), JsValue::undefined(), { item, JsValue::integer((int32_t)i) }).toString();
+                JsValue bucket = out->getProp(key);
+                JsObject* bucketArr = nullptr;
+                if (bucket.isObject() && bucket.asObject()->kind == ObjKind::Array) bucketArr = bucket.asObject();
+                else {
+                    bucketArr = newArrayWithPrototype(vm);
+                    out->setProp(key, JsValue::object(bucketArr));
+                }
+                bucketArr->arrayPush(item);
+            }
+        }
+        vm.gc().removeRoot(&outVal);
+        return outVal;
     });
 
     addNative(vm, proto, "hasOwnProperty", NATIVE("hasOwnProperty") {
@@ -414,18 +537,109 @@ static void registerArray(VM& vm) {
         return thisVal;
     });
     addNative(vm, proto, "keys", NATIVE("array_keys") {
-        auto* iter = vm.gc().newObject(ObjKind::Iterator);
-        iter->iterTarget = thisVal; iter->iterIndex = 0;
-        auto* keys = vm.gc().newArray();
-        if (thisVal.isObject()) for (uint32_t i = 0; i < thisVal.asObject()->arrayLength(); i++) keys->arrayPush(JsValue::integer((int32_t)i));
-        iter->iterTarget = JsValue::object(keys);
-        return JsValue::object(iter);
+        return arrayIteratorObject(vm, thisVal, "key");
     });
     addNative(vm, proto, "values", NATIVE("array_values") {
-        auto* iter = vm.gc().newObject(ObjKind::Iterator);
-        iter->iterTarget = thisVal; iter->iterIndex = 0;
-        return JsValue::object(iter);
+        return arrayIteratorObject(vm, thisVal, "value");
     });
+    addNative(vm, proto, "entries", NATIVE("array_entries") {
+        return arrayIteratorObject(vm, thisVal, "entry");
+    });
+    addNative(vm, proto, "at", NATIVE("array_at") {
+        if (!thisVal.isObject()) return JsValue::undefined();
+        auto* arr = thisVal.asObject();
+        int32_t len = (int32_t)arr->arrayLength();
+        int32_t index = ARG_INT(0);
+        if (index < 0) index = len + index;
+        return index < 0 || index >= len ? JsValue::undefined() : arr->arrayGet((uint32_t)index);
+    });
+    addNative(vm, proto, "copyWithin", NATIVE("copyWithin") {
+        if (!thisVal.isObject()) return thisVal;
+        auto* arr = thisVal.asObject();
+        int32_t len = (int32_t)arr->arrayLength();
+        int32_t target = ARG_INT(0); if (target < 0) target = len + target;
+        int32_t start = args.size() > 1 ? ARG_INT(1) : 0; if (start < 0) start = len + start;
+        int32_t end = args.size() > 2 ? ARG_INT(2) : len; if (end < 0) end = len + end;
+        target = std::max(0, std::min(target, len));
+        start = std::max(0, std::min(start, len));
+        end = std::max(0, std::min(end, len));
+        std::vector<JsValue> values;
+        for (int32_t i = start; i < end; ++i) values.push_back(arr->arrayGet((uint32_t)i));
+        for (size_t i = 0; i < values.size() && target + (int32_t)i < len; ++i) arr->arraySet((uint32_t)(target + i), values[i]);
+        return thisVal;
+    });
+    addNative(vm, proto, "findLast", NATIVE("findLast") {
+        if (!thisVal.isObject() || !ARG(0).isCallable()) return JsValue::undefined();
+        auto* arr = thisVal.asObject();
+        for (int32_t i = (int32_t)arr->arrayLength() - 1; i >= 0; --i) {
+            JsValue v = arr->arrayGet((uint32_t)i);
+            if (vm.call(ARG(0), thisVal, {v, JsValue::integer(i), thisVal}).toBool()) return v;
+        }
+        return JsValue::undefined();
+    });
+    addNative(vm, proto, "findLastIndex", NATIVE("findLastIndex") {
+        if (!thisVal.isObject() || !ARG(0).isCallable()) return JsValue::integer(-1);
+        auto* arr = thisVal.asObject();
+        for (int32_t i = (int32_t)arr->arrayLength() - 1; i >= 0; --i) {
+            JsValue v = arr->arrayGet((uint32_t)i);
+            if (vm.call(ARG(0), thisVal, {v, JsValue::integer(i), thisVal}).toBool()) return JsValue::integer(i);
+        }
+        return JsValue::integer(-1);
+    });
+    addNative(vm, proto, "toReversed", NATIVE("toReversed") {
+        auto* out = newArrayWithPrototype(vm);
+        if (thisVal.isObject()) {
+            auto* arr = thisVal.asObject();
+            for (int32_t i = (int32_t)arr->arrayLength() - 1; i >= 0; --i) out->arrayPush(arr->arrayGet((uint32_t)i));
+        }
+        return JsValue::object(out);
+    });
+    addNative(vm, proto, "toSorted", NATIVE("toSorted") {
+        auto* out = newArrayWithPrototype(vm);
+        if (thisVal.isObject()) {
+            auto* arr = thisVal.asObject();
+            std::vector<JsValue> elems;
+            for (uint32_t i = 0; i < arr->arrayLength(); ++i) elems.push_back(arr->arrayGet(i));
+            JsValue cmpFn = ARG(0);
+            std::stable_sort(elems.begin(), elems.end(), [&](const JsValue& a, const JsValue& b) {
+                if (cmpFn.isCallable()) {
+                    try { return vm.call(cmpFn, JsValue::undefined(), { a, b }).toNumber() < 0; } catch (...) {}
+                }
+                return a.toString() < b.toString();
+            });
+            for (const auto& value : elems) out->arrayPush(value);
+        }
+        return JsValue::object(out);
+    });
+    addNative(vm, proto, "toSpliced", NATIVE("toSpliced") {
+        auto* out = newArrayWithPrototype(vm);
+        if (!thisVal.isObject()) return JsValue::object(out);
+        auto* arr = thisVal.asObject();
+        int32_t len = (int32_t)arr->arrayLength();
+        int32_t start = ARG_INT(0); if (start < 0) start = len + start;
+        start = std::max(0, std::min(start, len));
+        int32_t deleteCount = args.size() > 1 ? ARG_INT(1) : len - start;
+        deleteCount = std::max(0, std::min(deleteCount, len - start));
+        for (int32_t i = 0; i < start; ++i) out->arrayPush(arr->arrayGet((uint32_t)i));
+        for (size_t i = 2; i < args.size(); ++i) out->arrayPush(args[i]);
+        for (int32_t i = start + deleteCount; i < len; ++i) out->arrayPush(arr->arrayGet((uint32_t)i));
+        return JsValue::object(out);
+    });
+    addNative(vm, proto, "with", NATIVE("array_with") {
+        JsValue copyFn = thisVal.isObject() ? thisVal.asObject()->getProp("slice") : JsValue::undefined();
+        JsValue copied = copyFn.isCallable() ? vm.call(copyFn, thisVal, {}) : JsValue::object(vm.gc().newArray());
+        vm.gc().addRoot(&copied);
+        if (copied.isObject()) {
+            auto* arr = copied.asObject();
+            int32_t len = (int32_t)arr->arrayLength();
+            int32_t index = ARG_INT(0);
+            if (index < 0) index = len + index;
+            if (index >= 0 && index < len) arr->arraySet((uint32_t)index, ARG(1));
+        }
+        vm.gc().removeRoot(&copied);
+        return copied;
+    });
+    proto->setProp("Symbol(Symbol.iterator)_registry", proto->getProp("values"));
 
     // Static methods
     auto* ctor = vm.gc().newNativeFunction(NATIVE("Array") {
@@ -443,7 +657,18 @@ static void registerArray(VM& vm) {
         JsValue src = ARG(0), mapFn = ARG(1);
         if (src.isObject()) {
             auto* o = src.asObject();
-            if (o->kind == ObjKind::Array) {
+            JsValue nextFn = o->getProp("next");
+            if (nextFn.isCallable()) {
+                int32_t i = 0;
+                while (true) {
+                    JsValue step = vm.call(nextFn, src, {});
+                    if (!step.isObject() || step.asObject()->getProp("done").toBool()) break;
+                    JsValue v = step.asObject()->getProp("value");
+                    if (mapFn.isCallable()) v = vm.call(mapFn, JsValue::undefined(), {v, JsValue::integer(i)});
+                    result->arrayPush(v);
+                    ++i;
+                }
+            } else if (o->kind == ObjKind::Array) {
                 for (uint32_t i = 0; i < o->arrayLength(); i++) {
                     JsValue v = o->arrayGet(i);
                     if (mapFn.isCallable()) v = vm.call(mapFn, JsValue::undefined(), {v, JsValue::integer((int32_t)i)});
@@ -699,6 +924,9 @@ static void registerString(VM& vm) {
         if (i < 0) i = (int)s.size() + i;
         if (i < 0 || i >= (int)s.size()) return JsValue::undefined();
         return vm.str(std::string(1, s[i]));
+    });
+    addNative(vm, proto, "Symbol(Symbol.iterator)_registry", NATIVE("str_iterator") {
+        return arrayIteratorObject(vm, thisVal, "value");
     });
 
     auto* ctor = vm.gc().newNativeFunction(NATIVE("String") {
@@ -1100,6 +1328,43 @@ static void registerPromise(VM& vm) {
         }
         return JsValue::object(out);
     });
+    addNative(vm, ctor, "any", NATIVE("Promise.any") {
+        auto* out = vm.gc().newPromise();
+        vm.initPromiseObject(out);
+        JsValue iterable = ARG(0);
+        if (!iterable.isObject() || iterable.asObject()->kind != ObjKind::Array) {
+            vm.resolvePromise(out, iterable);
+            return JsValue::object(out);
+        }
+        auto* source = iterable.asObject();
+        uint32_t len = source->arrayLength();
+        if (len == 0) {
+            vm.rejectPromise(out, vm.makeError("AggregateError", "All promises were rejected"));
+            return JsValue::object(out);
+        }
+        auto remaining = std::make_shared<uint32_t>(len);
+        for (uint32_t i = 0; i < len; ++i) {
+            JsValue item = source->arrayGet(i);
+            if (item.isObject() && item.asObject()->kind == ObjKind::Promise) {
+                auto fulfill = JsValue::object(vm.gc().newNativeFunction(
+                    [out](VM& v, JsValue, std::vector<JsValue> a) -> JsValue {
+                        v.resolvePromise(out, a.empty() ? JsValue::undefined() : a[0]);
+                        return JsValue::undefined();
+                    }, "Promise.any.fulfill"));
+                auto reject = JsValue::object(vm.gc().newNativeFunction(
+                    [out, remaining](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+                        if (*remaining > 0 && --(*remaining) == 0)
+                            v.rejectPromise(out, v.makeError("AggregateError", "All promises were rejected"));
+                        return JsValue::undefined();
+                    }, "Promise.any.reject"));
+                vm.promiseThen(item.asObject(), fulfill, reject);
+            } else {
+                vm.resolvePromise(out, item);
+                break;
+            }
+        }
+        return JsValue::object(out);
+    });
     vm.setGlobal("Promise", JsValue::object(ctor));
 }
 
@@ -1297,6 +1562,19 @@ static void registerGlobals(VM& vm) {
     }, "decodeURIComponent")));
     vm.setGlobal("encodeURI", vm.getGlobal("encodeURIComponent"));
     vm.setGlobal("decodeURI", vm.getGlobal("decodeURIComponent"));
+    vm.setGlobal("__dynamicImport", JsValue::object(vm.gc().newNativeFunction(NATIVE("dynamic_import") {
+        auto* module = vm.gc().newObject(ObjKind::Plain);
+        JsValue moduleVal = JsValue::object(module);
+        vm.gc().addRoot(&moduleVal);
+        module->setProp("default", JsValue::undefined());
+        module->setProp("url", args.empty() ? vm.str("") : ARG(0));
+        JsValue promise = vm.promiseResolve(moduleVal);
+        vm.gc().removeRoot(&moduleVal);
+        return promise;
+    }, "import")));
+    vm.setGlobal("structuredClone", JsValue::object(vm.gc().newNativeFunction(NATIVE("structuredClone") {
+        return cloneJsValue(vm, ARG(0));
+    }, "structuredClone")));
 
     // Symbol: represented as unique string atoms for now, with registry helpers
     // so common platform/library probes behave like the web surface.
@@ -1342,6 +1620,7 @@ static void registerGlobals(VM& vm) {
         if (args.empty()) return v.str("Symbol()");
         return v.str(symbolDisplay(args[0].toString()));
     });
+    symbolCtor->setProp("iterator", vm.str("Symbol(Symbol.iterator)_registry"));
     vm.setGlobal("Symbol", JsValue::object(symbolCtor));
 
     // Error constructors
@@ -1359,6 +1638,7 @@ static void registerGlobals(VM& vm) {
     makeErrCtor("SyntaxError");
     makeErrCtor("URIError");
     makeErrCtor("EvalError");
+    makeErrCtor("AggregateError");
 }
 
 // â”€â”€ Map / Set â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1439,13 +1719,17 @@ static void registerMapSet(VM& vm) {
         });
         addNative(vm, map, "entries", NATIVE("map_entries") {
             auto* a = vm.gc().newArray();
+            JsValue aVal = JsValue::object(a); vm.gc().addRoot(&aVal);
             if (thisVal.isObject()) for (auto& entry : thisVal.asObject()->mapEntries) {
                 auto* p = vm.gc().newArray();
+                JsValue pVal = JsValue::object(p); vm.gc().addRoot(&pVal);
                 p->arrayPush(entry.first);
                 p->arrayPush(entry.second);
-                a->arrayPush(JsValue::object(p));
+                a->arrayPush(pVal);
+                vm.gc().removeRoot(&pVal);
             }
-            return JsValue::object(a);
+            vm.gc().removeRoot(&aVal);
+            return aVal;
         });
         addNative(vm, map, "forEach", NATIVE("map_foreach") {
             if (thisVal.isObject() && ARG(0).isCallable())
@@ -1522,13 +1806,17 @@ static void registerMapSet(VM& vm) {
         });
         addNative(vm, set, "entries", NATIVE("set_entries") {
             auto* a = vm.gc().newArray();
+            JsValue aVal = JsValue::object(a); vm.gc().addRoot(&aVal);
             if (thisVal.isObject()) for (auto& value : thisVal.asObject()->setEntries) {
                 auto* p = vm.gc().newArray();
+                JsValue pVal = JsValue::object(p); vm.gc().addRoot(&pVal);
                 p->arrayPush(value);
                 p->arrayPush(value);
-                a->arrayPush(JsValue::object(p));
+                a->arrayPush(pVal);
+                vm.gc().removeRoot(&pVal);
             }
-            return JsValue::object(a);
+            vm.gc().removeRoot(&aVal);
+            return aVal;
         });
         return JsValue::object(set);
     }, "Set");
