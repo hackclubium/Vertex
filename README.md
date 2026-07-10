@@ -13,43 +13,36 @@
 
 <p align="center">
   <strong>A browser engine built from scratch in C++.</strong><br>
-  HTML, CSS, JavaScript, layout, SVG, painting, navigation, and tabs --
-  no Chromium, WebView, CEF, or QtWebEngine.
+  HTML, CSS, JS, layout, SVG, rendering, tabs, navigation, the whole deal.<br>
+  No Chromium. No WebView. No CEF. No QtWebEngine. Just us.
 </p>
 
 ---
 
-Vertex is a web browser built entirely from the ground up. Every piece -- parser, DOM,
-stylesheet engine, JavaScript runtime, layout algorithms, SVG renderer, painting path,
-resource cache, forms, events, history, and the native window shell -- lives in this
-repository.
+So yeah, this is a web browser where every part is written from scratch. The parser, the DOM, the CSS engine, the JavaScript runtime, the layout engine, the SVG renderer, the network stack, the window shell, everything. It's all in this repo.
 
-If you want to understand how a browser actually works, Vertex is the kind of project
-you can open, read, and tinker with.
+If you've ever wondered how browsers actually work under the hood, this is a place where you can poke around and find out. The code has a lot of comments on purpose, because reading other people's browser code without comments is torture.
 
-Comments in the codebase are intentionally detailed to aid readability.
+## What Works
 
-## Status
+It's early days, but Vertex can load real websites and do a decent amount:
 
-Vertex loads real pages and has enough of the platform to be useful as an everyday
-experimental browser:
-
-| Area | Status |
+| Area | What's there |
 |---|---|
-| Platforms | Windows, macOS, and Linux native shells over one shared engine |
-| Pages | HTTP/HTTPS pages, images, CSS, scripts, SVGs, and local `vertex://` pages |
-| UI | Tabs, address bar, profile-backed history/bookmarks/downloads, reload/stop/home, zoom, find-in-page, status text |
-| Updates | GitHub release checking, background portable download, helper-assisted install with `F12` |
-| Performance | Cached resources, cached stylesheets, cached selector parsing, dirty layout paths, hover fast paths |
-| Profile | Per-user storage for settings, history, bookmarks, downloads, cookies, local storage, and session restore |
-| Testing | Subsystem test suites for HTML, CSS, layout, paint, JS, network, and codec |
+| Platforms | Windows, macOS, Linux, all sharing the same engine |
+| Pages | HTTP/HTTPS, images, CSS, JS, SVGs, `<canvas>`, and `vertex://` internal pages |
+| UI | Tabs, address bar, history, bookmarks, downloads, reload, zoom, find-in-page, context menus |
+| Search | DuckDuckGo for address bar queries |
+| Updates | Checks GitHub for new releases, downloads in the background, `F12` to install |
+| Speed | Caches resources, stylesheets, selector parsing, dirty layout, hover fast paths, viewport culling |
+| Profile | Per-user settings, history, bookmarks, downloads, cookies, local storage, session restore |
+| Testing | Test suites for HTML, CSS, layout, paint, JS, network, and codecs |
 
-It is still early. Some pages will look wrong, some JavaScript will hit unimplemented
-APIs, and layout is still growing. Each broken page drives new engine work.
+Some pages still break. Some JS features aren't there yet. Layout is a work in progress. But every broken page turns into something new getting built.
 
-## Architecture
+## How It's Set Up
 
-Vertex is a portable engine with thin per-platform shells:
+Vertex has one engine that works everywhere, with thin platform-specific shells on top:
 
 ```text
           native shell
@@ -66,46 +59,36 @@ Vertex is a portable engine with thin per-platform shells:
        JS runtime + DOM bridge
 ```
 
-The platform layer handles windows, input, and pixels. The engine owns parsing, DOM,
-style resolution, layout, scripting, and painting.
+The platform layer does windows, input, and pixels. The engine handles everything else: parsing, DOM, styles, layout, scripting, rendering.
 
-### Built Here
+### What We Built
 
-- **HTML** -- tokenizer and parser with entity handling, auto-close, rawtext/RCDATA
-  modes, and real-world error recovery.
-- **CSS** -- cascade with combinators, attributes, pseudo-classes, relational selectors
-  (`:has()`, `:nth-child(... of selector)`), media/supports queries, custom properties,
-  logical properties, transforms, gradients, flex, grid, tables, floats, positioning,
-  form styling, and viewport/math functions.
-- **JavaScript** -- lexer, parser, compiler, VM, DOM bindings, timers, events, promises,
-  `fetch`, a hand-rolled WebSocket client (handshake, framing, and masking from scratch
-  -- curl is only the encrypted byte pipe for `wss://`), storage, DOM selectors,
-  geometry APIs, and observer APIs.
-- **Layout** -- block, inline, line boxes, floats, tables, flex, grid, replaced elements,
-  positioned boxes, scrolling, and dirty-layout invalidation.
-- **SVG** -- inline and external SVGs, paths, gradients, transforms, text, symbols,
-  `<use>`, class/style rules, stroke/fill behavior, and raster fallback.
-- **Painting** -- text, boxes, links, images, controls, SVG, hover, focus, dirty
-  regions, and cached rendering paths with hit testing.
+- **HTML** -- tokenizer and parser with entity handling, auto-close, rawtext/RCDATA modes, and error recovery that handles real-world mess.
+- **CSS** -- cascade with combinators, attributes, pseudo-classes (`:hover`, `:has()`, `:nth-child(... of selector)`), media/supports queries, custom properties, logical properties, transforms, gradients, flex, grid, tables, floats, sticky positioning, form styling, viewport and math functions.
+- **JavaScript** -- lexer, parser, compiler, VM, DOM bindings, timers, events, promises, `fetch`, `XMLHttpRequest`, `localStorage`, `sessionStorage`, `cookie`, a hand-rolled WebSocket client (we wrote the handshake, framing, and masking ourselves, curl just handles the encrypted pipe for `wss://`), DOM selectors, geometry APIs, observer APIs, `requestAnimationFrame`, `performance.now()`, `matchMedia`, `navigator.clipboard`, `history.pushState`/`replaceState`/`go()`, `console.*`, messaging (`postMessage`, `MessageChannel`, `BroadcastChannel`), `MutationObserver`, `IntersectionObserver`, `ResizeObserver`.
+- **Canvas 2D** -- full `<canvas>` context with `fillRect`, `strokeRect`, `clearRect`, paths, arcs, bezier/quadratic curves, `fill`, `stroke`, `save`/`restore`, transforms, `drawImage`.
+- **Layout** -- block, inline, line boxes, floats, tables, flex, grid, replaced elements, positioned boxes (relative, absolute, sticky, fixed), scrolling, overflow containers, dirty-layout invalidation, adaptive hover throttling.
+- **SVG** -- inline and external SVGs, paths, gradients, transforms, text, symbols, `<use>`, class/style rules, stroke/fill, raster fallback.
+- **Painting** -- text, boxes, links, images, controls, SVG, canvas, hover, focus, dirty regions, cached render paths, hit testing, spatial index for hover.
+- **Fonts** -- TrueType parsing, `@font-face` web font loading on all platforms.
+- **Codecs** -- hand-rolled PNG decoder (all color types, tRNS), JPEG decoder (Huffman, IDCT, progressive), DEFLATE/inflate (RFC 1951), CRC-32.
 
-### External Dependencies
+### Zero Third-Party Dependencies
 
-Vertex depends on only platform-native APIs for drawing and text rendering:
+The only external code Vertex uses is platform-native APIs for drawing and text:
 
-| Dependency | Purpose |
+| Dependency | What it does |
 |---|---|
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
 
-Linux has none. Windowing (XCB), 2D rendering, text, and `<canvas>` are all
-hand-rolled, no GTK/Cairo/Pango/fontconfig.
+Linux doesn't use any of those. Windowing (XCB), 2D rendering, text, `<canvas>`, TrueType fonts, PNG/JPEG decoding, DEFLATE, WebSocket, TLS, and the HTTP client are all hand-rolled. No GTK, no Cairo, no Pango, no fontconfig, no stb_image, no libcurl.
 
-HTTP/HTTPS networking, PNG/JPEG decoding, and all other functionality is built
-from scratch in this repository.
+Everything is built from scratch in this repo.
 
 ## Download
 
-Prebuilt releases: [github.com/hackclubium/Vertex/releases](https://github.com/hackclubium/Vertex/releases)
+Grab a release: [github.com/hackclubium/Vertex/releases](https://github.com/hackclubium/Vertex/releases)
 
 | Platform | Installer |
 |---|---|
@@ -113,13 +96,11 @@ Prebuilt releases: [github.com/hackclubium/Vertex/releases](https://github.com/h
 | macOS | `Vertex-macos-installer.dmg` |
 | Linux | `Vertex-linux-installer.tar.gz` |
 
-Portable updater binaries are also included in each release. Vertex checks for new
-GitHub releases on startup. Press `F12` to install an update -- it launches
-`VertexUpdater`, swaps the portable binary, and restarts.
+Each release also has portable updater binaries. Vertex checks for new releases on startup, and you can press `F12` to install one. It launches `VertexUpdater`, swaps the binary, and restarts.
 
-## Profile Data
+## Where Profile Data Lives
 
-Profile and cache folders are created on first launch:
+On first launch, Vertex creates profile and cache folders:
 
 | Platform | Profile | Cache |
 |---|---|---|
@@ -127,18 +108,15 @@ Profile and cache folders are created on first launch:
 | macOS | `~/Library/Application Support/Vertex/Default` | `~/Library/Caches/Vertex/Default` |
 | Linux | `~/.config/Vertex/Default` | `~/.cache/Vertex/Default` |
 
-Profile files include `history.tsv`, `bookmarks.tsv`, `downloads.tsv`, `settings.json`,
-`cookies.tsv`, `local_storage/`, and `session_restore.json`. Internal pages at
-`vertex://settings`, `vertex://site-data`, `vertex://history`, `vertex://bookmarks`,
-and `vertex://downloads` expose this data inside the browser.
+Profile stuff includes `history.tsv`, `bookmarks.tsv`, `downloads.tsv`, `settings.json`, `cookies.tsv`, `local_storage/`, and `session_restore.json`. You can see all of it from inside the browser at `vertex://settings`, `vertex://site-data`, `vertex://history`, `vertex://bookmarks`, and `vertex://downloads`.
 
-## Build
+## Building
 
-CMake and C++17. The version is derived from the latest git tag.
+CMake and C++17. Version comes from the latest git tag.
 
 ### Windows
 
-Requires Visual Studio Build Tools with the x64 C++ toolchain.
+Needs Visual Studio Build Tools with the x64 C++ toolchain.
 
 ```bat
 build.bat
@@ -147,7 +125,7 @@ build\Release\Vertex.exe
 
 ### macOS
 
-Requires Xcode command line tools.
+Needs Xcode command line tools.
 
 ```sh
 cmake -B build
@@ -157,8 +135,7 @@ open build/Vertex.app
 
 ### Linux
 
-Requires only XCB development headers. No GTK, Cairo, Pango, or fontconfig -- Vertex
-does its own windowing, rasterizing, text rendering, and `<canvas>` on Linux.
+Only needs XCB development headers. No GTK, Cairo, Pango, or fontconfig. Vertex does its own windowing, rendering, text, fonts, and `<canvas>` on Linux.
 
 ```sh
 sudo apt-get install -y build-essential cmake libxcb1-dev pkg-config
@@ -167,22 +144,26 @@ cmake --build build
 ./build/Vertex
 ```
 
-## Controls
+## Keyboard Shortcuts
 
-| Shortcut | Action |
+| Shortcut | What it does |
 |---|---|
 | `Ctrl+L` | Focus the address bar |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+R` or `F5` | Reload |
+| `Escape` | Stop loading |
 | `Ctrl+F` | Find in page |
 | `Ctrl+G` / `Ctrl+Shift+G` | Next / previous match |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
+| `Ctrl+0` | Reset zoom |
 | `Alt+Left` / `Alt+Right` | Back / forward |
+| `Ctrl+1`-`Ctrl+9` | Switch to tab by number |
+| `Ctrl+H` / `Ctrl+B` / `Ctrl+J` | History / bookmarks / downloads |
 | `F12` | Install a downloaded update |
 
 ## Tests
 
-Tests are split by subsystem:
+Tests are organized by what they cover:
 
 ```bat
 build\Release\vertex-tests.exe html
@@ -195,19 +176,22 @@ build\Release\vertex-tests.exe codec
 build\Release\vertex-layout-engine-tests.exe
 ```
 
-Offline debugging tools:
+There are also some offline debugging tools:
 
 ```sh
 build/dump_layout page.html [viewportWidth]
 build/dump_js script.js
+build/render_probe page.html [viewportWidth]
+build/test_url
 ```
 
-`dump_layout` prints the box tree and geometry -- useful when a real site breaks and
-you want a focused regression test instead of guessing from screenshots.
+- `dump_layout` prints the box tree and geometry, handy when a site is broken and you'd rather look at structured output than stare at screenshots.
+- `render_probe` runs the full layout/paint pipeline on a fixture and outputs metrics, box tree, and paint order.
+- `test_url` runs unit tests for URL helpers.
 
 ## Performance Debugging
 
-Set `VERTEX_PERF=1` before launching to print per-page timing counters:
+Set `VERTEX_PERF=1` before launching to get per-page timing info:
 
 ```sh
 VERTEX_PERF=1 ./build/Vertex
@@ -220,47 +204,44 @@ set VERTEX_PERF=1
 build\Release\Vertex.exe
 ```
 
-The log covers fetch time, resource requests and cache hits, style time, layout time,
-paint time, JavaScript parse/run time, and whether layout was reused.
+The output includes fetch time, resource requests and cache hits, style time, layout time, paint time, JS parse/run time, and whether layout was reused.
 
 ## Fixing the Web, One Page at a Time
 
-Vertex grows by turning real web failures into engine improvements:
+This is how Vertex grows:
 
-1. Capture (or reduce) the page that breaks.
-2. Identify the subsystem -- HTML, CSS, JS, layout, paint, network, or platform.
-3. Add the smallest test that reproduces the issue.
-4. Fix the engine.
+1. Find a page that breaks.
+2. Figure out which part is failing, HTML, CSS, JS, layout, paint, network, or platform.
+3. Write the smallest test you can that reproduces the bug.
+4. Fix it.
 5. Keep the test.
 
-Wikipedia has been the main stress test because it exercises the kinds of modern-web
-details that small browsers usually skip: ResourceLoader scripts, dense CSS, logical
-properties, SVG sprites, form controls, floats, positioned elements, selectors,
-events, history, scrolling, and reused resources.
+Wikipedia has been the go-to test site because it hits so many things small browsers usually skip: ResourceLoader scripts, dense CSS, logical properties, SVG sprites, form controls, floats, positioned elements, selectors, events, history, scrolling, and cached resources.
 
 ## Project Layout
 
 ```text
 src/
-  css/          stylesheet parsing, cascade, computed style
-  html/         tokenizer, parser, embedded resources
-  js/           lexer, compiler, VM, runtime, DOM bridge
-  layout/       box tree and layout engine
-  network/      fetcher, URL handling, cache, text decoding
-  paint/        display-list pieces
-  platform/     native shells and shared browser chrome
-  render/       painting, SVG, images, fonts
+  codec/         PNG, JPEG, DEFLATE decoders, CRC-32
+  css/           stylesheet parsing, cascade, computed style
+  font/          TrueType parsing, @font-face loading
+  html/          tokenizer, parser, embedded resources
+  js/            lexer, compiler, VM, runtime, DOM bridge, Canvas 2D
+  layout/        box tree and layout engine
+  network/       fetcher, URL handling, cache, text decoding, TLS, WebSocket
+  paint/         display-list pieces
+  platform/      native shells and shared browser chrome
+  render/        painting, SVG, images, fonts
 tools/
-  dump_layout   offline layout inspection
-  dump_js       offline JS execution
-tests/      subsystem and regression tests
+  dump_layout    offline layout inspection
+  dump_js        offline JS execution
+  render_probe   deterministic layout/paint diagnostics
+  test_url       URL helper unit tests
+tests/           subsystem and regression tests
 ```
 
-## Why Vertex Exists
+## Why This Exists
 
-Browsers are treated like black boxes -- too large, too tangled, too industrial to
-approach.
+Browsers feel like these giant, impenetrable black boxes that nobody can really understand.
 
-Vertex is the opposite. A browser can start small, stay readable, and still become
-real by accumulating correct behavior in public. Every feature is an invitation to
-understand one more piece of the web.
+Vertex is trying to be the opposite. A browser that starts small, stays readable, and gets more capable over time by actually shipping correct behavior. Every feature is a chance to understand one more piece of how the web works.
