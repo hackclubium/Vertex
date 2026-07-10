@@ -299,6 +299,7 @@ TestResult RunCssTests() {
             "<html><body>"
             "<section id=\"portal\" class=\"portal-card\"><a class=\"mw-link\" href=\"/wiki/Main_Page\">Main</a></section>"
             "<section id=\"plain\" class=\"portal-card\"><span>Plain</span></section>"
+            "<section id=\"scoped\" class=\"portal-card\"><span><a href=\"/wiki/Nested\">Nested</a></span></section>"
             "<ul>"
             "<li id=\"one\" class=\"entry featured\">One</li>"
             "<li id=\"two\" class=\"entry hidden\">Two</li>"
@@ -308,21 +309,24 @@ TestResult RunCssTests() {
             "</body></html>");
         auto sheet = ParseStylesheet(
             "section:has(a[href^=\"/wiki/\"]) { margin-left: 11px; }"
+            "section:has(:scope > a[href^=\"/wiki/\"]) { padding-right: 5px; }"
             "li.entry:not(.hidden, .featured) { padding-left: 13px; }"
+            "li.entry:not(.hidden, ul > li.featured) { padding-right: 19px; }"
             "li:nth-child(2n+1 of .entry) { margin-top: 17px; }");
         std::string actual;
-        for (const std::string id : { "portal", "plain", "one", "two", "three", "four" }) {
+        for (const std::string id : { "portal", "plain", "scoped", "one", "two", "three", "four" }) {
             auto* node = FindElementById(dom.get(), id);
             actual += id + ": ";
             actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
         }
         ExpectEqual("css/cascade/relational-and-filtered-selectors",
             actual,
-            "portal: marginLeft=11 \n"
+            "portal: marginLeft=11 paddingRight=5 \n"
             "plain: \n"
+            "scoped: marginLeft=11 \n"
             "one: marginTop=17 \n"
             "two: \n"
-            "three: marginTop=17 paddingLeft=13 \n"
+            "three: marginTop=17 paddingRight=19 paddingLeft=13 \n"
             "four: \n",
             result);
     }

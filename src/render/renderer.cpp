@@ -476,8 +476,9 @@ static std::string UrlDecodeSimple(const std::string& s) {
 static bool SelectorPartUsesHover(const CssSelectorPart& part) {
     for (const auto& pseudo : part.pseudos)
         if (pseudo == "hover") return true;
-    for (const auto& selector : part.notSelectors)
-        if (selector.find(":hover") != std::string::npos) return true;
+    for (const auto& list : part.notSelectorLists)
+        for (const auto& selector : list)
+            if (selector.find(":hover") != std::string::npos) return true;
     for (const auto& list : part.matchSelectorLists)
         for (const auto& selector : list)
             if (selector.find(":hover") != std::string::npos) return true;

@@ -2163,6 +2163,11 @@ static bool RelativeSelectorMatches(const std::string& rawSelector, const Node* 
     std::string selector = sTrim(rawSelector);
     if (!node || selector.empty()) return false;
 
+    if (selector.rfind(":scope", 0) == 0) {
+        selector = sTrim(selector.substr(6));
+        if (selector.empty()) return true;
+    }
+
     if (selector[0] == '>') {
         std::string childSelector = sTrim(selector.substr(1));
         for (const auto& child : node->children) {
@@ -2343,6 +2348,8 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
     if (pseudo == "target") return node && (node->attr("id") == "target"
         || node->attrs.find("_vertex_target") != node->attrs.end());
     if (pseudo == "root") return node && node->parent
+        && node->parent->type == NodeType::Document;
+    if (pseudo == "scope") return node && node->parent
         && node->parent->type == NodeType::Document;
     if (pseudo == "first-of-type") return IsFirstOfType(node);
     if (pseudo == "last-of-type") return IsLastOfType(node);
@@ -2526,23 +2533,8 @@ static bool MatchesSimpleSelector(const CssSelectorPart& part, const Node* node)
     for (const auto& selectorList : part.hasSelectorLists) {
         if (!HasSelectorListMatches(selectorList, node)) return false;
     }
-    // :not() — the node must NOT match the simple selector argument.
-    for (const auto& notArg : part.notSelectors) {
-        if (notArg.empty()) continue;
-        if (notArg[0] == '.') {
-            std::string cls = notArg.substr(1);
-            std::string ca = node->attr("class");
-            std::istringstream ss(ca); std::string tok;
-            while (ss >> tok) if (tok == cls) return false;
-        } else if (notArg[0] == '#') {
-            if (node->attr("id") == notArg.substr(1)) return false;
-        } else if (notArg[0] == '[') {
-            // Simplified :not([attr]) — just check attribute existence.
-            std::string attr = notArg.substr(1, notArg.size() - 2);
-            if (!node->attr(attr).empty()) return false;
-        } else {
-            if (node->tagName == notArg) return false;
-        }
+    for (const auto& selectorList : part.notSelectorLists) {
+        if (SelectorListMatches(selectorList, node)) return false;
     }
     return true;
 }
@@ -2888,15 +2880,11 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                 } else if (pseudo == "lang" || pseudo == "dir") {
                     part.pseudos.push_back(pseudo + "(" + sLower(argText) + ")");
                 } else if (pseudo == "not") {
-                    // :not(selector) — parse the argument as a simple selector and
-                    // store it as a negation pseudo. We support simple cases:
-                    // :not(.class), :not(tag), :not(#id), :not([attr]).
                     auto selectorList = SplitCssList(argText);
                     if (selectorList.empty()) {
                         part.neverMatch = true;
                     } else {
-                        for (auto& selector : selectorList)
-                            part.notSelectors.push_back(sLower(selector));
+                        part.notSelectorLists.push_back(selectorList);
                         part.functionalSpecificity += SelectorListMaxSpecificity(selectorList);
                     }
                 } else if (pseudo == "is" || pseudo == "where") {
@@ -2929,7 +2917,7 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                     // Approximate common pseudo-elements on the originating element.
                 } else if (!isDoubleColon && (pseudo == "first-child" || pseudo == "last-child"
                     || pseudo == "only-child" || pseudo == "empty"
-                    || pseudo == "link" || pseudo == "any-link" || pseudo == "target" || pseudo == "root"
+                    || pseudo == "link" || pseudo == "any-link" || pseudo == "target" || pseudo == "root" || pseudo == "scope"
                     || pseudo == "first-of-type" || pseudo == "last-of-type"
                     || pseudo == "hover" || pseudo == "focus" || pseudo == "active"
                     || pseudo == "visited" || pseudo == "checked"
