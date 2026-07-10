@@ -94,6 +94,8 @@ static std::vector<EventListener> g_windowEventListeners;
 // use-after-return bug). Cleared per document in registerDom().
 static std::vector<std::unique_ptr<JsValue>> g_wrapperRoots;
 static std::vector<std::unique_ptr<JsValue>> g_observerRoots;
+static std::vector<std::unique_ptr<JsValue>> g_platformRoots;
+static std::unordered_map<Node*, std::shared_ptr<Node>> g_shadowRoots;
 // Keeps each `new WebSocket(...)` object alive independent of script-level
 // reachability — a real WebSocket keeps firing events even if the script
 // drops its only reference, and OpenWebSocket()'s callback only ever holds a
@@ -141,6 +143,19 @@ static std::shared_ptr<Node> cloneDomNode(Node* source, bool deep) {
     }
     registerSubtree(clone);
     return clone;
+}
+
+static JsValue makeTemplateContent(VM& vm, Node* source) {
+    auto frag = Node::makeElement("#document-fragment");
+    frag->type = NodeType::Document;
+    if (source) {
+        for (const auto& child : source->children) {
+            auto clone = cloneDomNode(child.get(), true);
+            if (clone) frag->appendChild(clone);
+        }
+    }
+    registerSubtree(frag);
+    return wrapNode(vm, frag);
 }
 
 static bool isDocumentFragment(const Node* node) {
@@ -2295,6 +2310,22 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         auto shared = getShared(root);
         return shared ? wrapNode(vm, shared) : JsValue::null();
     });
+    addNativeM("attachShadow", NATIVE("attachShadow") {
+        Node* host = unwrapNode(thisVal);
+        if (!host) return JsValue::null();
+        auto shadow = Node::makeElement("#shadow-root");
+        shadow->type = NodeType::Document;
+        shadow->parent = host;
+        registerSubtree(shadow);
+        g_shadowRoots[host] = shadow;
+        JsValue rootVal = wrapNode(vm, shadow);
+        if (rootVal.isObject()) {
+            rootVal.asObject()->setProp("host", thisVal);
+            rootVal.asObject()->setProp("mode", vm.str(args.empty() || !ARG(0).isObject()
+                ? "open" : ARG(0).asObject()->getProp("mode").toString()));
+        }
+        return rootVal;
+    });
     addNativeM("normalize", NATIVE("normalize") {
         Node* n = unwrapNode(thisVal);
         normalizeTextChildren(n);
@@ -2525,6 +2556,7 @@ static void setInnerHtml(Node* parent, const std::string& html) {
     for (auto& c : content->children) {
         c->parent = parent;
         parent->children.push_back(c);
+        registerSubtree(c);
     }
 }
 
@@ -3304,6 +3336,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             out = shared ? wrapNodeInternal(*vmPtr, shared, false) : JsValue::null();
             return true;
         }
+        if (key == "content" && n->tagName == "template") {
+            out = makeTemplateContent(*vmPtr, n);
+            return true;
+        }
+        if (key == "shadowRoot") {
+            auto it = g_shadowRoots.find(n);
+            out = it == g_shadowRoots.end() ? JsValue::null() : wrapNodeInternal(*vmPtr, it->second, false);
+            return true;
+        }
         if (key == "checked")   { out = JsValue::boolean(hasAttr(n, "checked")); return true; }
         if (key == "selected")  { out = JsValue::boolean(hasAttr(n, "selected")); return true; }
         if (key == "selectedIndex" && n->tagName == "select") {
@@ -3413,6 +3454,9 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     g_mutationObservers.clear();
     for (auto& r : g_wsRoots) vm.gc().removeRoot(r.get());
     g_wsRoots.clear();
+    for (auto& r : g_platformRoots) vm.gc().removeRoot(r.get());
+    g_platformRoots.clear();
+    g_shadowRoots.clear();
 
     JsValue docVal = wrapNode(vm, docNode);
     vm.setGlobal("document", docVal);
@@ -3485,6 +3529,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         docVal.asObject()->setProp("compatMode",      vm.str("CSS1Compat"));
         docVal.asObject()->setProp("visibilityState", vm.str("visible"));
         docVal.asObject()->setProp("hidden",          JsValue::boolean(false));
+        docVal.asObject()->setProp("adoptedStyleSheets", JsValue::object(newArrayWithPrototype(vm)));
         addNative(vm, docVal.asObject(), "getSelection", [selection](VM&, JsValue, std::vector<JsValue>) -> JsValue {
             return JsValue::object(selection);
         });
@@ -3651,6 +3696,12 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.setGlobal("top", JsValue::object(vm.globals()));
     vm.setGlobal("parent", JsValue::object(vm.globals()));
 
+    auto* elementCtor = vm.gc().newNativeFunction(NATIVE("Element") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "Element");
+    vm.setGlobal("Element", JsValue::object(elementCtor));
+    vm.setGlobal("HTMLElement", JsValue::object(vm.gc().newNativeFunction(NATIVE("HTMLElement") {
+        return JsValue::object(vm.gc().newObject(ObjKind::Plain));
+    }, "HTMLElement")));
+
     auto* screen = vm.gc().newObject(ObjKind::Plain);
     screen->setProp("width",  JsValue::integer(1280));
     screen->setProp("height", JsValue::integer(800));
@@ -3746,6 +3797,107 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         return vm.str(out);
     });
     vm.setGlobal("CSS", JsValue::object(cssObj));
+
+    vm.setGlobal("CSSStyleSheet", JsValue::object(vm.gc().newNativeFunction(
+        NATIVE("CSSStyleSheet") {
+            auto rules = std::make_shared<std::vector<std::string>>();
+            auto* sheet = vm.gc().newObject(ObjKind::Plain);
+            auto sync = [rules, sheet, &vm]() {
+                auto* arr = newArrayWithPrototype(vm);
+                for (const auto& text : *rules) {
+                    auto* rule = vm.gc().newObject(ObjKind::Plain);
+                    rule->setProp("cssText", vm.str(text));
+                    arr->arrayPush(JsValue::object(rule));
+                }
+                sheet->setProp("cssRules", JsValue::object(arr));
+                sheet->setProp("rules", JsValue::object(arr));
+            };
+            sync();
+            addNative(vm, sheet, "replaceSync", [rules, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+                rules->clear();
+                std::string css = args.empty() ? "" : args[0].toString();
+                size_t pos = 0;
+                while (pos < css.size()) {
+                    size_t end = css.find('}', pos);
+                    if (end == std::string::npos) break;
+                    std::string rule = trimCopy(css.substr(pos, end - pos + 1));
+                    if (!rule.empty()) rules->push_back(rule);
+                    pos = end + 1;
+                }
+                sync();
+                return JsValue::undefined();
+            });
+            addNative(vm, sheet, "replace", [rules, sync](VM& v, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+                JsValue fn = thisVal.isObject() ? thisVal.asObject()->getProp("replaceSync") : JsValue::undefined();
+                if (fn.isCallable()) v.call(fn, thisVal, args);
+                return v.promiseResolve(thisVal);
+            });
+            addNative(vm, sheet, "insertRule", [rules, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+                int32_t index = args.size() > 1 ? args[1].toInt32() : (int32_t)rules->size();
+                index = std::max(0, std::min(index, (int32_t)rules->size()));
+                rules->insert(rules->begin() + index, args.empty() ? "" : args[0].toString());
+                sync();
+                return JsValue::integer(index);
+            });
+            addNative(vm, sheet, "deleteRule", [rules, sync](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+                int32_t index = args.empty() ? 0 : args[0].toInt32();
+                if (index >= 0 && index < (int32_t)rules->size()) rules->erase(rules->begin() + index);
+                sync();
+                return JsValue::undefined();
+            });
+            return JsValue::object(sheet);
+        }, "CSSStyleSheet")));
+
+    auto* trustedTypes = vm.gc().newObject(ObjKind::Plain);
+    auto policies = std::make_shared<std::map<std::string, JsValue>>();
+    addNative(vm, trustedTypes, "createPolicy", [policies](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string name = args.empty() ? "" : args[0].toString();
+        JsObject* rules = args.size() > 1 && args[1].isObject() ? args[1].asObject() : nullptr;
+        auto* policy = vm.gc().newObject(ObjKind::Plain);
+        policy->setProp("name", vm.str(name));
+        auto wrapTrusted = [rules](const char* fnName) {
+            return [rules, fnName](VM& v, JsValue, std::vector<JsValue> callArgs) -> JsValue {
+                JsValue input = callArgs.empty() ? v.str("") : callArgs[0];
+                if (rules) {
+                    JsValue fn = rules->getProp(fnName);
+                    if (fn.isCallable()) return v.call(fn, JsValue::object(rules), callArgs);
+                }
+                return v.str(input.toString());
+            };
+        };
+        addNative(vm, policy, "createHTML", wrapTrusted("createHTML"));
+        addNative(vm, policy, "createScript", wrapTrusted("createScript"));
+        addNative(vm, policy, "createScriptURL", wrapTrusted("createScriptURL"));
+        JsValue val = JsValue::object(policy);
+        (*policies)[name] = val;
+        return val;
+    });
+    addNative(vm, trustedTypes, "getPolicyNames", [policies](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& entry : *policies) arr->arrayPush(vm.str(entry.first));
+        return JsValue::object(arr);
+    });
+    addNative(vm, trustedTypes, "isHTML", [](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        return JsValue::boolean(!args.empty() && !args[0].isNullOrUndefined());
+    });
+    vm.setGlobal("trustedTypes", JsValue::object(trustedTypes));
+
+    auto* customElements = vm.gc().newObject(ObjKind::Plain);
+    auto definitions = std::make_shared<std::map<std::string, JsValue>>();
+    addNative(vm, customElements, "define", [definitions](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        if (args.size() >= 2) (*definitions)[lowerCopy(args[0].toString())] = args[1];
+        return JsValue::undefined();
+    });
+    addNative(vm, customElements, "get", [definitions](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        auto it = definitions->find(args.empty() ? "" : lowerCopy(args[0].toString()));
+        return it == definitions->end() ? JsValue::undefined() : it->second;
+    });
+    addNative(vm, customElements, "whenDefined", [definitions](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        auto it = definitions->find(args.empty() ? "" : lowerCopy(args[0].toString()));
+        return vm.promiseResolve(it == definitions->end() ? JsValue::undefined() : it->second);
+    });
+    addNative(vm, customElements, "upgrade", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+    vm.setGlobal("customElements", JsValue::object(customElements));
 
     vm.setGlobal("DOMParser", JsValue::object(vm.gc().newNativeFunction(
         [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
@@ -3931,6 +4083,123 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             });
             return JsValue::object(reader);
         }, "FileReader")));
+
+    vm.setGlobal("XMLHttpRequest", JsValue::object(vm.gc().newNativeFunction(
+        [baseUrl = pageUrl](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+            auto* xhr = vm.gc().newObject(ObjKind::Plain);
+            xhr->setProp("UNSENT", JsValue::integer(0));
+            xhr->setProp("OPENED", JsValue::integer(1));
+            xhr->setProp("HEADERS_RECEIVED", JsValue::integer(2));
+            xhr->setProp("LOADING", JsValue::integer(3));
+            xhr->setProp("DONE", JsValue::integer(4));
+            xhr->setProp("readyState", JsValue::integer(0));
+            xhr->setProp("status", JsValue::integer(0));
+            xhr->setProp("statusText", vm.str(""));
+            xhr->setProp("responseText", vm.str(""));
+            xhr->setProp("response", vm.str(""));
+            xhr->setProp("responseURL", vm.str(""));
+            xhr->setProp("responseType", vm.str(""));
+            auto headers = std::make_shared<HeaderStore>();
+            auto method = std::make_shared<std::string>("GET");
+            auto url = std::make_shared<std::string>();
+            auto async = std::make_shared<bool>(true);
+            auto dispatch = [xhr](VM& v, const std::string& type) {
+                JsValue ev = makeEventObject(v, "Event", type);
+                if (ev.isObject()) {
+                    ev.asObject()->setProp("target", JsValue::object(xhr));
+                    ev.asObject()->setProp("currentTarget", JsValue::object(xhr));
+                }
+                JsValue handler = xhr->getProp("on" + type);
+                if (handler.isCallable()) { try { v.call(handler, JsValue::object(xhr), { ev }); } catch (...) {} }
+            };
+            addNative(vm, xhr, "open", [xhr, method, url, async, baseUrl](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+                *method = args.empty() ? "GET" : args[0].toString();
+                std::transform(method->begin(), method->end(), method->begin(), [](unsigned char c){ return (char)std::toupper(c); });
+                *url = resolveDomUrl(args.size() > 1 ? args[1].toString() : "", baseUrl);
+                *async = args.size() < 3 || args[2].toBool();
+                xhr->setProp("readyState", JsValue::integer(1));
+                xhr->setProp("responseURL", v.str(*url));
+                JsValue cb = xhr->getProp("onreadystatechange");
+                if (cb.isCallable()) { try { v.call(cb, JsValue::object(xhr), {}); } catch (...) {} }
+                return JsValue::undefined();
+            });
+            addNative(vm, xhr, "setRequestHeader", [headers](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+                if (args.size() >= 2) headersSet(*headers, args[0].toString(), args[1].toString());
+                return JsValue::undefined();
+            });
+            addNative(vm, xhr, "getResponseHeader", [xhr](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+                if (args.empty()) return JsValue::null();
+                JsValue stored = xhr->getProp("__vertexResponseHeaders");
+                if (!stored.isObject()) return JsValue::null();
+                JsValue val = stored.asObject()->getProp(lowerCopy(args[0].toString()));
+                return val.isUndefined() ? JsValue::null() : val;
+            });
+            addNative(vm, xhr, "getAllResponseHeaders", [xhr](VM&, JsValue, std::vector<JsValue>) -> JsValue {
+                JsValue stored = xhr->getProp("__vertexAllResponseHeaders");
+                return stored.isUndefined() ? JsValue::undefined() : stored;
+            });
+            addNative(vm, xhr, "abort", [xhr, dispatch](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+                xhr->setProp("readyState", JsValue::integer(0));
+                dispatch(v, "abort"); dispatch(v, "loadend");
+                return JsValue::undefined();
+            });
+            addNative(vm, xhr, "send", [xhr, url, headers, dispatch](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+                xhr->setProp("readyState", JsValue::integer(3));
+                JsValue cb = xhr->getProp("onreadystatechange");
+                if (cb.isCallable()) { try { v.call(cb, JsValue::object(xhr), {}); } catch (...) {} }
+                if (url->rfind("data:", 0) == 0) {
+                    std::string spec = url->substr(5);
+                    size_t comma = spec.find(',');
+                    std::string type = comma == std::string::npos ? "text/plain" : spec.substr(0, comma);
+                    std::string body = comma == std::string::npos ? "" : urlDecodeComponent(spec.substr(comma + 1));
+                    xhr->setProp("readyState", JsValue::integer(4));
+                    xhr->setProp("status", JsValue::integer(200));
+                    xhr->setProp("statusText", v.str("OK"));
+                    xhr->setProp("responseText", v.str(body));
+                    xhr->setProp("response", v.str(body));
+                    auto* responseHeaders = v.gc().newObject(ObjKind::Plain);
+                    responseHeaders->setProp("content-type", v.str(type.empty() ? "text/plain" : type));
+                    xhr->setProp("__vertexResponseHeaders", JsValue::object(responseHeaders));
+                    xhr->setProp("__vertexAllResponseHeaders", v.str("content-type: " + (type.empty() ? std::string("text/plain") : type) + "\r\n"));
+                    JsValue ready = xhr->getProp("onreadystatechange");
+                    if (ready.isCallable()) { try { v.call(ready, JsValue::object(xhr), {}); } catch (...) {} }
+                    dispatch(v, "load");
+                    dispatch(v, "loadend");
+                    return JsValue::undefined();
+                }
+                VM* vmPtr = &v;
+                auto alive = v.lifetimeToken();
+                auto targetUrl = *url;
+                FetchResourceAsync(targetUrl, 12 * 1024 * 1024, ResourceKind::Other,
+                    [vmPtr, alive, xhr, dispatch, targetUrl](FetchResult res) {
+                        if (alive.expired()) return;
+                        VM& vm2 = *vmPtr;
+                        xhr->setProp("readyState", JsValue::integer(4));
+                        xhr->setProp("status", JsValue::integer(res.success ? res.status : 0));
+                        xhr->setProp("statusText", vm2.str(res.success ? "OK" : ""));
+                        xhr->setProp("responseURL", vm2.str(targetUrl));
+                        xhr->setProp("responseText", vm2.str(res.body));
+                        xhr->setProp("response", vm2.str(res.body));
+                        auto* responseHeaders = vm2.gc().newObject(ObjKind::Plain);
+                        std::string all;
+                        if (!res.contentType.empty()) {
+                            responseHeaders->setProp("content-type", vm2.str(res.contentType));
+                            all += "content-type: " + res.contentType + "\r\n";
+                        }
+                        xhr->setProp("__vertexResponseHeaders", JsValue::object(responseHeaders));
+                        xhr->setProp("__vertexAllResponseHeaders", vm2.str(all));
+                        JsValue ready = xhr->getProp("onreadystatechange");
+                        if (ready.isCallable()) { try { vm2.call(ready, JsValue::object(xhr), {}); } catch (...) {} }
+                        dispatch(vm2, res.success ? "load" : "error");
+                        dispatch(vm2, "loadend");
+                        vm2.drainMicrotasks();
+                    });
+                return JsValue::undefined();
+            });
+            g_platformRoots.push_back(std::make_unique<JsValue>(JsValue::object(xhr)));
+            vm.gc().addRoot(g_platformRoots.back().get());
+            return JsValue::object(xhr);
+        }, "XMLHttpRequest")));
 
     vm.setGlobal("Headers", JsValue::object(vm.gc().newNativeFunction(
         NATIVE("Headers") {

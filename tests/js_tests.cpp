@@ -1259,6 +1259,39 @@ static std::string RunGeneralPlatformStubsSnapshot() {
     return body ? body->attr("data-immediate") + "|" + body->attr("data-log") + "|" + body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunBrowserApiFourthSliceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><template id=\"tpl\"><p id=\"inside\">T</p></template><div id=\"host\"></div></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var body = document.getElementsByTagName('body')[0];\n"
+        "var tpl = document.getElementById('tpl');\n"
+        "var content = tpl.content;\n"
+        "var host = document.getElementById('host');\n"
+        "var shadow = host.attachShadow({ mode: 'open' });\n"
+        "shadow.appendChild(document.createElement('span'));\n"
+        "var sheet = new CSSStyleSheet();\n"
+        "sheet.replaceSync('body { color: red; } p { display: block; }');\n"
+        "var inserted = sheet.insertRule('a { text-decoration: none; }', 1);\n"
+        "sheet.deleteRule(0);\n"
+        "document.adoptedStyleSheets = [sheet];\n"
+        "var policy = trustedTypes.createPolicy('vertex', { createHTML: function(s) { return '<b>' + s + '</b>'; } });\n"
+        "function VertexThing() {}\n"
+        "customElements.define('vertex-thing', VertexThing);\n"
+        "globalThis.apiOut = content.getElementById('inside').textContent + '|' + (host.shadowRoot === shadow) + ':' + shadow.host.id + ':' + shadow.childNodes.length + '|' + sheet.cssRules.length + ':' + inserted + ':' + document.adoptedStyleSheets.length + '|' + policy.createHTML('ok') + '|' + (customElements.get('vertex-thing') === VertexThing);\n"
+        "globalThis.xhrOut = 'pending';\n"
+        "var xhr = new XMLHttpRequest();\n"
+        "xhr.onreadystatechange = function() { if (xhr.readyState === xhr.DONE) globalThis.xhrOut = xhr.status + ':' + xhr.responseText + ':' + xhr.getResponseHeader('content-type'); };\n"
+        "xhr.onloadend = function() { body.setAttribute('data-result', globalThis.apiOut + '|' + globalThis.xhrOut); };\n"
+        "xhr.open('GET', 'data:text/plain,hello-xhr');\n"
+        "xhr.send();\n",
+        "browser-api-fourth-slice");
+    if (!ok) return "script failed\n";
+    while (engine.hasPendingMacrotasks()) engine.runMacrotasks();
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 static std::string RunScriptBudgetProfileSnapshot() {
     JsEngine engine;
     JsScriptBudget budget;
@@ -1480,6 +1513,12 @@ TestResult RunJsTests() {
         "js/web-platform/general-platform-stubs",
         RunGeneralPlatformStubsSnapshot(),
         "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P||true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/browser-api-fourth-slice",
+        RunBrowserApiFourthSliceSnapshot(),
+        "T|true:host:1|2:1:1|<b>ok</b>|true|200:hello-xhr:text/plain\n",
         result);
 
     ExpectEqual(
