@@ -1292,6 +1292,121 @@ static std::string RunBrowserApiFourthSliceSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunFormValidationLabelsSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml(
+        "<html><body>"
+        "<form id=\"profile\"><label id=\"name-label\" for=\"name\">Name</label><input id=\"name\" name=\"name\" required value=\"\"><button id=\"go\" name=\"go\" value=\"save\"></button></form>"
+        "<input id=\"external\" name=\"external\" form=\"profile\" value=\"outside\">"
+        "</body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var form = document.getElementById('profile');\n"
+        "var name = document.getElementById('name');\n"
+        "var external = document.getElementById('external');\n"
+        "var before = form.checkValidity() + ':' + name.validity.valueMissing + ':' + name.validationMessage + ':' + name.willValidate;\n"
+        "name.setCustomValidity('custom bad');\n"
+        "var custom = name.checkValidity() + ':' + name.validity.customError + ':' + name.validationMessage;\n"
+        "name.setCustomValidity(''); name.value = 'Vertex';\n"
+        "var after = form.reportValidity() + ':' + name.validity.valid;\n"
+        "var labels = name.labels.length + ':' + name.labels[0].id + ':' + document.getElementById('name-label').control.id;\n"
+        "var fd = new FormData(form);\n"
+        "fd.append('extra', '1'); fd.set('name', 'Override');\n"
+        "var entries = fd.get('name') + ':' + fd.get('external') + ':' + fd.has('extra') + ':' + fd.entries().length;\n"
+        "document.body.setAttribute('data-result', before + '|' + custom + '|' + after + '|' + labels + '|' + (external.form === form) + '|' + entries + '|' + form.elements.name.id + ':' + form.elements.external.id);\n",
+        "form-validation-labels");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunNetworkSecuritySurfaceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><script id=\"s\" src=\"/app.js\" integrity=\"sha256-old\" crossorigin=\"anonymous\" referrerpolicy=\"no-referrer\" nonce=\"abc\"></script></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var script = document.getElementById('s');\n"
+        "script.integrity = 'sha256-new'; script.crossOrigin = 'use-credentials'; script.referrerPolicy = 'origin'; script.noModule = true;\n"
+        "var req = new Request('/api', { method: 'POST', body: 'x', mode: 'same-origin', credentials: 'include', cache: 'reload', redirect: 'manual', referrer: 'https://example.org/from', referrerPolicy: 'strict-origin', integrity: 'sha384-test', keepalive: true });\n"
+        "var ev = new SecurityPolicyViolationEvent('securitypolicyviolation', { blockedURI: 'https://cdn.example/x.js', effectiveDirective: 'script-src', disposition: 'enforce', statusCode: 200 });\n"
+        "globalThis.digestOut = 'pending';\n"
+        "crypto.subtle.digest('SHA-384', new Blob(['hello'])).then(function(buf) { globalThis.digestOut = buf.byteLength; });\n"
+        "document.body.setAttribute('data-immediate', script.integrity + ':' + script.crossOrigin + ':' + script.referrerPolicy + ':' + script.nonce + ':' + script.noModule + '|' + req.method + ':' + req.mode + ':' + req.credentials + ':' + req.cache + ':' + req.redirect + ':' + req.referrerPolicy + ':' + req.integrity + ':' + req.keepalive + '|' + ev.blockedURI + ':' + ev.effectiveDirective + ':' + ev.statusCode + '|' + isSecureContext + ':' + crossOriginIsolated + ':' + document.securityPolicy.allowsInlineScript);\n",
+        "network-security-surface");
+    if (!ok) return "script failed\n";
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', document.body.getAttribute('data-immediate') + '|' + globalThis.digestOut);\n",
+        "network-security-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunRenderingApiSurfaceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><svg id=\"icon\" width=\"20\" height=\"10\"><rect id=\"shape\" width=\"5\" height=\"6\"></rect></svg><img id=\"pic\" src=\"/x.png\" width=\"30\" height=\"40\"></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var pic = document.getElementById('pic');\n"
+        "var made = new Image(11, 12); made.src = '/made.png'; made.loading = 'lazy'; made.decoding = 'async';\n"
+        "var svg = document.getElementById('icon');\n"
+        "var shape = document.getElementById('shape');\n"
+        "var box = shape.getBBox();\n"
+        "var p = svg.createSVGPoint(); p.x = 3; p.y = 4; var p2 = p.matrixTransform(svg.getScreenCTM());\n"
+        "var face = new FontFace('Vertex', 'url(vertex.woff2)');\n"
+        "globalThis.renderOut = 'pending';\n"
+        "Promise.all([pic.decode(), made.decode(), face.load(), document.fonts.load('16px Vertex')]).then(function(){ globalThis.renderOut = 'ready'; });\n"
+        "document.body.setAttribute('data-immediate', pic.complete + ':' + pic.naturalWidth + 'x' + pic.naturalHeight + ':' + pic.currentSrc + '|' + made.naturalWidth + 'x' + made.naturalHeight + ':' + made.src + ':' + made.loading + ':' + made.decoding + '|' + box.width + 'x' + box.height + ':' + p2.x + ',' + p2.y + '|' + face.status + ':' + document.fonts.status + ':' + document.fonts.check('16px Vertex'));\n",
+        "rendering-api-surface");
+    if (!ok) return "script failed\n";
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', document.body.getAttribute('data-immediate') + '|' + globalThis.renderOut);\n",
+        "rendering-api-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunDomCollectionsTraversalSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><head><style id=\"inline-style\"></style><link id=\"sheet\" rel=\"stylesheet\" href=\"/a.css\"><script id=\"boot\"></script></head><body><a id=\"named\" name=\"top\"></a><a id=\"href\" href=\"/wiki\"></a><img id=\"logo\" src=\"/logo.png\"><section id=\"root\"><p id=\"p1\">One</p><p id=\"p2\">Two</p></section></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var walker = document.createTreeWalker(document.getElementById('root'), NodeFilter.SHOW_ELEMENT);\n"
+        "var names = []; var node; while ((node = walker.nextNode())) names.push(node.id);\n"
+        "document.body.setAttribute('data-result', document.scripts.length + ':' + document.scripts.item(0).id + ':' + document.currentScript.id + '|' + document.images.namedItem('logo').src + ':' + document.images.logo.id + '|' + document.links.length + ':' + document.links.item(0).id + '|' + document.anchors.namedItem('top').id + '|' + document.styleSheets.length + ':' + document.styleSheets.item(1).id + '|' + names.join(',') + '|' + NodeFilter.SHOW_ELEMENT + ':' + NodeFilter.FILTER_ACCEPT);\n",
+        "dom-collections-traversal");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
+static std::string RunNavigatorPerformanceSurfaceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var body = document.body;\n"
+        "performance.mark('probe');\n"
+        "var observed = 'none';\n"
+        "var po = new PerformanceObserver(function(list){ observed = list.getEntriesByType('mark').length + ':' + list.getEntriesByName('probe').length; });\n"
+        "po.observe({ entryTypes: ['mark'] });\n"
+        "var taken = po.takeRecords().length;\n"
+        "var geo = 'pending';\n"
+        "navigator.geolocation.getCurrentPosition(function(){ geo = 'ok'; }, function(err){ geo = err.code + ':' + err.message; });\n"
+        "globalThis.perm = 'pending';\n"
+        "navigator.permissions.query({ name: 'geolocation' }).then(function(status){ globalThis.perm = status.state + ':' + (typeof status.addEventListener); });\n"
+        "body.setAttribute('data-immediate', navigator.vendor + '|' + navigator.product + ':' + navigator.appName + ':' + navigator.javaEnabled() + '|' + navigator.plugins.length + ':' + navigator.mimeTypes.length + '|' + navigator.connection.effectiveType + ':' + navigator.connection.downlink + ':' + navigator.connection.saveData + '|' + navigator.sendBeacon('/beacon', 'x') + '|' + PerformanceObserver.supportedEntryTypes.length + ':' + observed + ':' + taken + '|' + geo);\n",
+        "navigator-performance-surface");
+    if (!ok) return "script failed\n";
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', document.body.getAttribute('data-immediate') + '|' + globalThis.perm);\n",
+        "navigator-performance-surface-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 static std::string RunScriptBudgetProfileSnapshot() {
     JsEngine engine;
     JsScriptBudget budget;
@@ -1519,6 +1634,36 @@ TestResult RunJsTests() {
         "js/web-platform/browser-api-fourth-slice",
         RunBrowserApiFourthSliceSnapshot(),
         "T|true:host:1|2:1:1|<b>ok</b>|true|200:hello-xhr:text/plain\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/form-validation-labels-and-formdata",
+        RunFormValidationLabelsSnapshot(),
+        "false:true:Please fill out this field.:true|false:true:custom bad|true:true|1:name-label:name|true|Override:outside:true:3|name:external\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/network-security-surface",
+        RunNetworkSecuritySurfaceSnapshot(),
+        "sha256-new:use-credentials:origin:abc:true|POST:same-origin:include:reload:manual:strict-origin:sha384-test:true|https://cdn.example/x.js:script-src:200|true:false:true|48\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/rendering-api-surface",
+        RunRenderingApiSurfaceSnapshot(),
+        "true:30x40:/x.png|11x12:/made.png:lazy:async|5x6:3,4|loaded:loaded:true|ready\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/collections-and-treewalker",
+        RunDomCollectionsTraversalSnapshot(),
+        "1:boot:boot|/logo.png:logo|1:href|named|2:sheet|root,p1,p2|1:1\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/navigator-performance-surface",
+        RunNavigatorPerformanceSurfaceSnapshot(),
+        "Vertex|Gecko:Netscape:false|0:0|4g:10:false|true|2:1:1:1|1:Geolocation unavailable|prompt:function\n",
         result);
 
     ExpectEqual(

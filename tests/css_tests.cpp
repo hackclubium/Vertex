@@ -925,5 +925,33 @@ TestResult RunCssTests() {
             result);
     }
 
+    {
+        auto dom = ParseHtml(
+            "<html><body>"
+            "<div id=\"layered\"></div><div id=\"scoped\"></div>"
+            "<div id=\"target\"></div><input id=\"search\"><p id=\"line\">Text</p>"
+            "</body></html>");
+        auto sheet = ParseStylesheet(
+            "@layer base { #layered { color: red; } }"
+            "@scope (.content) { #scoped { padding-left: 6px; } }"
+            "@supports ((display: block) and (not (display: vertex-madeup))) { #target:target { margin-left: 7px; } }"
+            "#search::placeholder { color: rgb(1 2 3); }"
+            "#line::first-line { background-color: rgb(4 5 6); }");
+        std::string actual;
+        for (const std::string id : { "layered", "scoped", "target", "search", "line" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/layer-scope-target-and-pseudo-elements",
+            actual,
+            "layered: color=1,0,0,1 \n"
+            "scoped: paddingLeft=6 \n"
+            "target: marginLeft=7 \n"
+            "search: color=0.00392157,0.00784314,0.0117647,1 \n"
+            "line: bg=0.0156863,0.0196078,0.0235294,1 \n",
+            result);
+    }
+
     return result;
 }

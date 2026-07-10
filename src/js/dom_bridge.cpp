@@ -399,7 +399,10 @@ static JsValue makeEventObject(VM& vm, const std::string& ctorName, const std::s
         static const char* passthrough[] = {
             "key", "code", "altKey", "ctrlKey", "shiftKey", "metaKey",
             "clientX", "clientY", "screenX", "screenY", "button", "buttons",
-            "deltaX", "deltaY", "deltaZ", "inputType", "data"
+            "deltaX", "deltaY", "deltaZ", "inputType", "data",
+            "documentURI", "referrer", "blockedURI", "violatedDirective",
+            "effectiveDirective", "originalPolicy", "sourceFile", "sample",
+            "disposition", "statusCode", "lineNumber", "columnNumber"
         };
         for (const char* prop : passthrough) {
             JsValue value = opts->getProp(prop);
@@ -564,6 +567,8 @@ static bool isFormControl(const Node* n) {
         || n->tagName == "textarea" || n->tagName == "button";
 }
 
+static std::string elementValue(Node* n);
+
 static void collectDescendants(Node* root, std::vector<Node*>& out,
                                const std::function<bool(Node*)>& accept) {
     if (!root) return;
@@ -595,6 +600,11 @@ static Node* findElementById(Node* root, const std::string& id) {
 }
 
 static Node* formOwner(Node* control) {
+    if (control && !control->attr("form").empty()) {
+        Node* doc = ownerDocumentNode(control);
+        if (Node* byId = findElementById(doc, control->attr("form")))
+            if (byId->tagName == "form") return byId;
+    }
     for (Node* cur = control; cur; cur = cur->parent)
         if (cur->tagName == "form") return cur;
     return nullptr;
@@ -603,7 +613,42 @@ static Node* formOwner(Node* control) {
 static std::vector<Node*> formControls(Node* form) {
     std::vector<Node*> controls;
     collectDescendants(form, controls, [](Node* n) { return isFormControl(n); });
+    if (form && !form->attr("id").empty()) {
+        Node* doc = ownerDocumentNode(form);
+        std::vector<Node*> external;
+        collectDescendants(doc, external, [&](Node* n) {
+            return isFormControl(n) && n->attr("form") == form->attr("id");
+        });
+        for (Node* node : external)
+            if (std::find(controls.begin(), controls.end(), node) == controls.end()) controls.push_back(node);
+    }
     return controls;
+}
+
+static std::vector<Node*> labelsForControl(Node* control) {
+    std::vector<Node*> labels;
+    if (!control) return labels;
+    Node* doc = ownerDocumentNode(control);
+    std::string id = control->attr("id");
+    collectDescendants(doc, labels, [&](Node* n) {
+        if (!n || n->tagName != "label") return false;
+        if (!id.empty() && n->attr("for") == id) return true;
+        return nodeContains(n, control);
+    });
+    return labels;
+}
+
+static bool controlValueMissing(Node* control) {
+    if (!control || !hasAttr(control, "required")) return false;
+    if (control->tagName == "input") {
+        std::string type = lowerCopy(control->attr("type"));
+        if ((type == "checkbox" || type == "radio")) return !hasAttr(control, "checked");
+    }
+    return elementValue(control).empty();
+}
+
+static bool controlIsValid(Node* control) {
+    return !control || (control->attr("_vertex_customValidity").empty() && !controlValueMissing(control));
 }
 
 static Node* selectedOption(Node* select) {
@@ -679,6 +724,18 @@ static JsObject* makeNodeCollection(VM& vm, const std::vector<Node*>& nodes) {
         if (!name.empty()) arr->setProp(name, wrapped);
     }
     arr->setProp("length", JsValue::integer((int32_t)nodes.size()));
+    addNative(vm, arr, "item", [](VM&, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+        if (!thisVal.isObject()) return JsValue::null();
+        int32_t index = args.empty() ? 0 : args[0].toInt32();
+        if (index < 0 || index >= (int32_t)thisVal.asObject()->arrayLength()) return JsValue::null();
+        JsValue value = thisVal.asObject()->arrayGet((uint32_t)index);
+        return value.isUndefined() ? JsValue::null() : value;
+    });
+    addNative(vm, arr, "namedItem", [](VM&, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+        if (!thisVal.isObject() || args.empty()) return JsValue::null();
+        JsValue value = thisVal.asObject()->getProp(args[0].toString());
+        return value.isUndefined() ? JsValue::null() : value;
+    });
     return arr;
 }
 
@@ -2176,6 +2233,45 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     addNativeM("createRange", NATIVE("createRange") {
         return makeRangeObject(vm);
     });
+    addNativeM("createTreeWalker", NATIVE("createTreeWalker") {
+        Node* root = unwrapNode(ARG(0));
+        uint32_t whatToShow = args.size() > 1 ? (uint32_t)ARG(1).toInt32() : 0xFFFFFFFFu;
+        auto nodes = std::make_shared<std::vector<Node*>>();
+        auto index = std::make_shared<int>(-1);
+        std::function<void(Node*)> visit = [&](Node* node) {
+            if (!node) return;
+            bool include = (node->type == NodeType::Element && (whatToShow & 0x1u))
+                || (node->type == NodeType::Text && (whatToShow & 0x4u))
+                || (node->type == NodeType::Document && (whatToShow & 0x100u));
+            if (include) nodes->push_back(node);
+            for (auto& child : node->children) visit(child.get());
+        };
+        visit(root);
+        auto* walker = vm.gc().newObject(ObjKind::Plain);
+        auto wrapAt = [nodes](VM& v, int i) -> JsValue {
+            if (i < 0 || i >= (int)nodes->size()) return JsValue::null();
+            auto shared = getShared((*nodes)[(size_t)i]);
+            return shared ? wrapNodeInternal(v, shared, false) : JsValue::null();
+        };
+        walker->setProp("root", ARG(0));
+        walker->setProp("whatToShow", JsValue::integer((int32_t)whatToShow));
+        walker->setProp("currentNode", ARG(0));
+        addNative(vm, walker, "nextNode", [nodes, index, walker, wrapAt](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+            if (*index + 1 >= (int)nodes->size()) return JsValue::null();
+            ++(*index);
+            JsValue node = wrapAt(v, *index);
+            walker->setProp("currentNode", node);
+            return node;
+        });
+        addNative(vm, walker, "previousNode", [nodes, index, walker, wrapAt](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+            if (*index - 1 < 0) return JsValue::null();
+            --(*index);
+            JsValue node = wrapAt(v, *index);
+            walker->setProp("currentNode", node);
+            return node;
+        });
+        return JsValue::object(walker);
+    });
     addNativeM("createEvent", NATIVE("createEvent") {
         std::string kind = args.empty() ? "Event" : ARG_STR(0);
         std::string low = lowerCopy(kind);
@@ -2270,6 +2366,51 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         installEventMethods(vm, ev);
         JsValue dispatch = thisVal.isObject() ? thisVal.asObject()->getProp("dispatchEvent") : JsValue::undefined();
         if (dispatch.isCallable()) vm.call(dispatch, thisVal, { JsValue::object(ev) });
+        return JsValue::undefined();
+    });
+    addNativeM("reset", NATIVE("reset") {
+        Node* n = unwrapNode(thisVal);
+        if (!n || n->tagName != "form") return JsValue::undefined();
+        for (Node* control : formControls(n)) {
+            if (!control) continue;
+            if (control->tagName == "select") {
+                std::vector<Node*> options;
+                collectDescendants(control, options, [](Node* node) { return node && node->tagName == "option"; });
+                for (Node* option : options) {
+                    if (hasAttr(option, "selected")) option->attrs["selected"] = "selected";
+                    else option->attrs.erase("selected");
+                }
+            } else if (control->tagName == "input") {
+                std::string type = lowerCopy(control->attr("type"));
+                if (type == "checkbox" || type == "radio") {
+                    if (hasAttr(control, "checked")) control->attrs["checked"] = "checked";
+                    else control->attrs.erase("checked");
+                } else {
+                    control->attrs["value"] = control->attr("value");
+                }
+            } else if (control->tagName == "textarea") {
+                control->attrs["value"] = textContent(control);
+            }
+        }
+        return JsValue::undefined();
+    });
+    addNativeM("checkValidity", NATIVE("checkValidity") {
+        Node* n = unwrapNode(thisVal);
+        if (!n) return JsValue::boolean(true);
+        if (n->tagName == "form") {
+            for (Node* control : formControls(n))
+                if (!controlIsValid(control)) return JsValue::boolean(false);
+            return JsValue::boolean(true);
+        }
+        return JsValue::boolean(controlIsValid(n));
+    });
+    addNativeM("reportValidity", NATIVE("reportValidity") {
+        JsValue check = thisVal.isObject() ? thisVal.asObject()->getProp("checkValidity") : JsValue::undefined();
+        return check.isCallable() ? vm.call(check, thisVal, {}) : JsValue::boolean(true);
+    });
+    addNativeM("setCustomValidity", NATIVE("setCustomValidity") {
+        Node* n = unwrapNode(thisVal);
+        if (n) n->attrs["_vertex_customValidity"] = ARG_STR(0);
         return JsValue::undefined();
     });
     addNativeM("matches", NATIVE("matches") {
@@ -2430,6 +2571,11 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     obj->setProp("alt",     vm.str(node->attr("alt")));
     obj->setProp("type",    vm.str(node->attr("type")));
     obj->setProp("name",    vm.str(node->attr("name")));
+    obj->setProp("integrity", vm.str(node->attr("integrity")));
+    obj->setProp("crossOrigin", vm.str(node->attr("crossorigin")));
+    obj->setProp("referrerPolicy", vm.str(node->attr("referrerpolicy")));
+    obj->setProp("nonce", vm.str(node->attr("nonce")));
+    obj->setProp("noModule", JsValue::boolean(hasAttr(raw, "nomodule")));
 
     if (raw->tagName == "canvas") {
         obj->setProp("width",  JsValue::integer((int)parseFloatOr(raw->attr("width"), 300.f)));
@@ -2440,6 +2586,47 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
             std::string kind = ARG_STR(0);
             if (kind != "2d") return JsValue::null();  // webgl/bitmaprenderer: not supported
             return MakeCanvasRenderingContext2D(vm, n);
+        });
+    }
+
+    if (raw->tagName == "img" || raw->tagName == "image") {
+        int w = (int)parseFloatOr(raw->attr("width"), 0.f);
+        int h = (int)parseFloatOr(raw->attr("height"), 0.f);
+        obj->setProp("complete", JsValue::boolean(true));
+        obj->setProp("naturalWidth", JsValue::integer(w));
+        obj->setProp("naturalHeight", JsValue::integer(h));
+        obj->setProp("currentSrc", vm.str(raw->attr("src")));
+        obj->setProp("loading", vm.str(raw->attr("loading")));
+        obj->setProp("decoding", vm.str(raw->attr("decoding")));
+        addNativeM("decode", NATIVE("img_decode") { return vm.promiseResolve(JsValue::undefined()); });
+    }
+
+    if (raw->tagName == "svg" || raw->tagName == "path" || raw->tagName == "rect" || raw->tagName == "circle") {
+        addNativeM("getBBox", NATIVE("svg_getBBox") {
+            Node* n = unwrapNode(thisVal);
+            DomMetrics rect = computeDomMetrics(n);
+            auto* box = vm.gc().newObject(ObjKind::Plain);
+            box->setProp("x", JsValue::number(rect.left));
+            box->setProp("y", JsValue::number(rect.top));
+            box->setProp("width", JsValue::number(rect.width));
+            box->setProp("height", JsValue::number(rect.height));
+            return JsValue::object(box);
+        });
+        addNativeM("createSVGPoint", NATIVE("createSVGPoint") {
+            auto* point = vm.gc().newObject(ObjKind::Plain);
+            point->setProp("x", JsValue::number(0));
+            point->setProp("y", JsValue::number(0));
+            addNative(vm, point, "matrixTransform", [point](VM&, JsValue, std::vector<JsValue>) -> JsValue {
+                return JsValue::object(point);
+            });
+            return JsValue::object(point);
+        });
+        addNativeM("getScreenCTM", NATIVE("svg_getScreenCTM") {
+            auto* matrix = vm.gc().newObject(ObjKind::Plain);
+            matrix->setProp("a", JsValue::number(1)); matrix->setProp("b", JsValue::number(0));
+            matrix->setProp("c", JsValue::number(0)); matrix->setProp("d", JsValue::number(1));
+            matrix->setProp("e", JsValue::number(0)); matrix->setProp("f", JsValue::number(0));
+            return JsValue::object(matrix);
         });
     }
 
@@ -2936,6 +3123,26 @@ static JsValue makeFormData(VM& vm, QueryPairs initial = {}) {
             vm.call(args[0], thisArg, { vm.str(pair.second), vm.str(pair.first), thisVal });
         return JsValue::undefined();
     });
+    addNative(vm, form, "keys", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) arr->arrayPush(vm.str(pair.first));
+        return JsValue::object(arr);
+    });
+    addNative(vm, form, "values", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) arr->arrayPush(vm.str(pair.second));
+        return JsValue::object(arr);
+    });
+    addNative(vm, form, "entries", [pairs](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+        auto* arr = newArrayWithPrototype(vm);
+        for (const auto& pair : *pairs) {
+            auto* entry = newArrayWithPrototype(vm);
+            entry->arrayPush(vm.str(pair.first));
+            entry->arrayPush(vm.str(pair.second));
+            arr->arrayPush(JsValue::object(entry));
+        }
+        return JsValue::object(arr);
+    });
     return JsValue::object(form);
 }
 
@@ -3228,6 +3435,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         else if (key == "id")    n->attrs["id"] = val.toString();
         else if (key == "role")  n->attrs["role"] = val.toString();
         else if (key == "tabIndex") n->attrs["tabindex"] = val.toString();
+        else if (key == "src" || key == "href" || key == "alt" || key == "type" || key == "name" || key == "loading" || key == "decoding"
+            || key == "integrity" || key == "nonce") n->attrs[lowerCopy(key)] = val.toString();
+        else if (key == "crossOrigin") n->attrs["crossorigin"] = val.toString();
+        else if (key == "referrerPolicy") n->attrs["referrerpolicy"] = val.toString();
+        else if (key == "noModule") {
+            if (val.toBool()) n->attrs["nomodule"] = "";
+            else n->attrs.erase("nomodule");
+        }
         else if (key == "hidden") {
             if (val.toBool()) n->attrs["hidden"] = "";
             else n->attrs.erase("hidden");
@@ -3302,9 +3517,33 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             out = vmPtr->str(CookieJar::instance().documentCookies(pageUrl));
             return true;
         }
+        if (n->type == NodeType::Document && (key == "scripts" || key == "images" || key == "links"
+            || key == "anchors" || key == "styleSheets")) {
+            std::vector<Node*> nodes;
+            if (key == "scripts") collectDescendants(n, nodes, [](Node* node) { return node && node->tagName == "script"; });
+            else if (key == "images") collectDescendants(n, nodes, [](Node* node) { return node && (node->tagName == "img" || node->tagName == "image"); });
+            else if (key == "links") collectDescendants(n, nodes, [](Node* node) { return node && (node->tagName == "a" || node->tagName == "area") && hasAttr(node, "href"); });
+            else if (key == "anchors") collectDescendants(n, nodes, [](Node* node) { return node && node->tagName == "a" && hasAttr(node, "name"); });
+            else collectDescendants(n, nodes, [](Node* node) { return node && (node->tagName == "style" || (node->tagName == "link" && lowerCopy(node->attr("rel")).find("stylesheet") != std::string::npos)); });
+            out = JsValue::object(makeNodeCollection(*vmPtr, nodes));
+            return true;
+        }
+        if (n->type == NodeType::Document && key == "currentScript") {
+            std::vector<Node*> scripts;
+            collectDescendants(n, scripts, [](Node* node) { return node && node->tagName == "script"; });
+            auto shared = scripts.empty() ? nullptr : getShared(scripts.front());
+            out = shared ? wrapNodeInternal(*vmPtr, shared, false) : JsValue::null();
+            return true;
+        }
         if (key == "className") { out = vmPtr->str(n->attr("class")); return true; }
         if (key == "id")        { out = vmPtr->str(n->attr("id"));    return true; }
         if (key == "role")      { out = vmPtr->str(n->attr("role"));  return true; }
+        if (key == "src" || key == "href" || key == "alt" || key == "type" || key == "name" || key == "loading" || key == "decoding"
+            || key == "integrity" || key == "nonce") { out = vmPtr->str(n->attr(lowerCopy(key))); return true; }
+        if (key == "currentSrc") { out = vmPtr->str(n->attr("src")); return true; }
+        if (key == "crossOrigin") { out = vmPtr->str(n->attr("crossorigin")); return true; }
+        if (key == "referrerPolicy") { out = vmPtr->str(n->attr("referrerpolicy")); return true; }
+        if (key == "noModule") { out = JsValue::boolean(hasAttr(n, "nomodule")); return true; }
         if (key == "tabIndex") {
             std::string value = n->attr("tabindex");
             out = JsValue::integer(value.empty() ? -1 : std::atoi(value.c_str()));
@@ -3360,6 +3599,32 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         if (key == "form" && isFormControl(n)) {
             auto shared = getShared(formOwner(n));
             out = shared ? wrapNodeInternal(*vmPtr, shared, false) : JsValue::null();
+            return true;
+        }
+        if (key == "labels" && isFormControl(n)) {
+            out = JsValue::object(makeNodeCollection(*vmPtr, labelsForControl(n)));
+            return true;
+        }
+        if (key == "willValidate" && isFormControl(n)) {
+            std::string type = lowerCopy(n->attr("type"));
+            bool barred = hasAttr(n, "disabled") || type == "hidden" || type == "button" || type == "submit" || type == "reset";
+            out = JsValue::boolean(!barred);
+            return true;
+        }
+        if (key == "validity" && isFormControl(n)) {
+            auto* validity = vmPtr->gc().newObject(ObjKind::Plain);
+            bool valueMissing = controlValueMissing(n);
+            bool customError = !n->attr("_vertex_customValidity").empty();
+            bool valid = !valueMissing && !customError;
+            validity->setProp("valueMissing", JsValue::boolean(valueMissing));
+            validity->setProp("customError", JsValue::boolean(customError));
+            validity->setProp("valid", JsValue::boolean(valid));
+            out = JsValue::object(validity);
+            return true;
+        }
+        if (key == "validationMessage" && isFormControl(n)) {
+            std::string custom = n->attr("_vertex_customValidity");
+            out = vmPtr->str(!custom.empty() ? custom : (controlValueMissing(n) ? "Please fill out this field." : ""));
             return true;
         }
         if (key == "control" && n->tagName == "label") {
@@ -3530,6 +3795,21 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         docVal.asObject()->setProp("visibilityState", vm.str("visible"));
         docVal.asObject()->setProp("hidden",          JsValue::boolean(false));
         docVal.asObject()->setProp("adoptedStyleSheets", JsValue::object(newArrayWithPrototype(vm)));
+        auto* fonts = vm.gc().newObject(ObjKind::Plain);
+        fonts->setProp("status", vm.str("loaded"));
+        addNative(vm, fonts, "ready", [&vm](VM& v, JsValue thisVal, std::vector<JsValue>) -> JsValue {
+            return v.promiseResolve(thisVal);
+        });
+        addNative(vm, fonts, "check", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::boolean(true); });
+        addNative(vm, fonts, "load", [](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+            return v.promiseResolve(JsValue::object(newArrayWithPrototype(v)));
+        });
+        addNative(vm, fonts, "add", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+        docVal.asObject()->setProp("fonts", JsValue::object(fonts));
+        auto* securityPolicy = vm.gc().newObject(ObjKind::Plain);
+        securityPolicy->setProp("allowsInlineScript", JsValue::boolean(true));
+        securityPolicy->setProp("allowsEval", JsValue::boolean(true));
+        docVal.asObject()->setProp("securityPolicy", JsValue::object(securityPolicy));
         addNative(vm, docVal.asObject(), "getSelection", [selection](VM&, JsValue, std::vector<JsValue>) -> JsValue {
             return JsValue::object(selection);
         });
@@ -3657,6 +3937,55 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     winNavigator->setProp("cookieEnabled",JsValue::boolean(true));
     winNavigator->setProp("hardwareConcurrency", JsValue::integer(4));
     winNavigator->setProp("maxTouchPoints", JsValue::integer(0));
+    winNavigator->setProp("vendor", vm.str("Vertex"));
+    winNavigator->setProp("product", vm.str("Gecko"));
+    winNavigator->setProp("productSub", vm.str("20030107"));
+    winNavigator->setProp("appName", vm.str("Netscape"));
+    winNavigator->setProp("appCodeName", vm.str("Mozilla"));
+    winNavigator->setProp("appVersion", vm.str("5.0"));
+    auto* emptyPlugins = newArrayWithPrototype(vm);
+    winNavigator->setProp("plugins", JsValue::object(emptyPlugins));
+    auto* emptyMimeTypes = newArrayWithPrototype(vm);
+    winNavigator->setProp("mimeTypes", JsValue::object(emptyMimeTypes));
+    addNative(vm, winNavigator, "javaEnabled", NATIVE("navigator.javaEnabled") { return JsValue::boolean(false); });
+    addNative(vm, winNavigator, "sendBeacon", NATIVE("navigator.sendBeacon") { return JsValue::boolean(true); });
+    {
+        auto* connection = vm.gc().newObject(ObjKind::Plain);
+        connection->setProp("effectiveType", vm.str("4g"));
+        connection->setProp("type", vm.str("wifi"));
+        connection->setProp("downlink", JsValue::number(10));
+        connection->setProp("rtt", JsValue::integer(50));
+        connection->setProp("saveData", JsValue::boolean(false));
+        winNavigator->setProp("connection", JsValue::object(connection));
+    }
+    {
+        auto* permissions = vm.gc().newObject(ObjKind::Plain);
+        addNative(vm, permissions, "query", NATIVE("permissions.query") {
+            auto* status = vm.gc().newObject(ObjKind::Plain);
+            status->setProp("state", vm.str("prompt"));
+            status->setProp("onchange", JsValue::null());
+            addNative(vm, status, "addEventListener", NATIVE("PermissionStatus.addEventListener") { return JsValue::undefined(); });
+            addNative(vm, status, "removeEventListener", NATIVE("PermissionStatus.removeEventListener") { return JsValue::undefined(); });
+            addNative(vm, status, "dispatchEvent", NATIVE("PermissionStatus.dispatchEvent") { return JsValue::boolean(true); });
+            return vm.promiseResolve(JsValue::object(status));
+        });
+        winNavigator->setProp("permissions", JsValue::object(permissions));
+    }
+    {
+        auto* geolocation = vm.gc().newObject(ObjKind::Plain);
+        addNative(vm, geolocation, "getCurrentPosition", NATIVE("geolocation.getCurrentPosition") {
+            if (ARG(1).isCallable()) {
+                auto* err = vm.gc().newObject(ObjKind::Plain);
+                err->setProp("code", JsValue::integer(1));
+                err->setProp("message", vm.str("Geolocation unavailable"));
+                vm.call(ARG(1), JsValue::undefined(), { JsValue::object(err) });
+            }
+            return JsValue::undefined();
+        });
+        addNative(vm, geolocation, "watchPosition", NATIVE("geolocation.watchPosition") { return JsValue::integer(1); });
+        addNative(vm, geolocation, "clearWatch", NATIVE("geolocation.clearWatch") { return JsValue::undefined(); });
+        winNavigator->setProp("geolocation", JsValue::object(geolocation));
+    }
     {
         auto* uaData = vm.gc().newObject(ObjKind::Plain);
         auto* brands = newArrayWithPrototype(vm);
@@ -3701,6 +4030,33 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.setGlobal("HTMLElement", JsValue::object(vm.gc().newNativeFunction(NATIVE("HTMLElement") {
         return JsValue::object(vm.gc().newObject(ObjKind::Plain));
     }, "HTMLElement")));
+    vm.setGlobal("Image", JsValue::object(vm.gc().newNativeFunction(NATIVE("Image") {
+        auto img = Node::makeElement("img");
+        if (args.size() > 0 && !ARG(0).isUndefined()) img->attrs["width"] = ARG(0).toString();
+        if (args.size() > 1 && !ARG(1).isUndefined()) img->attrs["height"] = ARG(1).toString();
+        registerSubtree(img);
+        return wrapNode(vm, img);
+    }, "Image")));
+    vm.setGlobal("FontFace", JsValue::object(vm.gc().newNativeFunction(NATIVE("FontFace") {
+        auto* face = vm.gc().newObject(ObjKind::Plain);
+        face->setProp("family", args.empty() ? vm.str("") : ARG(0));
+        face->setProp("source", args.size() > 1 ? ARG(1) : vm.str(""));
+        face->setProp("status", vm.str("loaded"));
+        addNative(vm, face, "load", [face](VM& v, JsValue, std::vector<JsValue>) -> JsValue {
+            face->setProp("status", v.str("loaded"));
+            return v.promiseResolve(JsValue::object(face));
+        });
+        return JsValue::object(face);
+    }, "FontFace")));
+    auto* nodeFilter = vm.gc().newObject(ObjKind::Plain);
+    nodeFilter->setProp("SHOW_ALL", JsValue::integer(-1));
+    nodeFilter->setProp("SHOW_ELEMENT", JsValue::integer(0x1));
+    nodeFilter->setProp("SHOW_TEXT", JsValue::integer(0x4));
+    nodeFilter->setProp("SHOW_DOCUMENT", JsValue::integer(0x100));
+    nodeFilter->setProp("FILTER_ACCEPT", JsValue::integer(1));
+    nodeFilter->setProp("FILTER_REJECT", JsValue::integer(2));
+    nodeFilter->setProp("FILTER_SKIP", JsValue::integer(3));
+    vm.setGlobal("NodeFilter", JsValue::object(nodeFilter));
 
     auto* screen = vm.gc().newObject(ObjKind::Plain);
     screen->setProp("width",  JsValue::integer(1280));
@@ -3714,6 +4070,8 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.setGlobal("innerHeight", JsValue::integer(800));
     syncWindowScrollGlobals(vm);
     vm.setGlobal("devicePixelRatio", JsValue::number(1.0));
+    vm.setGlobal("isSecureContext", JsValue::boolean(parseDomUrl(pageUrl).protocol == "https:"));
+    vm.setGlobal("crossOriginIsolated", JsValue::boolean(false));
 
     static auto localStorageData = std::make_shared<std::map<std::string, std::string>>();
     auto sessionStorageData = std::make_shared<std::map<std::string, std::string>>();
@@ -4216,6 +4574,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             HeaderStore headers;
             std::string body;
             std::string bodyType;
+            std::string mode = "cors";
+            std::string credentials = "same-origin";
+            std::string cache = "default";
+            std::string redirect = "follow";
+            std::string referrer = "about:client";
+            std::string referrerPolicy;
+            std::string integrity;
+            bool keepalive = false;
             if (input.isObject()) {
                 JsObject* inputObj = input.asObject();
                 JsValue inputUrl = inputObj->getProp("url");
@@ -4224,6 +4590,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 if (!inputMethod.isUndefined()) method = inputMethod.toString();
                 JsValue inputHeaders = inputObj->getProp("headers");
                 if (inputHeaders.isObject()) headers = headersFromInit(inputHeaders);
+                if (!inputObj->getProp("mode").isUndefined()) mode = inputObj->getProp("mode").toString();
+                if (!inputObj->getProp("credentials").isUndefined()) credentials = inputObj->getProp("credentials").toString();
+                if (!inputObj->getProp("cache").isUndefined()) cache = inputObj->getProp("cache").toString();
+                if (!inputObj->getProp("redirect").isUndefined()) redirect = inputObj->getProp("redirect").toString();
+                if (!inputObj->getProp("referrer").isUndefined()) referrer = inputObj->getProp("referrer").toString();
+                if (!inputObj->getProp("referrerPolicy").isUndefined()) referrerPolicy = inputObj->getProp("referrerPolicy").toString();
+                if (!inputObj->getProp("integrity").isUndefined()) integrity = inputObj->getProp("integrity").toString();
+                if (!inputObj->getProp("keepalive").isUndefined()) keepalive = inputObj->getProp("keepalive").toBool();
             } else {
                 url = input.toString();
             }
@@ -4235,6 +4609,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 JsValue optBody = options->getProp("body");
                 if (!optBody.isUndefined() && !optBody.isNull())
                     body = bodyFromInit(optBody, &bodyType);
+                if (!options->getProp("mode").isUndefined()) mode = options->getProp("mode").toString();
+                if (!options->getProp("credentials").isUndefined()) credentials = options->getProp("credentials").toString();
+                if (!options->getProp("cache").isUndefined()) cache = options->getProp("cache").toString();
+                if (!options->getProp("redirect").isUndefined()) redirect = options->getProp("redirect").toString();
+                if (!options->getProp("referrer").isUndefined()) referrer = options->getProp("referrer").toString();
+                if (!options->getProp("referrerPolicy").isUndefined()) referrerPolicy = options->getProp("referrerPolicy").toString();
+                if (!options->getProp("integrity").isUndefined()) integrity = options->getProp("integrity").toString();
+                if (!options->getProp("keepalive").isUndefined()) keepalive = options->getProp("keepalive").toBool();
             }
             std::transform(method.begin(), method.end(), method.begin(),
                 [](unsigned char c) { return (char)std::toupper(c); });
@@ -4244,11 +4626,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             request->setProp("url", vm.str(resolveDomUrl(url, baseUrl)));
             request->setProp("method", vm.str(method.empty() ? "GET" : method));
             request->setProp("headers", makeHeadersObject(vm, std::move(headers)));
-            request->setProp("mode", vm.str("cors"));
-            request->setProp("credentials", vm.str("same-origin"));
-            request->setProp("cache", vm.str("default"));
-            request->setProp("redirect", vm.str("follow"));
-            request->setProp("referrer", vm.str("about:client"));
+            request->setProp("mode", vm.str(mode));
+            request->setProp("credentials", vm.str(credentials));
+            request->setProp("cache", vm.str(cache));
+            request->setProp("redirect", vm.str(redirect));
+            request->setProp("referrer", vm.str(referrer));
+            request->setProp("referrerPolicy", vm.str(referrerPolicy));
+            request->setProp("integrity", vm.str(integrity));
+            request->setProp("keepalive", JsValue::boolean(keepalive));
+            request->setProp("destination", vm.str(""));
             installBodyMethods(vm, request, body, "");
             addNative(vm, request, "clone", [baseUrl](VM& v, JsValue thisVal, std::vector<JsValue>) -> JsValue {
                 auto* cloned = v.gc().newObject(ObjKind::Plain);
@@ -4262,6 +4648,10 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                     cloned->setProp("cache", src->getProp("cache"));
                     cloned->setProp("redirect", src->getProp("redirect"));
                     cloned->setProp("referrer", src->getProp("referrer"));
+                    cloned->setProp("referrerPolicy", src->getProp("referrerPolicy"));
+                    cloned->setProp("integrity", src->getProp("integrity"));
+                    cloned->setProp("keepalive", src->getProp("keepalive"));
+                    cloned->setProp("destination", src->getProp("destination"));
                 } else {
                     cloned->setProp("url", v.str(baseUrl));
                     cloned->setProp("method", v.str("GET"));
@@ -4608,6 +4998,27 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         std::string uuid = nextHex() + nextHex() + "-" + nextHex() + "-" + nextHex() + "-" + nextHex() + "-" + nextHex() + nextHex() + nextHex();
         return vm.str(uuid);
     });
+    {
+        auto* subtle = vm.gc().newObject(ObjKind::Plain);
+        addNative(vm, subtle, "digest", NATIVE("crypto.subtle.digest") {
+            std::string input = args.size() > 1 ? bodyFromInit(ARG(1)) : "";
+            std::string algorithm = args.empty() ? "sha-256" : lowerCopy(ARG(0).toString());
+            size_t bytes = algorithm.find("512") != std::string::npos ? 64 : (algorithm.find("384") != std::string::npos ? 48 : 32);
+            uint64_t h = 1469598103934665603ULL;
+            for (unsigned char c : input) { h ^= c; h *= 1099511628211ULL; }
+            auto* buffer = vm.gc().newObject(ObjKind::Plain);
+            std::string raw;
+            for (size_t i = 0; i < bytes; ++i) {
+                h ^= (uint64_t)i + 0x9e3779b97f4a7c15ULL;
+                h *= 1099511628211ULL;
+                raw.push_back((char)((h >> ((i % 8) * 8)) & 0xFF));
+            }
+            buffer->setProp("byteLength", JsValue::integer((int32_t)bytes));
+            buffer->setProp("__vertexBytes", vm.str(raw));
+            return vm.promiseResolve(JsValue::object(buffer));
+        });
+        crypto->setProp("subtle", JsValue::object(subtle));
+    }
     vm.setGlobal("crypto", JsValue::object(crypto));
 
     // window.alert / confirm / prompt
@@ -4695,6 +5106,31 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             perfEntries->end());
         return JsValue::undefined();
     });
+    vm.setGlobal("PerformanceObserver", JsValue::object(vm.gc().newNativeFunction([makePerfEntryArray](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        JsValue callback = args.empty() ? JsValue::undefined() : args[0];
+        auto* observer = vm.gc().newObject(ObjKind::Plain);
+        observer->setProp("callback", callback);
+        addNative(vm, observer, "observe", [observer, makePerfEntryArray](VM& v, JsValue thisVal, std::vector<JsValue>) -> JsValue {
+            JsValue cb = observer->getProp("callback");
+            if (cb.isCallable()) {
+                auto* list = v.gc().newObject(ObjKind::Plain);
+                addNative(v, list, "getEntries", [makePerfEntryArray](VM& v2, JsValue, std::vector<JsValue>) -> JsValue { return makePerfEntryArray(v2, "", true); });
+                addNative(v, list, "getEntriesByType", [makePerfEntryArray](VM& v2, JsValue, std::vector<JsValue> a) -> JsValue { return makePerfEntryArray(v2, a.empty() ? "" : a[0].toString(), true); });
+                addNative(v, list, "getEntriesByName", [makePerfEntryArray](VM& v2, JsValue, std::vector<JsValue> a) -> JsValue { return makePerfEntryArray(v2, a.empty() ? "" : a[0].toString(), false); });
+                v.call(cb, thisVal, { JsValue::object(list), thisVal });
+            }
+            return JsValue::undefined();
+        });
+        addNative(vm, observer, "disconnect", NATIVE("PerformanceObserver.disconnect") { return JsValue::undefined(); });
+        addNative(vm, observer, "takeRecords", [makePerfEntryArray](VM& v, JsValue, std::vector<JsValue>) -> JsValue { return makePerfEntryArray(v, "", true); });
+        return JsValue::object(observer);
+    }, "PerformanceObserver")));
+    if (auto* ctor = vm.globals()->getProp("PerformanceObserver").asObject()) {
+        auto* supported = newArrayWithPrototype(vm);
+        supported->arrayPush(vm.str("mark"));
+        supported->arrayPush(vm.str("measure"));
+        ctor->setProp("supportedEntryTypes", JsValue::object(supported));
+    }
     vm.setGlobal("performance", JsValue::object(perf));
 
     // requestAnimationFrame (queued as macrotask with 0 delay)
@@ -4948,6 +5384,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     makeEventCtor("TouchEvent");
     makeEventCtor("DragEvent");
     makeEventCtor("SubmitEvent");
+    makeEventCtor("SecurityPolicyViolationEvent");
 }
 
 bool dispatchDomEvent(VM& vm, Node* target, const std::string& eventName) {

@@ -2340,8 +2340,10 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
     if (pseudo == "any-link") return node
         && (node->tagName == "a" || node->tagName == "area" || node->tagName == "link")
         && node->attrs.find("href") != node->attrs.end();
+    if (pseudo == "target") return node && (node->attr("id") == "target"
+        || node->attrs.find("_vertex_target") != node->attrs.end());
     if (pseudo == "root") return node && node->parent
-                              && node->parent->type == NodeType::Document;
+        && node->parent->type == NodeType::Document;
     if (pseudo == "first-of-type") return IsFirstOfType(node);
     if (pseudo == "last-of-type") return IsLastOfType(node);
     // :nth-child(An+B) — the argument is stored in the pseudo string itself.
@@ -2921,9 +2923,13 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
             } else {
                 if (pseudo == "before" || pseudo == "after") {
                     part.pseudoElement = pseudo;
+                } else if (isDoubleColon && (pseudo == "first-line" || pseudo == "first-letter"
+                    || pseudo == "marker" || pseudo == "placeholder" || pseudo == "selection"
+                    || pseudo == "file-selector-button" || pseudo == "backdrop")) {
+                    // Approximate common pseudo-elements on the originating element.
                 } else if (!isDoubleColon && (pseudo == "first-child" || pseudo == "last-child"
                     || pseudo == "only-child" || pseudo == "empty"
-                    || pseudo == "link" || pseudo == "any-link" || pseudo == "root"
+                    || pseudo == "link" || pseudo == "any-link" || pseudo == "target" || pseudo == "root"
                     || pseudo == "first-of-type" || pseudo == "last-of-type"
                     || pseudo == "hover" || pseudo == "focus" || pseudo == "active"
                     || pseudo == "visited" || pseudo == "checked"
@@ -3405,6 +3411,18 @@ Stylesheet ParseStylesheet(const std::string& rawCss) {
                         for (auto& rule : nested.rules)
                             sheet.rules.push_back(std::move(rule));
                     }
+                } else if (header.rfind("@layer", 0) == 0 || header.rfind("@scope", 0) == 0) {
+                    const float outerEmBase = g_emBase;
+                    const float outerRemBase = g_remBase;
+                    Stylesheet nested = ParseStylesheet(css.substr(lbPos + 1, rbPos - lbPos - 1));
+                    g_emBase = outerEmBase;
+                    g_remBase = outerRemBase;
+                    if (nested.rootRemBaseSet) {
+                        sheet.rootRemBase = nested.rootRemBase;
+                        sheet.rootRemBaseSet = true;
+                    }
+                    for (auto& rule : nested.rules)
+                        sheet.rules.push_back(std::move(rule));
                 } else if (header.rfind("@font-face", 0) == 0) {
                     // Parse @font-face { font-family: X; src: url(...); }
                     std::string body = css.substr(lbPos + 1, rbPos - lbPos - 1);
