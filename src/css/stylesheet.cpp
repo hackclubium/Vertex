@@ -912,6 +912,24 @@ static void ApplyDeclaration(const std::string& prop,
                              const std::string& val,
                              ComputedStyle& out) {
     if (ApplyLogicalDeclaration(prop, val, out)) return;
+    if (prop == "border-collapse") {
+        std::string v = sLower(sTrim(val));
+        out.borderCollapse = (v == "collapse");
+        out.borderCollapseSet = true;
+        return;
+    }
+    if (prop == "caption-side") {
+        std::string v = sLower(sTrim(val));
+        out.captionSide = (v == "bottom") ? 1 : 0;
+        out.captionSideSet = true;
+        return;
+    }
+    if (prop == "direction") {
+        std::string v = sLower(sTrim(val));
+        out.direction = (v == "rtl") ? 1 : 0;
+        out.directionSet = true;
+        return;
+    }
 
     if (prop == "color") {
         out.color = ParseCssColor(val);
@@ -1161,13 +1179,13 @@ static void ApplyDeclaration(const std::string& prop,
     } else if (prop == "display") {
         std::string v = sLower(sTrim(val));
         if      (v == "none")                                          out.display = 3;
-        else if (v == "block")                                         out.display = 1;
-        else if (v == "inline")                                        out.display = 2;
+        else if (v == "block" || v == "block flow")                    out.display = 1;
+        else if (v == "inline" || v == "inline flow")                  out.display = 2;
         else if (v == "flex" || v == "inline-flex")                     out.display = 4;
         else if (v == "grid" || v == "inline-grid")                     out.display = 11;
         else if (v == "table" || v == "inline-table")                  out.display = 5;
         else if (v == "table-cell")                                    out.display = 6;
-        else if (v == "inline-block")                                  out.display = 7;
+        else if (v == "inline-block" || v == "inline flow-root")       out.display = 7;
         else if (v == "list-item")                                     out.display = 8;
         else if (v == "table-row")                                     out.display = 9;
         else if (v == "table-row-group" || v == "table-header-group"
@@ -1952,7 +1970,7 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "mix-blend-mode"
             || prop == "clip-path" || prop == "mask" || prop == "mask-image"
             || prop == "appearance" || prop == "-webkit-appearance" || prop == "-moz-appearance"
-            || prop == "resize" || prop == "direction" || prop == "unicode-bidi"
+            || prop == "resize" || prop == "unicode-bidi"
             || prop == "writing-mode" || prop == "accent-color" || prop == "caret-color"
             || prop == "overscroll-behavior"
             || prop == "touch-action" || prop == "backface-visibility"
@@ -2280,6 +2298,9 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
     if (pseudo == "empty") return node && node->children.empty();
     if (pseudo == "link") return node && node->tagName == "a"
                               && node->attrs.find("href") != node->attrs.end();
+    if (pseudo == "any-link") return node
+        && (node->tagName == "a" || node->tagName == "area" || node->tagName == "link")
+        && node->attrs.find("href") != node->attrs.end();
     if (pseudo == "root") return node && node->parent
                               && node->parent->type == NodeType::Document;
     if (pseudo == "first-of-type") return IsFirstOfType(node);
@@ -2346,6 +2367,43 @@ static bool MatchesPseudoClass(const std::string& pseudo, const Node* node) {
         return t == "button" || t == "input" || t == "select" || t == "textarea"
             || t == "option" || t == "optgroup" || t == "fieldset";
     }
+    if (pseudo == "required") return node && node->attrs.find("required") != node->attrs.end();
+    if (pseudo == "optional") {
+        if (!node || node->attrs.find("required") != node->attrs.end()) return false;
+        const std::string& t = node->tagName;
+        return t == "input" || t == "select" || t == "textarea";
+    }
+    if (pseudo == "read-only") return node && node->attrs.find("readonly") != node->attrs.end();
+    if (pseudo == "read-write") {
+        if (!node || node->attrs.find("readonly") != node->attrs.end()
+            || node->attrs.find("disabled") != node->attrs.end()) return false;
+        const std::string& t = node->tagName;
+        return t == "input" || t == "textarea" || node->attr("contenteditable") == "true";
+    }
+    if (pseudo == "placeholder-shown") {
+        if (!node || node->attr("placeholder").empty() || !node->attr("value").empty()) return false;
+        return node->tagName == "input" || node->tagName == "textarea";
+    }
+    if (pseudo.rfind("lang(", 0) == 0) {
+        if (!node) return false;
+        std::string wanted = sLower(sTrim(pseudo.substr(5, pseudo.size() - 6)));
+        for (const Node* cur = node; cur; cur = cur->parent) {
+            std::string lang = sLower(cur->attr("lang"));
+            if (lang == wanted || (lang.size() > wanted.size()
+                && lang.compare(0, wanted.size(), wanted) == 0 && lang[wanted.size()] == '-'))
+                return true;
+        }
+        return false;
+    }
+    if (pseudo == "dir(rtl)" || pseudo == "dir(ltr)") {
+        if (!node) return false;
+        const std::string wanted = pseudo == "dir(rtl)" ? "rtl" : "ltr";
+        for (const Node* cur = node; cur; cur = cur->parent) {
+            std::string dir = sLower(cur->attr("dir"));
+            if (dir == "rtl" || dir == "ltr") return dir == wanted;
+        }
+        return wanted == "ltr";
+    }
     if (pseudo == "active" || pseudo == "visited") return false;
     return false;
 }
@@ -2365,16 +2423,21 @@ static bool MatchesSimpleSelector(const CssSelectorPart& part, const Node* node)
         std::string value = node->attr(part.attrName);
         if (value.empty() && node->attrs.find(part.attrName) == node->attrs.end()) return false;
         if (part.attrHasValue) {
+            std::string expected = part.attrValue;
+            if (part.attrCaseInsensitive) {
+                value = sLower(value);
+                expected = sLower(expected);
+            }
             bool matches = false;
             switch (part.attrMatch) {
                 case CssAttrMatch::Exact:
-                    matches = (value == part.attrValue);
+                    matches = (value == expected);
                     break;
                 case CssAttrMatch::Includes: {
                     std::istringstream ss(value);
                     std::string token;
                     while (ss >> token) {
-                        if (token == part.attrValue) {
+                        if (token == expected) {
                             matches = true;
                             break;
                         }
@@ -2382,21 +2445,21 @@ static bool MatchesSimpleSelector(const CssSelectorPart& part, const Node* node)
                     break;
                 }
                 case CssAttrMatch::DashPrefix:
-                    matches = (value == part.attrValue)
-                           || (value.size() > part.attrValue.size()
-                            && value.compare(0, part.attrValue.size(), part.attrValue) == 0
-                            && value[part.attrValue.size()] == '-');
+                    matches = (value == expected)
+                           || (value.size() > expected.size()
+                            && value.compare(0, expected.size(), expected) == 0
+                            && value[expected.size()] == '-');
                     break;
                 case CssAttrMatch::Prefix:
-                    matches = value.size() >= part.attrValue.size()
-                           && value.compare(0, part.attrValue.size(), part.attrValue) == 0;
+                    matches = value.size() >= expected.size()
+                           && value.compare(0, expected.size(), expected) == 0;
                     break;
                 case CssAttrMatch::Suffix:
-                    matches = value.size() >= part.attrValue.size()
-                           && value.compare(value.size() - part.attrValue.size(), part.attrValue.size(), part.attrValue) == 0;
+                    matches = value.size() >= expected.size()
+                           && value.compare(value.size() - expected.size(), expected.size(), expected) == 0;
                     break;
                 case CssAttrMatch::Substring:
-                    matches = value.find(part.attrValue) != std::string::npos;
+                    matches = value.find(expected) != std::string::npos;
                     break;
                 case CssAttrMatch::Exists:
                     matches = true;
@@ -2721,7 +2784,13 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                 part.attrMatch = CssAttrMatch::Exists;
             } else {
                 part.attrName = sLower(CssUnescape(sTrim(body.substr(0, opPos))));
-                part.attrValue = CssUnescape(stripQuotes(body.substr(opPos + op.size())));
+                std::string rawValue = sTrim(body.substr(opPos + op.size()));
+                if (rawValue.size() >= 2 && std::isspace((unsigned char)rawValue[rawValue.size() - 2])
+                    && (rawValue.back() == 'i' || rawValue.back() == 'I')) {
+                    part.attrCaseInsensitive = true;
+                    rawValue = sTrim(rawValue.substr(0, rawValue.size() - 1));
+                }
+                part.attrValue = CssUnescape(stripQuotes(rawValue));
                 part.attrHasValue = true;
                 if (op == "~=") part.attrMatch = CssAttrMatch::Includes;
                 else if (op == "|=") part.attrMatch = CssAttrMatch::DashPrefix;
@@ -2775,6 +2844,8 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                     || pseudo == "nth-of-type" || pseudo == "nth-last-of-type") {
                     // Store as "nth-child(2n+1)" so MatchesPseudoClass can parse it.
                     part.pseudos.push_back(pseudo + "(" + sLower(argText) + ")");
+                } else if (pseudo == "lang" || pseudo == "dir") {
+                    part.pseudos.push_back(pseudo + "(" + sLower(argText) + ")");
                 } else if (pseudo == "not") {
                     // :not(selector) — parse the argument as a simple selector and
                     // store it as a negation pseudo. We support simple cases:
@@ -2813,11 +2884,14 @@ static CssSelectorPart parseSimpleSelectorPart(const std::string& sel) {
                     part.pseudoElement = pseudo;
                 } else if (!isDoubleColon && (pseudo == "first-child" || pseudo == "last-child"
                     || pseudo == "only-child" || pseudo == "empty"
-                    || pseudo == "link" || pseudo == "root"
+                    || pseudo == "link" || pseudo == "any-link" || pseudo == "root"
                     || pseudo == "first-of-type" || pseudo == "last-of-type"
                     || pseudo == "hover" || pseudo == "focus" || pseudo == "active"
                     || pseudo == "visited" || pseudo == "checked"
-                    || pseudo == "disabled" || pseudo == "enabled")) {
+                    || pseudo == "disabled" || pseudo == "enabled"
+                    || pseudo == "required" || pseudo == "optional"
+                    || pseudo == "read-only" || pseudo == "read-write"
+                    || pseudo == "placeholder-shown")) {
                     part.pseudos.push_back(pseudo);
                 } else {
                     part.neverMatch = true;
@@ -3113,6 +3187,7 @@ static bool IsKnownDisplayValue(const std::string& value) {
         || value == "grid" || value == "inline-grid"
         || value == "table" || value == "inline-table"
         || value == "table-cell" || value == "inline-block"
+        || value == "block flow" || value == "inline flow" || value == "inline flow-root"
         || value == "list-item" || value == "table-row"
         || value == "table-row-group" || value == "table-header-group"
         || value == "table-footer-group" || value == "table-caption"
@@ -3500,6 +3575,9 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.positionMode == 4) out << "position=sticky ";
     if (style.zIndexSet) out << "zIndex=" << style.zIndex << " ";
     if (style.overflowHidden)    out << "overflow=hidden ";
+    if (style.borderCollapseSet) out << "borderCollapse=" << BoolText(style.borderCollapse) << " ";
+    if (style.captionSideSet) out << "captionSide=" << (style.captionSide == 1 ? "bottom" : "top") << " ";
+    if (style.directionSet) out << "direction=" << (style.direction == 1 ? "rtl" : "ltr") << " ";
     if (style.topSet)    out << "top="    << style.top    << " ";
     if (style.rightSet)  out << "right="  << style.right  << " ";
     if (style.bottomSet) out << "bottom=" << style.bottom << " ";

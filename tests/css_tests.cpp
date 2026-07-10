@@ -720,6 +720,71 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml(
+            "<html><body>"
+            "<a id=\"doc\" href=\"README.HTML\"></a>"
+            "<a id=\"img\" href=\"logo.png\"></a>"
+            "<input id=\"q\" placeholder=\"Search\" required>"
+            "<input id=\"filled\" placeholder=\"Search\" value=\"Vertex\">"
+            "<textarea id=\"notes\" readonly></textarea>"
+            "<textarea id=\"edit\"></textarea>"
+            "</body></html>");
+        auto sheet = ParseStylesheet(
+            "a[href$='.html' i] { color: red; }"
+            "input:required { margin-left: 4px; }"
+            "input:optional { margin-right: 5px; }"
+            "input:placeholder-shown { padding-left: 6px; }"
+            "textarea:read-only { padding-right: 7px; }"
+            "textarea:read-write { margin-top: 8px; }");
+        std::string actual;
+        for (const std::string id : { "doc", "img", "q", "filled", "notes", "edit" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/attribute-flags-and-form-pseudos",
+            actual,
+            "doc: color=1,0,0,1 \n"
+            "img: \n"
+            "q: marginLeft=4 paddingLeft=6 \n"
+            "filled: marginRight=5 \n"
+            "notes: paddingRight=7 \n"
+            "edit: marginTop=8 \n",
+            result);
+    }
+
+    {
+        auto dom = ParseHtml(
+            "<html lang=\"en-US\"><body dir=\"rtl\">"
+            "<a id=\"link\" href=\"/wiki/Main_Page\">Main</a>"
+            "<span id=\"word\"></span>"
+            "<table id=\"box\"><caption id=\"cap\">Cap</caption></table>"
+            "<div id=\"atomic\"></div>"
+            "</body></html>");
+        auto sheet = ParseStylesheet(
+            ":lang(en) #word { color: blue; }"
+            ":dir(rtl) #word { margin-left: 3px; }"
+            "a:any-link { padding-left: 4px; }"
+            "#box { display: block flow; border-collapse: collapse; direction: rtl; }"
+            "#cap { display: table-caption; caption-side: bottom; }"
+            "#atomic { display: inline flow-root; }");
+        std::string actual;
+        for (const std::string id : { "link", "word", "box", "cap", "atomic" }) {
+            auto* node = FindElementById(dom.get(), id);
+            actual += id + ": ";
+            actual += node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n";
+        }
+        ExpectEqual("css/cascade/wikipedia-language-table-compat",
+            actual,
+            "link: paddingLeft=4 \n"
+            "word: color=0,0,1,1 marginLeft=3 \n"
+            "box: display=block borderCollapse=true direction=rtl \n"
+            "cap: captionSide=bottom \n"
+            "atomic: \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"portal\"><form id=\"search\"></form><div id=\"picker\"></div></div></body></html>");
         auto* search = FindElementById(dom.get(), "search");
         auto* picker = FindElementById(dom.get(), "picker");

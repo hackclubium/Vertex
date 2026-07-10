@@ -1075,9 +1075,13 @@ static std::string RunDomModernMutationConveniencesSnapshot() {
         "a.before(document.createElement('hr'));\n"
         "b.after('after-b');\n"
         "tail.replaceWith(document.createElement('section'), 'end');\n"
+        "list.insertAdjacentHTML('afterbegin', '<li id=\"html-first\">H</li>');\n"
+        "list.insertAdjacentText('beforeend', 'text-tail');\n"
+        "var moved = document.createElement('li'); moved.id = 'moved'; moved.textContent = 'M';\n"
+        "list.insertAdjacentElement('beforeend', moved);\n"
         "var names = [];\n"
         "for (var i = 0; i < list.childNodes.length; i++) names.push(list.childNodes[i].nodeName + ':' + list.childNodes[i].textContent);\n"
-        "document.body.setAttribute('data-result', names.join('|') + ';tail=' + (document.getElementById('tail') ? 'yes' : 'no') + ';section=' + document.getElementsByTagName('section').length);\n",
+        "document.body.setAttribute('data-result', names.join('|') + ';adj=' + document.getElementById('html-first').textContent + document.getElementById('moved').textContent + ':' + list.textContent + ';tail=' + (document.getElementById('tail') ? 'yes' : 'no') + ';section=' + document.getElementsByTagName('section').length);\n",
         "modern-mutation-conveniences");
     if (!ok) return "script failed\n";
     Node* body = FindByTag(dom.get(), "body");
@@ -1228,12 +1232,20 @@ static std::string RunGeneralPlatformStubsSnapshot() {
         "var randomish = arr.length + ':' + (arr[0] >= 0) + ':' + (crypto.randomUUID().length >= 32);\n"
         "globalThis.idleOut = 'pending';\n"
         "requestIdleCallback(function(deadline) { globalThis.idleOut = 'idle:' + deadline.didTimeout + ':' + (deadline.timeRemaining() >= 0) + ';'; });\n"
-        "body.setAttribute('data-immediate', document.compatMode + '|' + document.visibilityState + '|' + document.hidden + '|' + navigator.userAgentData.mobile + '|' + marks + ':' + measures + '|' + randomish + '|' + custom.detail.value);\n",
+        "var parsed = new DOMParser().parseFromString('<main id=\"parsed\">P</main>', 'text/html');\n"
+        "var made = document.implementation.createHTMLDocument('Made');\n"
+        "var css = CSS.supports('display', 'inline flow-root') + ':' + CSS.supports('(border-collapse: collapse)') + ':' + CSS.escape('a b');\n"
+        "var blobUrl = URL.createObjectURL(new Blob(['x']));\n"
+        "var canParse = URL.canParse('/wiki/Test', location.href);\n"
+        "URL.revokeObjectURL(blobUrl);\n"
+        "globalThis.clipboardOut = 'pending';\n"
+        "navigator.clipboard.writeText('clip').then(function(){ return navigator.clipboard.readText(); }).then(function(text){ globalThis.clipboardOut = text; });\n"
+        "body.setAttribute('data-immediate', document.compatMode + '|' + document.visibilityState + '|' + document.hidden + '|' + document.baseURI + '|' + document.domain + '|' + navigator.languages[0] + ':' + navigator.hardwareConcurrency + ':' + navigator.maxTouchPoints + '|' + (top === window) + ':' + (parent === window) + '|' + navigator.userAgentData.mobile + '|' + marks + ':' + measures + '|' + randomish + '|' + custom.detail.value + '|' + parsed.getElementById('parsed').textContent + '|' + made.getElementsByTagName('title')[0].textContent + '|' + css + '|' + canParse + ':' + (blobUrl.indexOf('blob:') === 0));\n",
         "general-platform-stubs");
     if (!ok) return "script failed\n";
     while (engine.hasPendingMacrotasks()) engine.runMacrotasks();
     ok = engine.runScript(
-        "document.getElementsByTagName('body')[0].setAttribute('data-result', globalThis.idleOut);\n",
+        "document.getElementsByTagName('body')[0].setAttribute('data-result', globalThis.clipboardOut + '|' + globalThis.idleOut);\n",
         "general-platform-stubs-result");
     if (!ok) return "script failed\n";
     Node* body = FindByTag(dom.get(), "body");
@@ -1424,7 +1436,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/dom/modern-mutation-conveniences",
         RunDomModernMutationConveniencesSnapshot(),
-        "#text:zero|hr:|li:A|li:B|#text:after-b|li:C|#text:done;tail=no;section=1\n",
+        "li:H|#text:zero|hr:|li:A|li:B|#text:after-b|li:C|#text:done|#text:text-tail|li:M;adj=HM:HzeroABafter-bCdonetext-tailM;tail=no;section=1\n",
         result);
 
     ExpectEqual(
@@ -1460,7 +1472,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/web-platform/general-platform-stubs",
         RunGeneralPlatformStubsSnapshot(),
-        "CSS1Compat|visible|false|false|2:1|4:true:true|7|start:vertex:true:true;|idle:false:true;\n",
+        "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P||true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
         result);
 
     ExpectEqual(

@@ -184,6 +184,12 @@ struct ComputedStyle {
     bool     listStyleSet     = false;
     // Border-spacing
     float    borderSpacing    = -1;
+    bool     borderCollapse   = false;
+    bool     borderCollapseSet = false;
+    int      captionSide      = 0; // 0=top, 1=bottom
+    bool     captionSideSet   = false;
+    int      direction        = 0; // 0=ltr, 1=rtl
+    bool     directionSet     = false;
     // Baseline flex formatting values.
     int      flexDirection   = 0; // 0=row, 1=column
     bool     flexDirectionSet = false;
@@ -390,6 +396,9 @@ struct ComputedStyle {
         }
         if (child.listStyleSet) { out.listStyleNone = child.listStyleNone; out.listStyleSet = true; }
         if (child.borderSpacing >= 0) out.borderSpacing = child.borderSpacing;
+        if (child.borderCollapseSet) { out.borderCollapse = child.borderCollapse; out.borderCollapseSet = true; }
+        if (child.captionSideSet) { out.captionSide = child.captionSide; out.captionSideSet = true; }
+        if (child.directionSet) { out.direction = child.direction; out.directionSet = true; }
         if (child.flexDirectionSet) {
             out.flexDirection = child.flexDirection;
             out.flexDirectionSet = true;

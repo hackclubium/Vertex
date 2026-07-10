@@ -298,6 +298,42 @@ static std::map<std::string, std::string> parseStyleMap(const std::string& raw) 
     return out;
 }
 
+static bool cssSupportsDeclaration(const std::string& property, const std::string& value) {
+    std::string prop = lowerCopy(trimCopy(property));
+    std::string val = lowerCopy(trimCopy(value));
+    if (prop.empty() || val.empty()) return false;
+    if (prop == "display") {
+        return val == "none" || val == "block" || val == "inline" || val == "inline-block"
+            || val == "flex" || val == "grid" || val == "table" || val == "table-cell"
+            || val == "contents" || val == "flow-root" || val == "block flow"
+            || val == "inline flow" || val == "inline flow-root";
+    }
+    if (prop == "position") return val == "static" || val == "relative" || val == "absolute" || val == "fixed" || val == "sticky";
+    if (prop == "color" || prop == "background" || prop == "background-color" || prop == "border-color")
+        return ParseCssColor(value).valid || val == "transparent" || val == "currentcolor";
+    if (prop == "width" || prop == "height" || prop == "min-width" || prop == "max-width"
+        || prop == "min-height" || prop == "max-height" || prop == "margin" || prop == "padding"
+        || prop == "top" || prop == "right" || prop == "bottom" || prop == "left")
+        return val == "auto" || val == "0" || val.find("px") != std::string::npos
+            || val.find("%") != std::string::npos || val.find("calc(") != std::string::npos;
+    if (prop == "transform") return val == "none" || val.find("translate") != std::string::npos || val.find("scale") != std::string::npos || val.find("rotate") != std::string::npos;
+    if (prop == "border-collapse") return val == "collapse" || val == "separate";
+    if (prop == "caption-side") return val == "top" || val == "bottom";
+    if (prop == "direction") return val == "ltr" || val == "rtl";
+    return prop == "opacity" || prop == "visibility" || prop == "box-sizing"
+        || prop == "white-space" || prop == "overflow" || prop == "cursor"
+        || prop == "user-select" || prop == "pointer-events" || prop == "font-size"
+        || prop == "font-family" || prop == "font-weight" || prop == "line-height";
+}
+
+static bool cssSupportsCondition(const std::string& condition) {
+    std::string c = trimCopy(condition);
+    if (c.size() >= 2 && c.front() == '(' && c.back() == ')') c = trimCopy(c.substr(1, c.size() - 2));
+    size_t colon = c.find(':');
+    if (colon == std::string::npos) return false;
+    return cssSupportsDeclaration(c.substr(0, colon), c.substr(colon + 1));
+}
+
 static std::string numberCss(float v) {
     if (std::fabs(v - std::round(v)) < 0.01f) return std::to_string((int)std::round(v));
     char buf[64];
@@ -885,6 +921,44 @@ static void insertDomArgs(Node* parent, Node* before, const std::vector<JsValue>
     if (!parent) return;
     for (auto& node : nodesFromDomArgs(args))
         insertSharedChild(parent, node, before);
+}
+
+static void insertHtmlFragment(Node* parent, Node* before, const std::string& html) {
+    if (!parent) return;
+    auto frag = makeDocumentFragmentFromHtml(html);
+    std::vector<std::shared_ptr<Node>> nodes = frag ? frag->children : std::vector<std::shared_ptr<Node>>{};
+    for (auto& node : nodes)
+        insertSharedChild(parent, node, before);
+}
+
+static bool adjacentInsertionPoint(Node* target, const std::string& rawPosition,
+                                   Node*& parent, Node*& before) {
+    parent = nullptr;
+    before = nullptr;
+    if (!target) return false;
+    std::string position = lowerCopy(rawPosition);
+    if (position == "beforebegin") {
+        if (!target->parent) return false;
+        parent = target->parent;
+        before = target;
+        return true;
+    }
+    if (position == "afterbegin") {
+        parent = target;
+        before = target->children.empty() ? nullptr : target->children.front().get();
+        return true;
+    }
+    if (position == "beforeend") {
+        parent = target;
+        return true;
+    }
+    if (position == "afterend") {
+        if (!target->parent) return false;
+        parent = target->parent;
+        before = siblingNode(target, 1);
+        return true;
+    }
+    return false;
 }
 
 static void replaceNodeWithArgs(Node* node, const std::vector<JsValue>& args) {
@@ -1924,6 +1998,43 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         replaceNodeWithArgs(n, args);
         markDomDirty(vm, parent, "childList");
         return JsValue::undefined();
+    });
+    addNativeM("insertAdjacentHTML", NATIVE("insertAdjacentHTML") {
+        Node* n = unwrapNode(thisVal);
+        Node* parent = nullptr;
+        Node* before = nullptr;
+        if (args.size() >= 2 && adjacentInsertionPoint(n, ARG_STR(0), parent, before)) {
+            insertHtmlFragment(parent, before, ARG_STR(1));
+            markDomDirty(vm, parent, "childList");
+        }
+        return JsValue::undefined();
+    });
+    addNativeM("insertAdjacentText", NATIVE("insertAdjacentText") {
+        Node* n = unwrapNode(thisVal);
+        Node* parent = nullptr;
+        Node* before = nullptr;
+        if (args.size() >= 2 && adjacentInsertionPoint(n, ARG_STR(0), parent, before)) {
+            auto text = Node::makeText(ARG_STR(1));
+            registerSubtree(text);
+            insertSharedChild(parent, text, before);
+            markDomDirty(vm, parent, "childList");
+        }
+        return JsValue::undefined();
+    });
+    addNativeM("insertAdjacentElement", NATIVE("insertAdjacentElement") {
+        Node* n = unwrapNode(thisVal);
+        Node* element = unwrapNode(ARG(1));
+        Node* parent = nullptr;
+        Node* before = nullptr;
+        if (element && args.size() >= 2 && adjacentInsertionPoint(n, ARG_STR(0), parent, before)) {
+            auto shared = getShared(element);
+            if (shared) {
+                insertSharedChild(parent, shared, before);
+                markDomDirty(vm, parent, "childList");
+                return ARG(1);
+            }
+        }
+        return JsValue::null();
     });
 
     // querySelector / querySelectorAll share the DOM selector matcher.
@@ -3239,9 +3350,10 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         docVal.asObject()->setProp("head",            findFirst("head"));
         docVal.asObject()->setProp("documentElement", findFirst("html"));
         docVal.asObject()->setProp("title",           vm.str(""));
-        docVal.asObject()->setProp("URL",             vm.str(""));
+        docVal.asObject()->setProp("URL",             vm.str(pageUrl));
+        docVal.asObject()->setProp("baseURI",         vm.str(pageUrl));
         docVal.asObject()->setProp("readyState",      vm.str("complete"));
-        docVal.asObject()->setProp("domain",          vm.str(""));
+        docVal.asObject()->setProp("domain",          vm.str(parseDomUrl(pageUrl).hostname));
         docVal.asObject()->setProp("cookie",          vm.str(CookieJar::instance().documentCookies(pageUrl)));
         docVal.asObject()->setProp("referrer",        vm.str(""));
         docVal.asObject()->setProp("lastModified",    vm.str(""));
@@ -3253,6 +3365,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         addNative(vm, docVal.asObject(), "getSelection", [selection](VM&, JsValue, std::vector<JsValue>) -> JsValue {
             return JsValue::object(selection);
         });
+        auto* impl = vm.gc().newObject(ObjKind::Plain);
+        addNative(vm, impl, "createHTMLDocument", [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            std::string title = args.empty() ? "" : args[0].toString();
+            auto doc = ParseHtml("<html><head><title>" + title + "</title></head><body></body></html>");
+            registerSubtree(doc);
+            return wrapNode(vm, doc);
+        });
+        docVal.asObject()->setProp("implementation", JsValue::object(impl));
     }
 
     // window globals — populate location from the page URL.
@@ -3360,9 +3480,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     auto* winNavigator = vm.gc().newObject(ObjKind::Plain);
     winNavigator->setProp("userAgent",   vm.str("Vertex/1.0"));
     winNavigator->setProp("language",    vm.str("en-US"));
+    auto* languages = newArrayWithPrototype(vm);
+    languages->arrayPush(vm.str("en-US"));
+    languages->arrayPush(vm.str("en"));
+    winNavigator->setProp("languages", JsValue::object(languages));
     winNavigator->setProp("onLine",      JsValue::boolean(true));
     winNavigator->setProp("platform",    vm.str("Win32"));
     winNavigator->setProp("cookieEnabled",JsValue::boolean(true));
+    winNavigator->setProp("hardwareConcurrency", JsValue::integer(4));
+    winNavigator->setProp("maxTouchPoints", JsValue::integer(0));
     {
         auto* uaData = vm.gc().newObject(ObjKind::Plain);
         auto* brands = newArrayWithPrototype(vm);
@@ -3385,7 +3511,22 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         });
         winNavigator->setProp("userAgentData", JsValue::object(uaData));
     }
+    {
+        auto* clipboard = vm.gc().newObject(ObjKind::Plain);
+        auto text = std::make_shared<std::string>();
+        addNative(vm, clipboard, "writeText", [text](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            *text = args.empty() ? "" : args[0].toString();
+            return vm.promiseResolve(JsValue::undefined());
+        });
+        addNative(vm, clipboard, "readText", [text](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+            return vm.promiseResolve(vm.str(*text));
+        });
+        winNavigator->setProp("clipboard", JsValue::object(clipboard));
+    }
     vm.setGlobal("navigator", JsValue::object(winNavigator));
+
+    vm.setGlobal("top", JsValue::object(vm.globals()));
+    vm.setGlobal("parent", JsValue::object(vm.globals()));
 
     auto* screen = vm.gc().newObject(ObjKind::Plain);
     screen->setProp("width",  JsValue::integer(1280));
@@ -3410,12 +3551,14 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             return makeURLSearchParams(vm, queryPairsFromInit(vm, args.empty() ? JsValue::undefined() : args[0]));
         }, "URLSearchParams")));
 
+    auto blobUrls = std::make_shared<std::map<std::string, JsValue>>();
+
     vm.setGlobal("FormData", JsValue::object(vm.gc().newNativeFunction(
         [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
             return makeFormData(vm, formDataPairsFromInit(vm, args.empty() ? JsValue::undefined() : args[0]));
         }, "FormData")));
 
-    vm.setGlobal("URL", JsValue::object(vm.gc().newNativeFunction(
+    auto* urlCtor = vm.gc().newNativeFunction(
         [pageUrl](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
             std::string input = args.empty() ? "" : args[0].toString();
             std::string base = args.size() > 1 ? args[1].toString() : pageUrl;
@@ -3446,7 +3589,51 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                 return vm.str(url->getProp("href").toString());
             });
             return JsValue::object(url);
-        }, "URL")));
+        }, "URL");
+    addNative(vm, urlCtor, "canParse", [pageUrl](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        if (args.empty()) return JsValue::boolean(false);
+        std::string base = args.size() > 1 ? args[1].toString() : pageUrl;
+        std::string href = ResolveUrlAgainstBase(args[0].toString(), base);
+        return JsValue::boolean(!href.empty());
+    });
+    addNative(vm, urlCtor, "createObjectURL", [blobUrls](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        static int nextBlobUrl = 1;
+        std::string url = "blob:vertex-" + std::to_string(nextBlobUrl++);
+        (*blobUrls)[url] = args.empty() ? JsValue::undefined() : args[0];
+        return vm.str(url);
+    });
+    addNative(vm, urlCtor, "revokeObjectURL", [blobUrls](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        if (!args.empty()) blobUrls->erase(args[0].toString());
+        return JsValue::undefined();
+    });
+    vm.setGlobal("URL", JsValue::object(urlCtor));
+
+    auto* cssObj = vm.gc().newObject(ObjKind::Plain);
+    addNative(vm, cssObj, "supports", [](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+        if (args.size() >= 2) return JsValue::boolean(cssSupportsDeclaration(args[0].toString(), args[1].toString()));
+        return JsValue::boolean(!args.empty() && cssSupportsCondition(args[0].toString()));
+    });
+    addNative(vm, cssObj, "escape", [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        std::string in = args.empty() ? "" : args[0].toString();
+        std::string out;
+        for (char c : in) {
+            if (std::isalnum((unsigned char)c) || c == '_' || c == '-') out += c;
+            else { out += '\\'; out += c; }
+        }
+        return vm.str(out);
+    });
+    vm.setGlobal("CSS", JsValue::object(cssObj));
+
+    vm.setGlobal("DOMParser", JsValue::object(vm.gc().newNativeFunction(
+        [](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            auto* parser = vm.gc().newObject(ObjKind::Plain);
+            addNative(vm, parser, "parseFromString", [](VM& vm, JsValue, std::vector<JsValue> parseArgs) -> JsValue {
+                auto doc = ParseHtml(parseArgs.empty() ? "" : parseArgs[0].toString());
+                registerSubtree(doc);
+                return wrapNode(vm, doc);
+            });
+            return JsValue::object(parser);
+        }, "DOMParser")));
 
     // getComputedStyle(element): lightweight CSSOM from inline style + defaults.
     vm.setGlobal("getComputedStyle", JsValue::object(vm.gc().newNativeFunction(

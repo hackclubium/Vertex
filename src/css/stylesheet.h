@@ -23,6 +23,7 @@ struct CssSelectorPart {
     std::string attrName;  // "" = no attribute selector
     std::string attrValue; // only used when attrHasValue = true
     bool attrHasValue = false;
+    bool attrCaseInsensitive = false;
     CssAttrMatch attrMatch = CssAttrMatch::Exists;
     std::vector<std::string> pseudos;
     std::vector<std::string> notSelectors;  // :not() argument text (simple selectors)
