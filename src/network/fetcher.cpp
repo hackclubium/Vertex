@@ -95,6 +95,7 @@ static std::string FileContentTypeForPath(const std::filesystem::path& path) {
     if (ext == ".svg") return "image/svg+xml";
     if (ext == ".png") return "image/png";
     if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".webp") return "image/webp";
     if (ext == ".gif") return "image/gif";
     if (ext == ".txt" || ext == ".log") return "text/plain";
     return "application/octet-stream";

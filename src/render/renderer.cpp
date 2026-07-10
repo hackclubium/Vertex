@@ -9,6 +9,7 @@
 #include "render/canvas_renderer.h"
 #include "codec/png.h"
 #include "codec/jpeg.h"
+#include "codec/webp.h"
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #include <d2d1.h>
@@ -306,10 +307,13 @@ void Renderer::ReceiveImage(const std::string& url, const std::vector<uint8_t>& 
         }
     }
     if (!pixels) {
-        // Try PNG first, then JPEG
+        // Try project codecs only; WebP path is portable and hand-rolled.
         DecodedImage img = DecodePng(bytes.data(), bytes.size());
         if (!img.success) {
             img = DecodeJpeg(bytes.data(), bytes.size());
+        }
+        if (!img.success) {
+            img = DecodeWebp(bytes.data(), bytes.size());
         }
         if (img.success && img.width > 0 && img.height > 0 && !img.rgba.empty()) {
             w = img.width;

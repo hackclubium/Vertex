@@ -2,6 +2,7 @@
 #include "codec/inflate.h"
 #include "codec/png.h"
 #include "codec/jpeg.h"
+#include "codec/webp.h"
 
 #include <algorithm>
 #include <cctype>
@@ -58,6 +59,49 @@ std::string RgbaSummary(const DecodedImage& img) {
                std::to_string(img.rgba[i + 2]) + "," + std::to_string(img.rgba[i + 3]);
     }
     return out;
+}
+
+std::vector<uint8_t> MakeSolidVp8LWebp(int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    struct Bits {
+        std::vector<uint8_t> out;
+        int bit = 0;
+        void Write(uint32_t v, int n) {
+            for (int i = 0; i < n; ++i) {
+                if (bit == 0) out.push_back(0);
+                out.back() |= (uint8_t)(((v >> i) & 1u) << bit);
+                bit = (bit + 1) & 7;
+            }
+        }
+        void SimpleSymbol(uint8_t v) {
+            Write(1, 1); // simple prefix code
+            Write(0, 1); // one symbol
+            Write(1, 1); // first symbol is 8 bits
+            Write(v, 8);
+        }
+    } bits;
+    bits.Write(0, 1); // no transforms
+    bits.Write(0, 1); // no color cache
+    bits.Write(0, 1); // one meta-prefix group
+    bits.SimpleSymbol(g);
+    bits.SimpleSymbol(r);
+    bits.SimpleSymbol(b);
+    bits.SimpleSymbol(a);
+    bits.SimpleSymbol(0); // unused distance code
+
+    std::vector<uint8_t> chunk;
+    chunk.push_back(0x2f);
+    uint32_t header = (uint32_t)(width - 1) | ((uint32_t)(height - 1) << 14);
+    for (int i = 0; i < 4; ++i) chunk.push_back((uint8_t)(header >> (i * 8)));
+    chunk.insert(chunk.end(), bits.out.begin(), bits.out.end());
+
+    std::vector<uint8_t> webp = {'R','I','F','F',0,0,0,0,'W','E','B','P','V','P','8','L',0,0,0,0};
+    uint32_t chunkSize = (uint32_t)chunk.size();
+    for (int i = 0; i < 4; ++i) webp[16 + i] = (uint8_t)(chunkSize >> (i * 8));
+    webp.insert(webp.end(), chunk.begin(), chunk.end());
+    if (chunkSize & 1u) webp.push_back(0);
+    uint32_t riffSize = (uint32_t)webp.size() - 8;
+    for (int i = 0; i < 4; ++i) webp[4 + i] = (uint8_t)(riffSize >> (i * 8));
+    return webp;
 }
 
 } // namespace
@@ -548,6 +592,31 @@ TestResult RunCodecTests() {
         ExpectEqual("codec/jpeg/malformed-input-fails-safely",
             std::string(badImg.success ? "unexpected-ok " : "rejected ") +
                 (truncImg.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected rejected\n",
+            result);
+    }
+
+    {
+        auto webp = MakeSolidVp8LWebp(2, 2, 17, 34, 51, 68);
+        auto img = DecodeWebp(webp.data(), webp.size());
+        ExpectEqual("codec/webp/vp8l-solid-color",
+            RgbaSummary(img) + "\n",
+            "2x2:17,34,51,68 17,34,51,68 17,34,51,68 17,34,51,68\n",
+            result);
+    }
+
+    {
+        // WebP decoder is hand-rolled and rejects unsupported VP8/VP8L payloads
+        // instead of pretending to decode pixels.
+        auto notWebp = HexToBytes("00112233");
+        auto badImg = DecodeWebp(notWebp.data(), notWebp.size());
+        auto tinyVp8 = HexToBytes(
+            "5249464612000000574542505650382006000000"
+            "0000009d012a01000100");
+        auto vp8Img = DecodeWebp(tinyVp8.data(), tinyVp8.size());
+        ExpectEqual("codec/webp/unsupported-fails-safely",
+            std::string(badImg.success ? "unexpected-ok " : "rejected ") +
+                (vp8Img.success ? "unexpected-ok\n" : "rejected\n"),
             "rejected rejected\n",
             result);
     }

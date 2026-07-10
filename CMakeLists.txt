@@ -64,6 +64,7 @@ add_library(vertex_engine STATIC
     src/codec/crc32.cpp
     src/codec/png.cpp
     src/codec/jpeg.cpp
+    src/codec/webp.cpp
     src/render/rasterizer.cpp
     src/font/truetype.cpp
     src/font/font_face.cpp

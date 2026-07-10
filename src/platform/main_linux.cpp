@@ -33,6 +33,7 @@
 #include "render/webfont.h"
 #include "codec/png.h"
 #include "codec/jpeg.h"
+#include "codec/webp.h"
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
@@ -569,6 +570,9 @@ static void ProcessImage(const std::string& url, const std::vector<uint8_t>& byt
         DecodedImage img = DecodePng(bytes.data(), bytes.size());
         if (!img.success) {
             img = DecodeJpeg(bytes.data(), bytes.size());
+        }
+        if (!img.success) {
+            img = DecodeWebp(bytes.data(), bytes.size());
         }
         if (img.success && img.width > 0 && img.height > 0 && !img.rgba.empty()) {
             w = img.width;
