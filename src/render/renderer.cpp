@@ -934,7 +934,7 @@ std::string Renderer::HitTest(float x, float y) const {
         if (x >= it->x && x <= it->x + it->w
          && y >= it->y && y <= it->y + it->h) {
             m_lastHitRegion = *it;
-            m_lastHitHref = UnwrapBingRedirect(it->href);
+            m_lastHitHref = UnwrapDuckDuckGoRedirect(UnwrapBingRedirect(it->href));
             m_lastHitDownload = it->download;
             m_lastHitDownloadName = it->downloadName;
             m_lastHitValid = true;

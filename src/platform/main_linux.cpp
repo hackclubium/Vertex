@@ -440,7 +440,7 @@ static std::string HitTestLink(float x, float y) {
     for (auto it = g_hits.rbegin(); it != g_hits.rend(); ++it)
         if (x >= it->x && x <= it->x + it->w
          && y >= it->y && y <= it->y + it->h)
-            return UnwrapBingRedirect(it->href);
+            return UnwrapDuckDuckGoRedirect(UnwrapBingRedirect(it->href));
     return {};
 }
 

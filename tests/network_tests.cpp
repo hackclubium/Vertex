@@ -465,6 +465,14 @@ TestResult RunNetworkTests() {
     }
 
     {
+        const std::string ddg = "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fhelium.computer%2Fdocs%3Fq%3D1&amp;rut=abc";
+        ExpectEqual("network/duckduckgo-result-link-opens-and-previews-direct-destination",
+            UnwrapDuckDuckGoRedirect(ddg) + "\n",
+            "https://helium.computer/docs?q=1\n",
+            result);
+    }
+
+    {
         auto root = FindRepoRoot();
         std::string source = ReadTextFile(root / "src/network/http_client.cpp");
         const bool hasSocketConnect = source.find("TcpSocket sock") != std::string::npos;

@@ -107,15 +107,6 @@ static constexpr COLORREF kChromeQuiet   = ToColorRef(vertex::chrome_theme::Quie
 static constexpr COLORREF kChromeDisabledText = ToColorRef(vertex::chrome_theme::DisabledText);
 static constexpr COLORREF kChromeLine    = ToColorRef(vertex::chrome_theme::Line);
 
-static bool SystemPrefersDarkScheme() {
-    DWORD appsUseLightTheme = 1;
-    DWORD size = sizeof(appsUseLightTheme);
-    LSTATUS status = RegGetValueW(HKEY_CURRENT_USER,
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-        L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &appsUseLightTheme, &size);
-    return status == ERROR_SUCCESS && appsUseLightTheme == 0;
-}
-
 // ─── layout constants ─────────────────────────────────────────────────────────
 // Layout constants from ChromeLayout (shared with chrome.h).
 static bool IsSystemDarkMode() {
@@ -1151,7 +1142,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         });
 
         g_renderer.Init(hwnd);
-        g_renderer.SetPrefersDarkScheme(SystemPrefersDarkScheme());
+        g_renderer.SetPrefersDarkScheme(IsSystemDarkMode());
 
         // Start with one tab
         g_tabs.emplace_back();

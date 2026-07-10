@@ -110,6 +110,28 @@ std::string NormalizePath(std::string path) {
     if (trailingSlash && !out.empty() && out.back() != '/') out += '/';
     return out + suffix;
 }
+
+std::string QueryParam(const std::string& url, const std::string& name) {
+    std::string normalized = url;
+    size_t htmlAmp = 0;
+    while ((htmlAmp = normalized.find("&amp;", htmlAmp)) != std::string::npos)
+        normalized.replace(htmlAmp, 5, "&");
+
+    const size_t query = normalized.find('?');
+    if (query == std::string::npos) return {};
+    size_t pos = query + 1;
+    while (pos < normalized.size()) {
+        const size_t end = normalized.find('&', pos);
+        const std::string parameter = normalized.substr(pos,
+            end == std::string::npos ? std::string::npos : end - pos);
+        const size_t equals = parameter.find('=');
+        if (equals != std::string::npos && parameter.substr(0, equals) == name)
+            return PercentDecode(parameter.substr(equals + 1));
+        if (end == std::string::npos) break;
+        pos = end + 1;
+    }
+    return {};
+}
 } // namespace
 
 bool HasUrlScheme(const std::string& url) {
@@ -167,31 +189,29 @@ std::string UnwrapBingRedirect(const std::string& url) {
         hostEnd == std::string::npos ? std::string::npos : hostEnd - scheme - 3));
     if (host != "bing.com" && host != "www.bing.com") return url;
 
-    std::string normalized = url;
-    size_t htmlAmp = 0;
-    while ((htmlAmp = normalized.find("&amp;", htmlAmp)) != std::string::npos)
-        normalized.replace(htmlAmp, 5, "&");
-
-    const size_t query = normalized.find('?');
-    if (query == std::string::npos) return url;
-    size_t pos = query + 1;
-    while (pos < normalized.size()) {
-        const size_t end = normalized.find('&', pos);
-        const std::string parameter = normalized.substr(pos,
-            end == std::string::npos ? std::string::npos : end - pos);
-        const size_t equals = parameter.find('=');
-        if (equals != std::string::npos && parameter.substr(0, equals) == "u") {
-            const std::string value = PercentDecode(parameter.substr(equals + 1));
-            if (value.rfind("a1", 0) != 0) return url;
-            const std::string destination = Base64UrlDecode(value.substr(2));
-            const std::string lowerDestination = LowerAscii(destination);
-            if (lowerDestination.rfind("https://", 0) == 0
-                || lowerDestination.rfind("http://", 0) == 0)
-                return destination;
-            return url;
-        }
-        if (end == std::string::npos) break;
-        pos = end + 1;
+    const std::string value = QueryParam(url, "u");
+    if (value.rfind("a1", 0) == 0) {
+        const std::string destination = Base64UrlDecode(value.substr(2));
+        const std::string lowerDestination = LowerAscii(destination);
+        if (lowerDestination.rfind("https://", 0) == 0
+            || lowerDestination.rfind("http://", 0) == 0)
+            return destination;
     }
+    return url;
+}
+
+std::string UnwrapDuckDuckGoRedirect(const std::string& url) {
+    const size_t scheme = url.find("://");
+    if (scheme == std::string::npos) return url;
+    const size_t hostEnd = url.find_first_of("/?#", scheme + 3);
+    const std::string host = LowerAscii(url.substr(scheme + 3,
+        hostEnd == std::string::npos ? std::string::npos : hostEnd - scheme - 3));
+    if (host != "duckduckgo.com" && host != "www.duckduckgo.com") return url;
+
+    const std::string destination = QueryParam(url, "uddg");
+    const std::string lowerDestination = LowerAscii(destination);
+    if (lowerDestination.rfind("https://", 0) == 0
+        || lowerDestination.rfind("http://", 0) == 0)
+        return destination;
     return url;
 }
