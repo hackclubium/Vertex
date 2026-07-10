@@ -4864,6 +4864,154 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             return JsValue::undefined();
         }, "removeEventListener")));
 
+    std::function<JsValue(VM&, const std::string&, JsValue, const std::string&)> makeMessageEvent =
+        [](VM& vm, const std::string& type, JsValue data, const std::string& origin) -> JsValue {
+        auto* ev = vm.gc().newObject(ObjKind::Plain);
+        ev->setProp("type", vm.str(type));
+        ev->setProp("data", data);
+        ev->setProp("origin", vm.str(origin));
+        ev->setProp("lastEventId", vm.str(""));
+        ev->setProp("source", JsValue::object(vm.globals()));
+        ev->setProp("ports", JsValue::object(newArrayWithPrototype(vm)));
+        ev->setProp("bubbles", JsValue::boolean(false));
+        ev->setProp("cancelable", JsValue::boolean(false));
+        ev->setProp("defaultPrevented", JsValue::boolean(false));
+        installEventMethods(vm, ev);
+        return JsValue::object(ev);
+    };
+    auto installSimpleEventTarget = [](VM& vm, JsObject* obj) {
+        auto listeners = std::make_shared<std::vector<EventListener>>();
+        addNative(vm, obj, "addEventListener", [listeners](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+            if (args.size() >= 2 && args[1].isCallable()) listeners->push_back({ args[0].toString(), args[1] });
+            return JsValue::undefined();
+        });
+        addNative(vm, obj, "removeEventListener", [listeners](VM&, JsValue, std::vector<JsValue> args) -> JsValue {
+            if (args.size() < 2) return JsValue::undefined();
+            std::string type = args[0].toString();
+            JsValue fn = args[1];
+            listeners->erase(std::remove_if(listeners->begin(), listeners->end(), [&](const EventListener& l) {
+                return l.event == type && l.fn.strictEq(fn);
+            }), listeners->end());
+            return JsValue::undefined();
+        });
+        addNative(vm, obj, "dispatchEvent", [listeners](VM& v, JsValue thisVal, std::vector<JsValue> args) -> JsValue {
+            if (args.empty() || !args[0].isObject()) return JsValue::boolean(true);
+            std::string type = args[0].asObject()->getProp("type").toString();
+            JsValue handler = thisVal.isObject() ? thisVal.asObject()->getProp("on" + type) : JsValue::undefined();
+            if (handler.isCallable()) { try { v.call(handler, thisVal, { args[0] }); } catch (...) {} }
+            for (const auto& listener : *listeners)
+                if (listener.event == type) { try { v.call(listener.fn, thisVal, { args[0] }); } catch (...) {} }
+            return JsValue::boolean(true);
+        });
+    };
+    vm.setGlobal("postMessage", JsValue::object(vm.gc().newNativeFunction(
+        [makeMessageEvent](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            JsValue data = args.empty() ? JsValue::undefined() : args[0];
+            std::string origin = args.size() > 1 ? args[1].toString() : "*";
+            JsValue evVal = makeMessageEvent(vm, "message", data, origin);
+            auto* deliver = vm.gc().newNativeFunction([evVal](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+                JsValue handler = vm.getGlobal("onmessage");
+                if (handler.isCallable()) { try { vm.call(handler, JsValue::object(vm.globals()), { evVal }); } catch (...) {} }
+                auto listeners = g_windowEventListeners;
+                for (const auto& listener : listeners)
+                    if (listener.event == "message") { try { vm.call(listener.fn, JsValue::object(vm.globals()), { evVal }); } catch (...) {} }
+                return JsValue::undefined();
+            }, "postMessageDelivery");
+            vm.scheduleMacrotask(JsValue::object(deliver), {}, 0, false);
+            return JsValue::undefined();
+        }, "postMessage")));
+    vm.setGlobal("MessageEvent", JsValue::object(vm.gc().newNativeFunction(
+        [makeMessageEvent](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            JsValue data = JsValue::undefined();
+            std::string origin;
+            if (args.size() > 1 && args[1].isObject()) {
+                JsObject* opts = args[1].asObject();
+                data = opts->getProp("data");
+                if (data.isUndefined()) data = JsValue::undefined();
+                JsValue originVal = opts->getProp("origin");
+                if (!originVal.isUndefined()) origin = originVal.toString();
+            }
+            return makeMessageEvent(vm, args.empty() ? "message" : args[0].toString(), data, origin);
+        }, "MessageEvent")));
+    vm.setGlobal("MessageChannel", JsValue::object(vm.gc().newNativeFunction(
+        [makeMessageEvent, installSimpleEventTarget](VM& vm, JsValue, std::vector<JsValue>) -> JsValue {
+            auto* channel = vm.gc().newObject(ObjKind::Plain);
+            auto* port1 = vm.gc().newObject(ObjKind::Plain);
+            auto* port2 = vm.gc().newObject(ObjKind::Plain);
+            installSimpleEventTarget(vm, port1);
+            installSimpleEventTarget(vm, port2);
+            addNative(vm, port1, "postMessage", [port2, makeMessageEvent](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+                JsValue ev = makeMessageEvent(v, "message", args.empty() ? JsValue::undefined() : args[0], "");
+                JsValue dispatch = port2->getProp("dispatchEvent");
+                if (dispatch.isCallable()) v.call(dispatch, JsValue::object(port2), { ev });
+                return JsValue::undefined();
+            });
+            addNative(vm, port2, "postMessage", [port1, makeMessageEvent](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+                JsValue ev = makeMessageEvent(v, "message", args.empty() ? JsValue::undefined() : args[0], "");
+                JsValue dispatch = port1->getProp("dispatchEvent");
+                if (dispatch.isCallable()) v.call(dispatch, JsValue::object(port1), { ev });
+                return JsValue::undefined();
+            });
+            addNative(vm, port1, "start", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+            addNative(vm, port1, "close", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+            addNative(vm, port2, "start", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+            addNative(vm, port2, "close", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
+            channel->setProp("port1", JsValue::object(port1));
+            channel->setProp("port2", JsValue::object(port2));
+            return JsValue::object(channel);
+        }, "MessageChannel")));
+    vm.setGlobal("BroadcastChannel", JsValue::object(vm.gc().newNativeFunction(
+        [makeMessageEvent, installSimpleEventTarget](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+            auto* channel = vm.gc().newObject(ObjKind::Plain);
+            channel->setProp("name", args.empty() ? vm.str("") : vm.str(args[0].toString()));
+            installSimpleEventTarget(vm, channel);
+            addNative(vm, channel, "postMessage", [channel, makeMessageEvent](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+                JsValue dispatch = channel->getProp("dispatchEvent");
+                if (dispatch.isCallable()) v.call(dispatch, JsValue::object(channel), { makeMessageEvent(v, "message", args.empty() ? JsValue::undefined() : args[0], "") });
+                return JsValue::undefined();
+            });
+            addNative(vm, channel, "close", NATIVE("BroadcastChannel.close") { return JsValue::undefined(); });
+            return JsValue::object(channel);
+        }, "BroadcastChannel")));
+    auto makeWorkerLike = [makeMessageEvent, installSimpleEventTarget](VM& vm, const std::string& url, const std::string& name) {
+        auto* worker = vm.gc().newObject(ObjKind::Plain);
+        worker->setProp("url", vm.str(url));
+        installSimpleEventTarget(vm, worker);
+        addNative(vm, worker, "postMessage", [worker, makeMessageEvent](VM& v, JsValue, std::vector<JsValue> args) -> JsValue {
+            JsValue dispatch = worker->getProp("dispatchEvent");
+            if (dispatch.isCallable()) v.call(dispatch, JsValue::object(worker), { makeMessageEvent(v, "message", args.empty() ? JsValue::undefined() : args[0], "") });
+            return JsValue::undefined();
+        });
+        addNative(vm, worker, "terminate", NATIVE("Worker.terminate") { return JsValue::undefined(); });
+        addNative(vm, worker, "close", NATIVE("Worker.close") { return JsValue::undefined(); });
+        worker->setProp("name", vm.str(name));
+        return JsValue::object(worker);
+    };
+    vm.setGlobal("Worker", JsValue::object(vm.gc().newNativeFunction([makeWorkerLike](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        return makeWorkerLike(vm, args.empty() ? "" : args[0].toString(), "");
+    }, "Worker")));
+    vm.setGlobal("SharedWorker", JsValue::object(vm.gc().newNativeFunction([makeWorkerLike](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        auto worker = makeWorkerLike(vm, args.empty() ? "" : args[0].toString(), args.size() > 1 ? args[1].toString() : "");
+        auto* obj = worker.asObject();
+        obj->setProp("port", obj->getProp("postMessage").isCallable() ? worker : JsValue::object(vm.gc().newObject(ObjKind::Plain)));
+        return worker;
+    }, "SharedWorker")));
+    vm.setGlobal("EventSource", JsValue::object(vm.gc().newNativeFunction([installSimpleEventTarget](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+        auto* source = vm.gc().newObject(ObjKind::Plain);
+        source->setProp("url", args.empty() ? vm.str("") : vm.str(args[0].toString()));
+        source->setProp("withCredentials", JsValue::boolean(false));
+        source->setProp("readyState", JsValue::integer(0));
+        source->setProp("CONNECTING", JsValue::integer(0));
+        source->setProp("OPEN", JsValue::integer(1));
+        source->setProp("CLOSED", JsValue::integer(2));
+        installSimpleEventTarget(vm, source);
+        addNative(vm, source, "close", [source](VM&, JsValue, std::vector<JsValue>) -> JsValue {
+            source->setProp("readyState", JsValue::integer(2));
+            return JsValue::undefined();
+        });
+        return JsValue::object(source);
+    }, "EventSource")));
+
     // window.scrollTo / scroll / open
     vm.setGlobal("scrollTo", JsValue::object(vm.gc().newNativeFunction(
         NATIVE("scrollTo") {
@@ -4973,6 +5121,47 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             while (out.size() % 4) out += '=';
             return vm.str(out);
         }, "btoa")));
+
+    vm.setGlobal("TextEncoder", JsValue::object(vm.gc().newNativeFunction(NATIVE("TextEncoder") {
+        auto* enc = vm.gc().newObject(ObjKind::Plain);
+        enc->setProp("encoding", vm.str("utf-8"));
+        addNative(vm, enc, "encode", NATIVE("TextEncoder.encode") {
+            std::string input = args.empty() ? "" : args[0].toString();
+            auto* out = newArrayWithPrototype(vm);
+            for (unsigned char c : input) out->arrayPush(JsValue::integer((int32_t)c));
+            out->setProp("byteLength", JsValue::integer((int32_t)input.size()));
+            return JsValue::object(out);
+        });
+        addNative(vm, enc, "encodeInto", NATIVE("TextEncoder.encodeInto") {
+            std::string input = args.empty() ? "" : args[0].toString();
+            uint32_t written = 0;
+            if (args.size() > 1 && args[1].isObject()) {
+                JsObject* dest = args[1].asObject();
+                uint32_t cap = dest->arrayLength();
+                written = std::min<uint32_t>((uint32_t)input.size(), cap);
+                for (uint32_t i = 0; i < written; ++i) dest->arraySet(i, JsValue::integer((unsigned char)input[i]));
+            }
+            auto* result = vm.gc().newObject(ObjKind::Plain);
+            result->setProp("read", JsValue::integer((int32_t)written));
+            result->setProp("written", JsValue::integer((int32_t)written));
+            return JsValue::object(result);
+        });
+        return JsValue::object(enc);
+    }, "TextEncoder")));
+    vm.setGlobal("TextDecoder", JsValue::object(vm.gc().newNativeFunction(NATIVE("TextDecoder") {
+        auto* dec = vm.gc().newObject(ObjKind::Plain);
+        dec->setProp("encoding", vm.str(args.empty() ? "utf-8" : args[0].toString()));
+        dec->setProp("fatal", JsValue::boolean(false));
+        dec->setProp("ignoreBOM", JsValue::boolean(false));
+        addNative(vm, dec, "decode", NATIVE("TextDecoder.decode") {
+            if (args.empty() || !args[0].isObject()) return vm.str("");
+            JsObject* input = args[0].asObject();
+            std::string out;
+            for (uint32_t i = 0; i < input->arrayLength(); ++i) out += (char)(input->arrayGet(i).toInt32() & 0xFF);
+            return vm.str(out);
+        });
+        return JsValue::object(dec);
+    }, "TextDecoder")));
 
     auto* crypto = vm.gc().newObject(ObjKind::Plain);
     addNative(vm, crypto, "getRandomValues", NATIVE("crypto.getRandomValues") {

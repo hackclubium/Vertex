@@ -1407,6 +1407,45 @@ static std::string RunNavigatorPerformanceSurfaceSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunMessagingEncodingSurfaceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://example.org/wiki/Page");
+    bool ok = engine.runScript(
+        "var body = document.body;\n"
+        "globalThis.log = [];\n"
+        "addEventListener('message', function(e){ globalThis.log.push('win:' + e.data.kind + ':' + e.origin); });\n"
+        "postMessage({ kind: 'posted' }, 'https://example.org');\n"
+        "var direct = new MessageEvent('message', { data: 'direct', origin: 'o' });\n"
+        "var mc = new MessageChannel();\n"
+        "mc.port1.onmessage = function(e){ globalThis.log.push('p1:' + e.data); };\n"
+        "mc.port2.addEventListener('message', function(e){ globalThis.log.push('p2:' + e.data); });\n"
+        "mc.port2.postMessage('a'); mc.port1.postMessage('b');\n"
+        "var bc = new BroadcastChannel('topic');\n"
+        "bc.onmessage = function(e){ globalThis.log.push('bc:' + e.data); };\n"
+        "bc.postMessage('c');\n"
+        "var worker = new Worker('/worker.js');\n"
+        "worker.onmessage = function(e){ globalThis.log.push('worker:' + e.data); };\n"
+        "worker.postMessage('d');\n"
+        "var shared = new SharedWorker('/shared.js', 's');\n"
+        "shared.port.onmessage = function(e){ globalThis.log.push('shared:' + e.data); };\n"
+        "shared.port.postMessage('e');\n"
+        "var es = new EventSource('/events'); es.close();\n"
+        "var bytes = new TextEncoder().encode('Hi');\n"
+        "var decoded = new TextDecoder().decode(bytes);\n"
+        "var dest = [0, 0, 0, 0]; var into = new TextEncoder().encodeInto('Yo', dest);\n"
+        "body.setAttribute('data-immediate', direct.data + ':' + direct.origin + '|' + bc.name + '|' + worker.url + '|' + shared.name + ':' + (typeof shared.port.postMessage) + '|' + es.url + ':' + es.readyState + ':' + es.CLOSED + '|' + bytes.length + ':' + bytes.byteLength + ':' + decoded + '|' + into.read + ':' + into.written + ':' + dest[0] + ':' + dest[1] + '|' + globalThis.log.join(','));\n",
+        "messaging-encoding-surface");
+    if (!ok) return "script failed\n";
+    while (engine.hasPendingMacrotasks()) engine.runMacrotasks();
+    ok = engine.runScript(
+        "document.body.setAttribute('data-result', document.body.getAttribute('data-immediate') + '|' + globalThis.log.join(','));\n",
+        "messaging-encoding-result");
+    if (!ok) return "script failed\n";
+    Node* body = FindByTag(dom.get(), "body");
+    return body ? body->attr("data-result") + "\n" : "missing body\n";
+}
+
 static std::string RunScriptBudgetProfileSnapshot() {
     JsEngine engine;
     JsScriptBudget budget;
@@ -1664,6 +1703,12 @@ TestResult RunJsTests() {
         "js/web-platform/navigator-performance-surface",
         RunNavigatorPerformanceSurfaceSnapshot(),
         "Vertex|Gecko:Netscape:false|0:0|4g:10:false|true|2:1:1:1|1:Geolocation unavailable|prompt:function\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/messaging-encoding-surface",
+        RunMessagingEncodingSurfaceSnapshot(),
+        "direct:o|topic|/worker.js|s:function|/events:2:2|2:2:Hi|2:2:89:111|p1:a,p2:b,bc:c,worker:d,shared:e|p1:a,p2:b,bc:c,worker:d,shared:e,win:posted:https://example.org\n",
         result);
 
     ExpectEqual(
