@@ -71,7 +71,7 @@ The platform layer does windows, input, and pixels. The engine handles everythin
 - **SVG** -- inline and external SVGs, paths, gradients, transforms, text, symbols, `<use>`, class/style rules, stroke/fill, raster fallback.
 - **Painting** -- text, boxes, links, images, controls, SVG, canvas, hover, focus, dirty regions, cached render paths, hit testing, spatial index for hover.
 - **Fonts** -- TrueType parsing, `@font-face` web font loading on all platforms.
-- **Codecs** -- hand-rolled PNG decoder (all color types, tRNS), JPEG decoder (Huffman, IDCT, progressive), DEFLATE/inflate (RFC 1951), CRC-32.
+- **Codecs** -- hand-rolled PNG decoder (all color types, tRNS), JPEG decoder (Huffman, IDCT, progressive), WebP still-image decoder (VP8, VP8L, VP8X alpha), DEFLATE/inflate (RFC 1951), CRC-32.
 
 ### Zero Third-Party Dependencies
 
@@ -82,7 +82,7 @@ The only external code Vertex uses is platform-native APIs for drawing and text:
 | Direct2D / DirectWrite | Windows pixels and glyphs |
 | Core Graphics / Core Text | macOS pixels and glyphs |
 
-Linux doesn't use any of those. Windowing (XCB), 2D rendering, text, `<canvas>`, TrueType fonts, PNG/JPEG decoding, DEFLATE, WebSocket, TLS, and the HTTP client are all hand-rolled. No GTK, no Cairo, no Pango, no fontconfig, no stb_image, no libcurl.
+Linux doesn't use any of those. Windowing (XCB), 2D rendering, text, `<canvas>`, TrueType fonts, PNG/JPEG/WebP decoding, DEFLATE, WebSocket, TLS, and the HTTP client are all hand-rolled. No GTK, no Cairo, no Pango, no fontconfig, no stb_image, no libcurl.
 
 Everything is built from scratch in this repo.
 
@@ -222,7 +222,7 @@ Wikipedia has been the go-to test site because it hits so many things small brow
 
 ```text
 src/
-  codec/         PNG, JPEG, DEFLATE decoders, CRC-32
+  codec/         PNG, JPEG, WebP, DEFLATE decoders, CRC-32
   css/           stylesheet parsing, cascade, computed style
   font/          TrueType parsing, @font-face loading
   html/          tokenizer, parser, embedded resources

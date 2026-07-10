@@ -1,6 +1,6 @@
 #pragma once
-// Hand-rolled WebP decoder. VP8 supports simple lossy keyframes whose macroblocks
-// skip residual coefficients; VP8L supports a tiny literal-only single-color subset.
+// Hand-rolled WebP decoder for still images. VP8/VP8L cover common small streams;
+// unsupported extended/animated variants fail safely.
 #include "codec/image.h"
 #include <cstddef>
 

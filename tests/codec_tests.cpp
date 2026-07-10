@@ -104,6 +104,69 @@ std::vector<uint8_t> MakeSolidVp8LWebp(int width, int height, uint8_t r, uint8_t
     return webp;
 }
 
+void AppendChunk(std::vector<uint8_t>& webp, const char fourcc[4], const std::vector<uint8_t>& chunk) {
+    webp.insert(webp.end(), fourcc, fourcc + 4);
+    uint32_t chunkSize = (uint32_t)chunk.size();
+    for (int i = 0; i < 4; ++i) webp.push_back((uint8_t)(chunkSize >> (i * 8)));
+    webp.insert(webp.end(), chunk.begin(), chunk.end());
+    if (chunkSize & 1u) webp.push_back(0);
+}
+
+void FinishRiffSize(std::vector<uint8_t>& webp) {
+    uint32_t riffSize = (uint32_t)webp.size() - 8;
+    for (int i = 0; i < 4; ++i) webp[4 + i] = (uint8_t)(riffSize >> (i * 8));
+}
+
+std::vector<uint8_t> MakeAlphaOnlyVp8LStream(uint8_t alpha) {
+    struct Bits {
+        std::vector<uint8_t> out;
+        int bit = 0;
+        void Write(uint32_t v, int n) {
+            for (int i = 0; i < n; ++i) {
+                if (bit == 0) out.push_back(0);
+                out.back() |= (uint8_t)(((v >> i) & 1u) << bit);
+                bit = (bit + 1) & 7;
+            }
+        }
+        void SimpleSymbol(uint8_t v) {
+            Write(1, 1);
+            Write(0, 1);
+            Write(1, 1);
+            Write(v, 8);
+        }
+    } bits;
+    bits.Write(0, 1);
+    bits.Write(0, 1);
+    bits.Write(0, 1);
+    bits.SimpleSymbol(alpha); // green channel stores alpha for ALPH lossless streams
+    bits.SimpleSymbol(0);
+    bits.SimpleSymbol(0);
+    bits.SimpleSymbol(255);
+    bits.SimpleSymbol(0);
+    return bits.out;
+}
+
+std::vector<uint8_t> MakeExtendedVp8LWebp(int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
+                                          const std::vector<uint8_t>& alph) {
+    auto simple = MakeSolidVp8LWebp(width, height, r, g, b, a);
+    std::vector<uint8_t> vp8l(simple.begin() + 20, simple.end());
+    if (vp8l.size() && vp8l.back() == 0 && ((simple[16] | (simple[17] << 8) | (simple[18] << 16) | (simple[19] << 24)) & 1)) vp8l.pop_back();
+
+    std::vector<uint8_t> webp = {'R','I','F','F',0,0,0,0,'W','E','B','P'};
+    std::vector<uint8_t> vp8x(10, 0);
+    vp8x[0] = alph.empty() ? 0 : 0x10;
+    uint32_t wm1 = (uint32_t)(width - 1), hm1 = (uint32_t)(height - 1);
+    for (int i = 0; i < 3; ++i) {
+        vp8x[4 + i] = (uint8_t)(wm1 >> (i * 8));
+        vp8x[7 + i] = (uint8_t)(hm1 >> (i * 8));
+    }
+    AppendChunk(webp, "VP8X", vp8x);
+    if (!alph.empty()) AppendChunk(webp, "ALPH", alph);
+    AppendChunk(webp, "VP8L", vp8l);
+    FinishRiffSize(webp);
+    return webp;
+}
+
 } // namespace
 
 TestResult RunCodecTests() {
@@ -606,6 +669,41 @@ TestResult RunCodecTests() {
     }
 
     {
+        // dwebp reference for a tiny real lossy VP8 keyframe with residual coefficients.
+        auto webp = HexToBytes(
+            "524946462600000057454250565038201a0000005001009d012a10001000"
+            "00000025a400000000005f7722048000");
+        std::vector<uint8_t> ref((size_t)16 * 16 * 3, 0x82);
+        auto img = DecodeWebp(webp.data(), webp.size());
+        ExpectEqual("codec/webp/vp8-lossy-residuals",
+            JpegDiffSummary(img, ref, 16, 16, 3) + "\n",
+            "maxDiff=0\n",
+            result);
+    }
+
+    {
+        std::vector<uint8_t> alph = {0, 0, 64, 128, 255};
+        auto webp = MakeExtendedVp8LWebp(2, 2, 17, 34, 51, 255, alph);
+        auto img = DecodeWebp(webp.data(), webp.size());
+        ExpectEqual("codec/webp/vp8x-raw-alpha",
+            RgbaSummary(img) + "\n",
+            "2x2:17,34,51,0 17,34,51,64 17,34,51,128 17,34,51,255\n",
+            result);
+    }
+
+    {
+        std::vector<uint8_t> alph = {1};
+        auto stream = MakeAlphaOnlyVp8LStream(99);
+        alph.insert(alph.end(), stream.begin(), stream.end());
+        auto webp = MakeExtendedVp8LWebp(2, 2, 17, 34, 51, 255, alph);
+        auto img = DecodeWebp(webp.data(), webp.size());
+        ExpectEqual("codec/webp/vp8x-compressed-alpha-solid",
+            RgbaSummary(img) + "\n",
+            "2x2:17,34,51,99 17,34,51,99 17,34,51,99 17,34,51,99\n",
+            result);
+    }
+
+    {
         // WebP decoder is hand-rolled and rejects unsupported/truncated payloads
         // instead of pretending to decode pixels.
         auto notWebp = HexToBytes("00112233");
@@ -613,17 +711,14 @@ TestResult RunCodecTests() {
         auto tinyVp8 = HexToBytes(
             "5249464612000000574542505650382006000000"
             "0000009d012a01000100");
-        // ffmpeg libwebp real lossy VP8 still; currently rejected because it has
-        // residual coefficients, not prediction-only macroblocks.
-        auto realVp8 = HexToBytes(
-            "524946462600000057454250565038201a0000005001009d012a10001000"
-            "00000025a400000000005f7722048000");
         auto vp8Img = DecodeWebp(tinyVp8.data(), tinyVp8.size());
-        auto realVp8Img = DecodeWebp(realVp8.data(), realVp8.size());
+        std::vector<uint8_t> shortAlph = {0, 1, 2, 3};
+        auto badAlpha = MakeExtendedVp8LWebp(2, 2, 17, 34, 51, 255, shortAlph);
+        auto badAlphaImg = DecodeWebp(badAlpha.data(), badAlpha.size());
         ExpectEqual("codec/webp/unsupported-fails-safely",
             std::string(badImg.success ? "unexpected-ok " : "rejected ") +
                 (vp8Img.success ? "unexpected-ok " : "rejected ") +
-                (realVp8Img.success ? "unexpected-ok\n" : "rejected\n"),
+                (badAlphaImg.success ? "unexpected-ok\n" : "rejected\n"),
             "rejected rejected rejected\n",
             result);
     }
