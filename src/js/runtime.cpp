@@ -2075,8 +2075,19 @@ namespace {
 
 struct WasmType { std::vector<uint8_t> params; std::vector<uint8_t> results; };
 struct WasmFunc { uint32_t type = 0; std::vector<uint8_t> locals; std::vector<uint8_t> code; };
-struct WasmModuleData { std::vector<WasmType> types; std::vector<WasmFunc> funcs; std::unordered_map<std::string, uint32_t> exports; };
+struct WasmExport { uint8_t kind = 0; uint32_t index = 0; };
+struct WasmModuleData {
+    std::vector<WasmType> types;
+    std::vector<WasmFunc> funcs;
+    std::unordered_map<std::string, WasmExport> exports;
+    uint32_t memoryMinPages = 0;
+    uint32_t memoryMaxPages = 0;
+    bool hasMemory = false;
+};
 static std::unordered_map<JsObject*, std::shared_ptr<WasmModuleData>> g_wasmModules;
+static std::unordered_map<JsObject*, std::shared_ptr<std::vector<uint8_t>>> g_arrayBuffers;
+static std::unordered_map<JsObject*, std::shared_ptr<std::vector<uint8_t>>> g_uint8Arrays;
+static std::unordered_map<JsObject*, std::shared_ptr<std::vector<uint8_t>>> g_wasmMemories;
 
 struct WasmReader {
     const std::vector<uint8_t>& b; size_t p = 0; bool ok = true;
@@ -2098,6 +2109,8 @@ static std::vector<uint8_t> wasmBytesFromJs(JsValue v) {
     if (v.isString()) { const std::string& s = v.asString()->value; out.assign(s.begin(), s.end()); return out; }
     if (!v.isObject()) return out;
     JsObject* o = v.asObject();
+    if (g_uint8Arrays.count(o)) return *g_uint8Arrays[o];
+    if (g_arrayBuffers.count(o)) return *g_arrayBuffers[o];
     uint32_t len = o->kind == ObjKind::Array ? o->arrayLength() : (uint32_t)std::max(0, o->getProp("length").toInt32());
     if (len > 16 * 1024 * 1024) return {};
     out.reserve(len);
@@ -2130,9 +2143,19 @@ static std::shared_ptr<WasmModuleData> parseWasmModule(const std::vector<uint8_t
             uint32_t count = 0; if (!s.u32(count) || count > 10000) { error = "bad function section"; return nullptr; }
             funcTypes.resize(count);
             for (uint32_t& t : funcTypes) if (!s.u32(t) || t >= module->types.size()) { error = "bad function type index"; return nullptr; }
+        } else if (id == 5) {
+            uint32_t count = 0; if (!s.u32(count) || count > 1) { error = "only one memory supported"; return nullptr; }
+            if (count == 1) {
+                uint32_t flags = 0, minPages = 0, maxPages = 0;
+                if (!s.u32(flags) || !s.u32(minPages) || minPages > 256) { error = "bad memory section"; return nullptr; }
+                if (flags & 1u) { if (!s.u32(maxPages) || maxPages < minPages || maxPages > 256) { error = "bad memory max"; return nullptr; } }
+                module->hasMemory = true;
+                module->memoryMinPages = minPages;
+                module->memoryMaxPages = (flags & 1u) ? maxPages : 256;
+            }
         } else if (id == 7) {
             uint32_t count = 0; if (!s.u32(count) || count > 10000) { error = "bad export section"; return nullptr; }
-            for (uint32_t i = 0; i < count; ++i) { std::string name; uint8_t kind = 0; uint32_t index = 0; if (!readWasmName(s, name) || !s.byte(kind) || !s.u32(index)) { error = "bad export"; return nullptr; } if (kind == 0) module->exports[name] = index; }
+            for (uint32_t i = 0; i < count; ++i) { std::string name; uint8_t kind = 0; uint32_t index = 0; if (!readWasmName(s, name) || !s.byte(kind) || !s.u32(index)) { error = "bad export"; return nullptr; } if (kind == 0 || kind == 2) module->exports[name] = WasmExport{kind, index}; }
         } else if (id == 10) {
             uint32_t count = 0; if (!s.u32(count) || count != funcTypes.size()) { error = "bad code section"; return nullptr; }
             module->funcs.resize(count);
@@ -2147,11 +2170,14 @@ static std::shared_ptr<WasmModuleData> parseWasmModule(const std::vector<uint8_t
         if (!s.ok) { error = "malformed wasm section"; return nullptr; }
     }
     if (!r.ok || module->types.empty() || module->funcs.empty()) { error = "incomplete wasm module"; return nullptr; }
-    for (const auto& e : module->exports) if (e.second >= module->funcs.size()) { error = "bad export index"; return nullptr; }
+    for (const auto& e : module->exports) {
+        if (e.second.kind == 0 && e.second.index >= module->funcs.size()) { error = "bad export index"; return nullptr; }
+        if (e.second.kind == 2 && (!module->hasMemory || e.second.index != 0)) { error = "bad memory export"; return nullptr; }
+    }
     return module;
 }
 
-static int32_t runWasmFunction(const WasmModuleData& module, uint32_t funcIndex, const std::vector<JsValue>& args) {
+static int32_t runWasmFunction(const WasmModuleData& module, uint32_t funcIndex, const std::vector<JsValue>& args, std::vector<uint8_t>* memory) {
     if (funcIndex >= module.funcs.size()) throw std::runtime_error("wasm bad function index");
     const WasmFunc& f = module.funcs[funcIndex]; const WasmType& t = module.types[f.type];
     std::vector<int32_t> locals; locals.reserve(t.params.size() + f.locals.size());
@@ -2169,13 +2195,30 @@ static int32_t runWasmFunction(const WasmModuleData& module, uint32_t funcIndex,
             const WasmType& ct = module.types[module.funcs[callee].type];
             std::vector<JsValue> callArgs(ct.params.size());
             for (size_t i = ct.params.size(); i > 0; --i) callArgs[i - 1] = JsValue::integer(pop());
-            int32_t ret = runWasmFunction(module, callee, callArgs);
+            int32_t ret = runWasmFunction(module, callee, callArgs, memory);
             if (!ct.results.empty()) stack.push_back(ret);
         }
         else if (op == 0x20) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.get"); stack.push_back(locals[i]); }
         else if (op == 0x21) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.set"); locals[i] = pop(); }
         else if (op == 0x22) { uint32_t i = 0; if (!r.u32(i) || i >= locals.size()) throw std::runtime_error("wasm bad local.tee"); locals[i] = stack.empty() ? 0 : stack.back(); }
         else if (op == 0x41) { int32_t v = 0; if (!r.i32(v)) throw std::runtime_error("wasm bad i32.const"); stack.push_back(v); }
+        else if (op == 0x28) {
+            uint32_t align = 0, offset = 0;
+            if (!r.u32(align) || !r.u32(offset) || !memory) throw std::runtime_error("wasm bad i32.load");
+            uint32_t addr = (uint32_t)pop() + offset;
+            if ((uint64_t)addr + 4 > memory->size()) throw std::runtime_error("wasm memory out of bounds");
+            const uint8_t* p = memory->data() + addr;
+            stack.push_back((int32_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24)));
+        }
+        else if (op == 0x36) {
+            uint32_t align = 0, offset = 0;
+            if (!r.u32(align) || !r.u32(offset) || !memory) throw std::runtime_error("wasm bad i32.store");
+            int32_t value = pop();
+            uint32_t addr = (uint32_t)pop() + offset;
+            if ((uint64_t)addr + 4 > memory->size()) throw std::runtime_error("wasm memory out of bounds");
+            uint8_t* p = memory->data() + addr;
+            p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8); p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
+        }
         else if (op == 0x45) stack.push_back(pop() == 0);
         else if (op == 0x46) { int32_t b = pop(), a = pop(); stack.push_back(a == b); }
         else if (op == 0x47) { int32_t b = pop(), a = pop(); stack.push_back(a != b); }
@@ -2206,14 +2249,24 @@ static JsObject* makeWasmModuleObject(VM& vm, std::shared_ptr<WasmModuleData> mo
 static JsObject* makeWasmInstanceObject(VM& vm, std::shared_ptr<WasmModuleData> module) {
     auto* inst = vm.gc().newObject(ObjKind::Plain); JsValue instVal = JsValue::object(inst); vm.gc().addRoot(&instVal);
     auto* exports = vm.gc().newObject(ObjKind::Plain); JsValue exportsVal = JsValue::object(exports); vm.gc().addRoot(&exportsVal);
+    std::shared_ptr<std::vector<uint8_t>> memory;
+    if (module->hasMemory) memory = std::make_shared<std::vector<uint8_t>>((size_t)module->memoryMinPages * 65536u);
     for (const auto& it : module->exports) {
-        std::string name = it.first; uint32_t index = it.second;
-        auto* fn = vm.gc().newNativeFunction([module, index](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
-            try { return JsValue::integer(runWasmFunction(*module, index, args)); }
-            catch (const std::exception& e) { vm.throwError("RuntimeError", e.what()); }
-            return JsValue::undefined();
-        }, name);
-        exports->setProp(name, JsValue::object(fn));
+        std::string name = it.first;
+        if (it.second.kind == 0) {
+            uint32_t index = it.second.index;
+            auto* fn = vm.gc().newNativeFunction([module, memory, index](VM& vm, JsValue, std::vector<JsValue> args) -> JsValue {
+                try { return JsValue::integer(runWasmFunction(*module, index, args, memory.get())); }
+                catch (const std::exception& e) { vm.throwError("RuntimeError", e.what()); }
+                return JsValue::undefined();
+            }, name);
+            exports->setProp(name, JsValue::object(fn));
+        } else if (it.second.kind == 2 && memory) {
+            auto* memObj = vm.gc().newObject(ObjKind::Plain);
+            memObj->setProp("byteLength", JsValue::integer((int32_t)memory->size()));
+            g_wasmMemories[memObj] = memory;
+            exports->setProp(name, JsValue::object(memObj));
+        }
     }
     inst->setProp("exports", exportsVal); vm.gc().removeRoot(&exportsVal); vm.gc().removeRoot(&instVal); return inst;
 }
@@ -2229,8 +2282,19 @@ static void registerWebAssembly(VM& vm) {
         if (!ARG(0).isObject() || !g_wasmModules.count(ARG(0).asObject())) vm.throwTypeError("WebAssembly.Instance needs Module");
         return JsValue::object(makeWasmInstanceObject(vm, g_wasmModules[ARG(0).asObject()]));
     }, "Instance");
+    auto* memoryCtor = vm.gc().newNativeFunction(NATIVE("WebAssembly.Memory") {
+        int pages = 1;
+        if (ARG(0).isObject()) pages = std::max(0, ARG(0).asObject()->getProp("initial").toInt32());
+        if (pages < 0 || pages > 256) vm.throwRangeError("bad WebAssembly.Memory size");
+        auto* obj = vm.gc().newObject(ObjKind::Plain);
+        auto memory = std::make_shared<std::vector<uint8_t>>((size_t)pages * 65536u);
+        obj->setProp("byteLength", JsValue::integer((int32_t)memory->size()));
+        g_wasmMemories[obj] = memory;
+        return JsValue::object(obj);
+    }, "Memory");
     wasm->setProp("Module", JsValue::object(moduleCtor));
     wasm->setProp("Instance", JsValue::object(instanceCtor));
+    wasm->setProp("Memory", JsValue::object(memoryCtor));
     addNative(vm, wasm, "validate", NATIVE("WebAssembly.validate") { std::string error; return JsValue::boolean((bool)parseWasmModule(wasmBytesFromJs(ARG(0)), error)); });
     addNative(vm, wasm, "instantiate", NATIVE("WebAssembly.instantiate") {
         std::shared_ptr<WasmModuleData> module;
@@ -2239,6 +2303,36 @@ static void registerWebAssembly(VM& vm) {
         return JsValue::object(makeWasmInstanceObject(vm, module));
     });
     vm.setGlobal("WebAssembly", JsValue::object(wasm));
+}
+
+static void registerTypedArrays(VM& vm) {
+    auto* arrayBufferCtor = vm.gc().newNativeFunction(NATIVE("ArrayBuffer") {
+        int len = std::max(0, ARG_INT(0));
+        if (len > 16 * 1024 * 1024) vm.throwRangeError("ArrayBuffer too large");
+        auto* obj = vm.gc().newObject(ObjKind::Plain);
+        auto bytes = std::make_shared<std::vector<uint8_t>>((size_t)len);
+        obj->setProp("byteLength", JsValue::integer(len));
+        g_arrayBuffers[obj] = bytes;
+        return JsValue::object(obj);
+    }, "ArrayBuffer");
+    vm.setGlobal("ArrayBuffer", JsValue::object(arrayBufferCtor));
+
+    auto* uint8ArrayCtor = vm.gc().newNativeFunction(NATIVE("Uint8Array") {
+        std::shared_ptr<std::vector<uint8_t>> bytes;
+        if (ARG(0).isObject() && g_arrayBuffers.count(ARG(0).asObject())) bytes = g_arrayBuffers[ARG(0).asObject()];
+        else if (ARG(0).isObject() && g_wasmMemories.count(ARG(0).asObject())) bytes = g_wasmMemories[ARG(0).asObject()];
+        else if (ARG(0).isObject() && ARG(0).asObject()->kind == ObjKind::Array) bytes = std::make_shared<std::vector<uint8_t>>(wasmBytesFromJs(ARG(0)));
+        else bytes = std::make_shared<std::vector<uint8_t>>((size_t)std::max(0, ARG_INT(0)));
+        if (bytes->size() > 16 * 1024 * 1024) vm.throwRangeError("Uint8Array too large");
+        auto* obj = vm.gc().newArray();
+        g_uint8Arrays[obj] = bytes;
+        obj->setProp("byteLength", JsValue::integer((int32_t)bytes->size()));
+        obj->setProp("length", JsValue::integer((int32_t)bytes->size()));
+        obj->setProp("buffer", ARG(0));
+        for (size_t i = 0; i < bytes->size() && i < 4096; ++i) obj->arraySet((uint32_t)i, JsValue::integer((*bytes)[i]));
+        return JsValue::object(obj);
+    }, "Uint8Array");
+    vm.setGlobal("Uint8Array", JsValue::object(uint8ArrayCtor));
 }
 
 } // namespace
@@ -2258,6 +2352,7 @@ void registerBuiltins(VM& vm) {
     registerMapSet(vm);
     registerDate(vm);
     registerRegExp(vm);
+    registerTypedArrays(vm);
     registerWebAssembly(vm);
     
     // Crypto API - crypto.randomUUID() and crypto.getRandomValues()

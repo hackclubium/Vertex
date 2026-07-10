@@ -1905,6 +1905,16 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "wasm/memory-load-store-and-typed-bytes",
+        "var bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,6,1,96,1,127,1,127,3,2,1,0,5,3,1,0,1,7,15,2,3,109,101,109,2,0,5,119,114,105,116,101,0,0,10,16,1,14,0,65,0,32,0,54,2,0,65,0,40,2,0,11]);\n"
+        "var inst = new WebAssembly.Instance(new WebAssembly.Module(bytes));\n"
+        "var got = inst.exports.write(2018915346);\n"
+        "var mem = new Uint8Array(inst.exports.mem);\n"
+        "__result = got + ':' + mem[0] + ',' + mem[1] + ',' + mem[2] + ',' + mem[3];\n",
+        "string: 2018915346:18,52,86,120\n",
+        result);
+
+    ExpectJsResult(
         "date/constructor-parse-and-iso",
         "var epoch = new Date(0);\n"
         "var parsed = new Date('1970-01-01T00:00:01.000Z');\n"
