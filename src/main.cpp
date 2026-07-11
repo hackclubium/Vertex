@@ -48,6 +48,8 @@ enum : int { IDC_BACK = 101, IDC_FWRD, IDC_REFR, IDC_STOP, IDC_HOME, IDC_URL, ID
 constexpr UINT WM_PAGE_READY  = WM_USER + 1;
 constexpr UINT WM_IMAGE_READY = WM_USER + 2;
 constexpr UINT WM_NEWTAB_NAVIGATE = WM_USER + 3;
+constexpr UINT_PTR TIMER_MAIN = 1;
+constexpr UINT_PTR TIMER_FULLSCREEN_CURSOR = 2;
 
 // ─── globals ─────────────────────────────────────────────────────────────────
 static HWND     g_hwnd;
@@ -60,6 +62,14 @@ static Renderer g_renderer;
 const Node* g_hoverNode = nullptr;
 std::map<const Node*, float> g_elementScrollY;
 static std::vector<ScrollableRegion> g_scrollables;
+static bool g_windowFullscreen = false;
+static LONG_PTR g_fullscreenStyle = 0;
+static LONG_PTR g_fullscreenExStyle = 0;
+static WINDOWPLACEMENT g_fullscreenPlacement{ sizeof(g_fullscreenPlacement) };
+static int g_fullscreenTab = -1;
+static Node* g_fullscreenElement = nullptr;
+static HWND g_fullscreenRestoreFocus = nullptr;
+static bool g_fullscreenMouseHidden = false;
 
 // BrowserChrome owns tabs, form state, JS engine, updater.
 static BrowserChrome g_chrome;
@@ -419,16 +429,156 @@ static void UpdateTitle() {
     SetWindowTextW(g_hwnd, (t + L" \x2014 Vertex").c_str());
 }
 
+static void LayoutControls();
+
 static bool AnyTabLoading() {
     for (const auto& tab : g_tabs)
         if (tab.loading) return true;
     return false;
 }
 
+static int ChromeTopInset() {
+    return g_windowFullscreen ? 0 : TOP_INSET;
+}
+
+static int ChromeBottomInset() {
+    return g_windowFullscreen ? 0 : STATUS_H + (g_findVisible ? FIND_H : 0);
+}
+
+static void UpdateFullscreenChromeVisibility() {
+    const int show = g_windowFullscreen ? SW_HIDE : SW_SHOW;
+    ShowWindow(g_hwndBack, show);
+    ShowWindow(g_hwndFwrd, show);
+    ShowWindow(g_hwndRefr, show);
+    ShowWindow(g_hwndStop, show);
+    ShowWindow(g_hwndHome, show);
+    ShowWindow(g_hwndUrlBadge, show);
+    ShowWindow(g_hwndUrl, show);
+    ShowWindow(g_hwndStatus, show);
+    ShowWindow(g_hwndFind, (!g_windowFullscreen && g_findVisible) ? SW_SHOW : SW_HIDE);
+}
+
+static void NotifyFullscreenChanged() {
+    try {
+        g_js.dispatchDocumentEvent("fullscreenchange");
+    } catch (...) {
+        OutputDebugStringA("[Fullscreen] fullscreenchange dispatch failed\n");
+    }
+}
+
+static MONITORINFO MonitorInfoForWindow(HWND hwnd) {
+    MONITORINFO mi{ sizeof(mi) };
+    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    GetMonitorInfoW(mon, &mi);
+    return mi;
+}
+
+static void ShowFullscreenCursor(bool show) {
+    if (show == !g_fullscreenMouseHidden) return;
+    ShowCursor(show ? TRUE : FALSE);
+    g_fullscreenMouseHidden = !show;
+}
+
+static void ArmFullscreenCursorTimer() {
+    if (!g_windowFullscreen) return;
+    ShowFullscreenCursor(true);
+    SetTimer(g_hwnd, TIMER_FULLSCREEN_CURSOR, 1800, NULL);
+}
+
+static void FitFullscreenToCurrentMonitor() {
+    if (!g_hwnd || !g_windowFullscreen) return;
+    MONITORINFO mi = MonitorInfoForWindow(g_hwnd);
+    SetWindowPos(g_hwnd, HWND_TOP,
+        mi.rcMonitor.left, mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left,
+        mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+static void ExitWindowFullscreen(bool dispatchEvent = true) {
+    if (!g_hwnd || !g_windowFullscreen) return;
+
+    g_windowFullscreen = false;
+    g_fullscreenTab = -1;
+    g_fullscreenElement = nullptr;
+    KillTimer(g_hwnd, TIMER_FULLSCREEN_CURSOR);
+    ShowFullscreenCursor(true);
+
+    SetWindowLongPtrW(g_hwnd, GWL_STYLE, g_fullscreenStyle);
+    SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, g_fullscreenExStyle);
+    SetWindowPlacement(g_hwnd, &g_fullscreenPlacement);
+    SetWindowPos(g_hwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+
+    UpdateFullscreenChromeVisibility();
+    LayoutControls();
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+    if (g_fullscreenRestoreFocus && IsWindow(g_fullscreenRestoreFocus))
+        SetFocus(g_fullscreenRestoreFocus);
+    g_fullscreenRestoreFocus = nullptr;
+    if (dispatchEvent) NotifyFullscreenChanged();
+}
+
+static void EnterWindowFullscreen(Node* element) {
+    if (!g_hwnd) return;
+    if (g_windowFullscreen) {
+        g_fullscreenElement = element;
+        g_fullscreenTab = g_activeTab;
+        FitFullscreenToCurrentMonitor();
+        NotifyFullscreenChanged();
+        return;
+    }
+
+    g_fullscreenRestoreFocus = GetFocus();
+    g_fullscreenStyle = GetWindowLongPtrW(g_hwnd, GWL_STYLE);
+    g_fullscreenExStyle = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
+    g_fullscreenPlacement = WINDOWPLACEMENT{ sizeof(g_fullscreenPlacement) };
+    GetWindowPlacement(g_hwnd, &g_fullscreenPlacement);
+
+    MONITORINFO mi = MonitorInfoForWindow(g_hwnd);
+    g_windowFullscreen = true;
+    g_fullscreenTab = g_activeTab;
+    g_fullscreenElement = element;
+
+    LONG_PTR style = g_fullscreenStyle;
+    style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_VSCROLL);
+    LONG_PTR exStyle = g_fullscreenExStyle;
+    exStyle &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+    SetWindowLongPtrW(g_hwnd, GWL_STYLE, style);
+    SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, exStyle);
+    SetWindowPos(g_hwnd, HWND_TOP,
+        mi.rcMonitor.left, mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left,
+        mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+
+    UpdateFullscreenChromeVisibility();
+    LayoutControls();
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+    SetFocus(g_hwnd);
+    ArmFullscreenCursorTimer();
+    NotifyFullscreenChanged();
+}
+
+static void ToggleWindowFullscreen() {
+    if (g_windowFullscreen) ExitWindowFullscreen();
+    else EnterWindowFullscreen(nullptr);
+}
+
 // ─── scrollbar ───────────────────────────────────────────────────────────────
 static int ViewportH() {
     RECT rc; GetClientRect(g_hwnd, &rc);
-    return rc.bottom - rc.top - TOP_INSET - STATUS_H;
+    return rc.bottom - rc.top - ChromeTopInset() - ChromeBottomInset();
 }
 static void UpdateScrollbar() {
     SCROLLINFO si = { sizeof(si) };
@@ -447,8 +597,8 @@ static void ClampScroll() {
 static RECT ContentPaintRect() {
     RECT rc{};
     GetClientRect(g_hwnd, &rc);
-    rc.top = TOP_INSET;
-    rc.bottom = std::max(rc.top, rc.bottom - STATUS_H - (g_findVisible ? FIND_H : 0));
+    rc.top = ChromeTopInset();
+    rc.bottom = std::max(rc.top, rc.bottom - ChromeBottomInset());
     return rc;
 }
 
@@ -462,9 +612,9 @@ static RECT HoverRegionToClientRect(const HitRegion& region) {
     RECT content = ContentPaintRect();
     RECT rc{};
     rc.left = (LONG)(region.x - 3.f);
-    rc.top = (LONG)(region.y - CurTab().scrollY + (float)TOP_INSET - 3.f);
+    rc.top = (LONG)(region.y - CurTab().scrollY + (float)ChromeTopInset() - 3.f);
     rc.right = (LONG)(region.x + region.w + 4.f);
-    rc.bottom = (LONG)(region.y + region.h - CurTab().scrollY + (float)TOP_INSET + 4.f);
+    rc.bottom = (LONG)(region.y + region.h - CurTab().scrollY + (float)ChromeTopInset() + 4.f);
     rc.left = std::max(content.left, rc.left);
     rc.top = std::max(content.top, rc.top);
     rc.right = std::min(content.right, rc.right);
@@ -512,7 +662,7 @@ static void RequeueFetchedPageScript(HWND hwnd, PendingPageScript job, FetchResu
         job.source = DecodeTextToUtf8(res.body, res.contentType);
     job.fetchBeforeRun = false;
     g_pendingPageScripts.push_back(std::move(job));
-    SetTimer(hwnd, 1, 16, NULL);
+    SetTimer(hwnd, TIMER_MAIN, 16, NULL);
 }
 
 static void RunPendingPageScripts(HWND hwnd) {
@@ -541,7 +691,7 @@ static void RunPendingPageScripts(HWND hwnd) {
         ++ran;
     }
     if (!g_pendingPageScripts.empty())
-        SetTimer(hwnd, 1, 16, NULL);
+        SetTimer(hwnd, TIMER_MAIN, 16, NULL);
 }
 
 // Home page HTML comes from HomePageHtml() in browser_core.h.
@@ -619,7 +769,7 @@ static void ShowSiteDataPage(bool pushHistory = true) {
 static void StartDownload(const std::string& url, const std::string& downloadName = "") {
     if (url.empty()) return;
     SetStatus("Downloading " + url);
-    SetTimer(g_hwnd, 1, 16, NULL);
+    SetTimer(g_hwnd, TIMER_MAIN, 16, NULL);
     FetchResourceAsync(url, 256 * 1024 * 1024, ResourceKind::Other,
         [url, downloadName](FetchResult res) {
             auto record = vertex::downloads::SaveFetchedBody(url, res, downloadName);
@@ -634,6 +784,8 @@ static void StartDownload(const std::string& url, const std::string& downloadNam
 
 static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     if (tabIdx < 0 || tabIdx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && tabIdx == g_activeTab)
+        ExitWindowFullscreen(false);
     Tab& tab = g_tabs[tabIdx];
     if (tab.loading) return;
     ClearPendingPageScriptsForTab(tabIdx);
@@ -715,7 +867,7 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         EnableWindow(g_hwndRefr, FALSE);
         SetUrlBar(displayUrl);
         UpdateTitle();
-        SetTimer(g_hwnd, 1, 16, NULL);
+        SetTimer(g_hwnd, TIMER_MAIN, 16, NULL);
         InvalidateRect(g_hwnd, NULL, FALSE);
     }
 
@@ -764,6 +916,9 @@ static void NewTab(const std::string& url = "vertex://home") {
 }
 
 static void CloseTab(int idx) {
+    if (idx < 0 || idx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && idx == g_activeTab)
+        ExitWindowFullscreen(false);
     if (g_tabs.size() <= 1) {
         Navigate("vertex://home");
         return;
@@ -779,6 +934,8 @@ static void CloseTab(int idx) {
 
 static void SwitchTab(int idx) {
     if (idx < 0 || idx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && idx != g_activeTab)
+        ExitWindowFullscreen(false);
     g_activeTab = idx;
     const Tab& tab = CurTab();
     SetUrlBarForTab(tab);
@@ -799,6 +956,10 @@ static void SwitchTab(int idx) {
 static void LayoutControls() {
     RECT rc; GetClientRect(g_hwnd, &rc);
     int w = rc.right, h = rc.bottom;
+    if (g_windowFullscreen) {
+        UpdateFullscreenChromeVisibility();
+        return;
+    }
     int btnY = TAB_H + (TOOLBAR_H - BTN_H) / 2;
     int x    = MARGIN;
     SetWindowPos(g_hwndBack, NULL, x, btnY, BTN_W, BTN_H, SWP_NOZORDER);
@@ -987,7 +1148,7 @@ LRESULT CALLBACK UrlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
 // ─── find bar helpers ─────────────────────────────────────────────────────────
 static void ShowFind(bool show) {
     g_findVisible = show;
-    ShowWindow(g_hwndFind, show ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hwndFind, (show && !g_windowFullscreen) ? SW_SHOW : SW_HIDE);
     if (show) {
         SetFocus(g_hwndFind);
         SendMessageW(g_hwndFind, EM_SETSEL, 0, -1);
@@ -1138,7 +1299,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 PostMessageW(hwnd, WM_IMAGE_READY, 0, (LPARAM)m);
             });
-            SetTimer(hwnd, 1, 16, NULL);
+            SetTimer(hwnd, TIMER_MAIN, 16, NULL);
         });
 
         g_renderer.Init(hwnd);
@@ -1160,11 +1321,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_DISPLAYCHANGE:
+        FitFullscreenToCurrentMonitor();
+        return 0;
+
+    case WM_DPICHANGED: {
+        if (g_windowFullscreen) {
+            FitFullscreenToCurrentMonitor();
+        } else if (RECT* suggested = reinterpret_cast<RECT*>(lp)) {
+            SetWindowPos(hwnd, nullptr,
+                suggested->left, suggested->top,
+                suggested->right - suggested->left,
+                suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return 0;
+    }
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
         g_renderer.SetPaintDirtyRect(ps.rcPaint);
-        bool repaintChrome = ps.rcPaint.top < TOP_INSET;
+        bool repaintChrome = !g_windowFullscreen && ps.rcPaint.top < TOP_INSET;
 
         auto tabs = BuildTabEntries();
         Tab& cur = CurTab();
@@ -1172,7 +1350,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (cur.page && cur.page->dom) {
             CurTab().docHeight = g_renderer.Paint(
                 cur.page->dom, cur.scrollY, cur.page->url,
-                (float)TOP_INSET, (float)TAB_H, &tabs, repaintChrome);
+                (float)ChromeTopInset(), g_windowFullscreen ? 0.f : (float)TAB_H, &tabs, repaintChrome);
             if (cur.fragmentScrollPending) {
                 cur.fragmentScrollPending = false;
                 float anchorY = 0.f;
@@ -1187,7 +1365,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         } else {
             g_renderer.Paint(nullptr, 0.f, {},
-                (float)TOP_INSET, (float)TAB_H, &tabs, repaintChrome);
+                (float)ChromeTopInset(), g_windowFullscreen ? 0.f : (float)TAB_H, &tabs, repaintChrome);
         }
         if (repaintChrome) {
             DrawUrlFrame(ps.hdc);
@@ -1388,7 +1566,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g_pendingPageScripts.push_back({ idx, pageUrl, std::move(script.source), std::move(script.filename), false, script.fetchBeforeRun });
                 g_pendingPageScripts.push_back({ idx, pageUrl, {}, "__vertex_load_events__", true, false });
                 // Set up timer for macrotasks / setTimeout
-                SetTimer(hwnd, 1, 16, NULL);
+                SetTimer(hwnd, TIMER_MAIN, 16, NULL);
             } catch (...) {
                 OutputDebugStringA("[JS] Page script setup failed; continuing without page scripts\n");
             }
@@ -1451,6 +1629,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         int py = (int)(short)HIWORD(lp);
         // Check tab strip
         if (py < TAB_H) {
+            if (g_windowFullscreen) return 0;
             int closeIdx = -1;
             if (g_renderer.HitTestTabClose((float)px, (float)py, closeIdx)) {
                 CloseTab(closeIdx);
@@ -1470,11 +1649,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (py >= ChromeTopInset()) {
             // Check if an input was clicked.
             if (g_renderer.GetLayoutRoot()) {
                 Node* input = FormState::hitTestInput(*g_renderer.GetLayoutRoot(),
-                    (float)px, (float)py, CurTab().scrollY, (float)TOP_INSET);
+                    (float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
                 if (input) {
                     g_formState.focus(input);
                     InvalidateContent();
@@ -1496,7 +1675,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             HMENU menu = CreatePopupMenu();
             if (!href.empty()) {
@@ -1550,7 +1729,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (g_windowFullscreen) ArmFullscreenCursorTimer();
+        if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             SetBrowserCursor(href.empty() ? g_cursorArrow : g_cursorHand);
             SetStatus(href);
@@ -1565,7 +1745,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     HitRegion oldHoverRegion{};
                     bool hadOldHoverRegion = g_renderer.LastHoverRegion(oldHoverRegion);
                     const Node* hover = g_renderer.HoverNodeAt(
-                        (float)px, (float)py, CurTab().scrollY, (float)TOP_INSET);
+                            (float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
                     lastHoverTick = now;
                     if (hover != g_hoverNode) {
                         HitRegion newHoverRegion{};
@@ -1611,6 +1791,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER:
+        if (wp == TIMER_FULLSCREEN_CURSOR) {
+            KillTimer(hwnd, TIMER_FULLSCREEN_CURSOR);
+            if (g_windowFullscreen) ShowFullscreenCursor(false);
+            return 0;
+        }
         resetDomDirtyCoalesce(); // Allow next batch of DOM mutations to trigger repaint.
         if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
             InvalidateContent();
@@ -1621,16 +1806,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_js.runMacrotasks(kMaxMacrotasksPerTimerTick);
         } catch (...) {
             OutputDebugStringA("[JS] Macrotask pump failed; timer stopped\n");
-            KillTimer(hwnd, 1);
+            KillTimer(hwnd, TIMER_MAIN);
         }
         if (AnyTabLoading()) {
             RECT rc{};
             GetClientRect(hwnd, &rc);
-            rc.bottom = TOP_INSET;
+            rc.bottom = ChromeTopInset();
             InvalidateRect(hwnd, &rc, FALSE);
         } else if (g_pendingPageScripts.empty() && !g_js.hasPendingMacrotasks()
                    && !HasPendingResourceCompletions() && !HasOpenWebSockets()) {
-            KillTimer(hwnd, 1);
+            KillTimer(hwnd, TIMER_MAIN);
         }
         return 0;
 
@@ -1640,7 +1825,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
         ApplyThemedWindowIcon(hwnd);
+        FitFullscreenToCurrentMonitor();
         return 0;
+
+    case WM_ACTIVATEAPP:
+        if (!wp && g_windowFullscreen)
+            ShowFullscreenCursor(true);
+        if (wp && g_windowFullscreen)
+            FitFullscreenToCurrentMonitor();
+        return 0;
+
+    case WM_GETMINMAXINFO:
+        if (g_windowFullscreen) {
+            auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+            MONITORINFO mi = MonitorInfoForWindow(hwnd);
+            mmi->ptMaxPosition.x = mi.rcMonitor.left;
+            mmi->ptMaxPosition.y = mi.rcMonitor.top;
+            mmi->ptMaxSize.x = mi.rcMonitor.right - mi.rcMonitor.left;
+            mmi->ptMaxSize.y = mi.rcMonitor.bottom - mi.rcMonitor.top;
+            return 0;
+        }
+        break;
 
     case WM_DESTROY:
         if (g_uiFont) { DeleteObject(g_uiFont); g_uiFont = nullptr; }
@@ -1654,6 +1859,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_appIconSmall) { DestroyIcon(g_appIconSmall); g_appIconSmall = nullptr; }
         g_appIconResourceId = 0;
         PostQuitMessage(0);
+        return 0;
+    }
+
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE && g_windowFullscreen) {
+        ExitWindowFullscreen();
         return 0;
     }
 
@@ -1804,6 +2014,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 }
             }
 
+            if (!handled && alt && msg.wParam == VK_RETURN) {
+                ToggleWindowFullscreen();
+                handled = true;
+            }
+            if (!handled && msg.wParam == VK_F11) {
+                ToggleWindowFullscreen();
+                handled = true;
+            }
             if (!handled && msg.wParam == VK_F5) {
                 if (!CurTab().loading) Navigate(CurTab().url, false);
                 handled = true;
@@ -1819,7 +2037,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 if (msg.wParam == VK_RIGHT) { GoForward(); handled = true; }
             }
             if (!handled && msg.wParam == VK_ESCAPE) {
-                if (g_findVisible) {
+                if (g_windowFullscreen) {
+                    ExitWindowFullscreen();
+                    handled = true;
+                } else if (g_findVisible) {
                     ShowFind(false);
                     handled = true;
                 } else if (CurTab().loading) {

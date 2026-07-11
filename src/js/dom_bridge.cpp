@@ -2548,6 +2548,32 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         }
         return JsValue::undefined();
     });
+    addNativeM("requestFullscreen", NATIVE("requestFullscreen") {
+        JsValue doc = vm.getGlobal("document");
+        if (doc.isObject()) {
+            doc.asObject()->setProp("fullscreenElement", thisVal);
+            doc.asObject()->setProp("fullscreenEnabled", JsValue::boolean(true));
+        }
+        return vm.promiseResolve(JsValue::undefined());
+    });
+    addNativeM("showPopover", NATIVE("showPopover") {
+        if (thisVal.isObject()) thisVal.asObject()->setProp("popoverOpen", JsValue::boolean(true));
+        if (Node* n = unwrapNode(thisVal)) n->attrs["popover-open"] = "";
+        return JsValue::undefined();
+    });
+    addNativeM("hidePopover", NATIVE("hidePopover") {
+        if (thisVal.isObject()) thisVal.asObject()->setProp("popoverOpen", JsValue::boolean(false));
+        if (Node* n = unwrapNode(thisVal)) n->attrs.erase("popover-open");
+        return JsValue::undefined();
+    });
+    addNativeM("togglePopover", NATIVE("togglePopover") {
+        bool open = args.empty()
+            ? !(thisVal.isObject() && thisVal.asObject()->getProp("popoverOpen").toBool())
+            : ARG(0).toBool();
+        if (thisVal.isObject()) thisVal.asObject()->setProp("popoverOpen", JsValue::boolean(open));
+        if (Node* n = unwrapNode(thisVal)) { if (open) n->attrs["popover-open"] = ""; else n->attrs.erase("popover-open"); }
+        return JsValue::boolean(open);
+    });
     addNativeM("click",  NATIVE("click")  {
         Node* n = unwrapNode(thisVal);
         if (n) activateDomElement(vm, n);
@@ -3794,6 +3820,8 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         docVal.asObject()->setProp("compatMode",      vm.str("CSS1Compat"));
         docVal.asObject()->setProp("visibilityState", vm.str("visible"));
         docVal.asObject()->setProp("hidden",          JsValue::boolean(false));
+        docVal.asObject()->setProp("fullscreenEnabled", JsValue::boolean(true));
+        docVal.asObject()->setProp("fullscreenElement", JsValue::null());
         docVal.asObject()->setProp("adoptedStyleSheets", JsValue::object(newArrayWithPrototype(vm)));
         auto* fonts = vm.gc().newObject(ObjKind::Plain);
         fonts->setProp("status", vm.str("loaded"));
@@ -3806,6 +3834,10 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         });
         addNative(vm, fonts, "add", [](VM&, JsValue, std::vector<JsValue>) -> JsValue { return JsValue::undefined(); });
         docVal.asObject()->setProp("fonts", JsValue::object(fonts));
+        addNative(vm, docVal.asObject(), "exitFullscreen", NATIVE("exitFullscreen") {
+            if (thisVal.isObject()) thisVal.asObject()->setProp("fullscreenElement", JsValue::null());
+            return vm.promiseResolve(JsValue::undefined());
+        });
         auto* securityPolicy = vm.gc().newObject(ObjKind::Plain);
         securityPolicy->setProp("allowsInlineScript", JsValue::boolean(true));
         securityPolicy->setProp("allowsEval", JsValue::boolean(true));

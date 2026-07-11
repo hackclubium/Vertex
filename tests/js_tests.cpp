@@ -1241,13 +1241,15 @@ static std::string RunGeneralPlatformStubsSnapshot() {
         "requestIdleCallback(function(deadline) { globalThis.idleOut = 'idle:' + deadline.didTimeout + ':' + (deadline.timeRemaining() >= 0) + ';'; });\n"
         "var parsed = new DOMParser().parseFromString('<main id=\"parsed\">P</main>', 'text/html');\n"
         "var made = document.implementation.createHTMLDocument('Made');\n"
+        "btn.showPopover(); var pop1 = btn.popoverOpen + ':' + btn.togglePopover(false);\n"
+        "btn.requestFullscreen().then(function(){ document.exitFullscreen(); });\n"
         "var css = CSS.supports('display', 'inline flow-root') + ':' + CSS.supports('(border-collapse: collapse)') + ':' + CSS.escape('a b');\n"
         "var blobUrl = URL.createObjectURL(new Blob(['x']));\n"
         "var canParse = URL.canParse('/wiki/Test', location.href);\n"
         "URL.revokeObjectURL(blobUrl);\n"
         "globalThis.clipboardOut = 'pending';\n"
         "navigator.clipboard.writeText('clip').then(function(){ return navigator.clipboard.readText(); }).then(function(text){ globalThis.clipboardOut = text; });\n"
-        "body.setAttribute('data-immediate', document.compatMode + '|' + document.visibilityState + '|' + document.hidden + '|' + document.baseURI + '|' + document.domain + '|' + navigator.languages[0] + ':' + navigator.hardwareConcurrency + ':' + navigator.maxTouchPoints + '|' + (top === window) + ':' + (parent === window) + '|' + navigator.userAgentData.mobile + '|' + marks + ':' + measures + '|' + randomish + '|' + custom.detail.value + '|' + parsed.getElementById('parsed').textContent + '|' + made.getElementsByTagName('title')[0].textContent + '|' + css + '|' + canParse + ':' + (blobUrl.indexOf('blob:') === 0));\n",
+        "body.setAttribute('data-immediate', document.compatMode + '|' + document.visibilityState + '|' + document.hidden + '|' + document.baseURI + '|' + document.domain + '|' + navigator.languages[0] + ':' + navigator.hardwareConcurrency + ':' + navigator.maxTouchPoints + '|' + (top === window) + ':' + (parent === window) + '|' + navigator.userAgentData.mobile + '|' + marks + ':' + measures + '|' + randomish + '|' + custom.detail.value + '|' + parsed.getElementById('parsed').textContent + '|' + made.getElementsByTagName('title')[0].textContent + '|' + pop1 + ':' + document.fullscreenEnabled + '|' + css + '|' + canParse + ':' + (blobUrl.indexOf('blob:') === 0));\n",
         "general-platform-stubs");
     if (!ok) return "script failed\n";
     while (engine.hasPendingMacrotasks()) engine.runMacrotasks();
@@ -1666,7 +1668,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/web-platform/general-platform-stubs",
         RunGeneralPlatformStubsSnapshot(),
-        "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P||true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
+        "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P||true:false:true|true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
         result);
 
     ExpectEqual(
