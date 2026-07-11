@@ -5,6 +5,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar};
 use std::ptr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 use url::Url;
@@ -92,12 +93,9 @@ where
     Ok((status, content_type, body))
 }
 
-async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, String> {
-    let parsed = Url::parse(url).map_err(|e| e.to_string())?;
+async fn fetch_once(parsed: &Url, max_bytes: usize) -> Result<(i32, String, Vec<u8>), String> {
     let scheme = parsed.scheme();
-    if scheme != "http" && scheme != "https" { return Err("unsupported scheme".into()); }
     let host = parsed.host_str().ok_or("missing host")?.to_string();
-    if !host.ends_with(".onion") { return Err("embedded Arti only handles .onion hosts".into()); }
     let port = parsed.port_or_known_default().ok_or("missing port")?;
     let path = if parsed.path().is_empty() { "/" } else { parsed.path() };
     let path_query = match parsed.query() {
@@ -114,7 +112,7 @@ async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, 
     let client = TorClient::create_bootstrapped(config.build().map_err(|e| e.to_string())?).await.map_err(|e| e.to_string())?;
     let stream = client.connect((host.as_str(), port)).await.map_err(|e| e.to_string())?;
 
-    let (status, content_type, body) = if scheme == "https" {
+    if scheme == "https" {
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let config = ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
@@ -129,6 +127,29 @@ async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, 
         plain.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
         plain.flush().await.map_err(|e| e.to_string())?;
         read_http_response(&mut plain, max_bytes).await?
+    }
+}
+
+async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, String> {
+    let parsed = Url::parse(url).map_err(|e| e.to_string())?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" { return Err("unsupported scheme".into()); }
+    let host = parsed.host_str().ok_or("missing host")?.to_string();
+    if !host.ends_with(".onion") { return Err("embedded Arti only handles .onion hosts".into()); }
+
+    let mut last_err = String::new();
+    let (status, content_type, body) = {
+        let mut result = None;
+        for attempt in 1..=4 {
+            match fetch_once(&parsed, max_bytes).await {
+                Ok(ok) => { result = Some(ok); break; }
+                Err(e) => {
+                    last_err = e;
+                    if attempt < 4 { tokio::time::sleep(Duration::from_millis(250 * attempt)).await; }
+                }
+            }
+        }
+        result.ok_or_else(|| format!("Arti stream failed after retries: {}", last_err))?
     };
 
     let mut body = body;
