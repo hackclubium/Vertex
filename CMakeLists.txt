@@ -155,11 +155,12 @@ if (WIN32)
         src/render/renderer.cpp
         src/render/box_paint.cpp
         src/render/canvas_renderer.cpp
+        src/platform/media_win32.cpp
         src/platform/platform_win32.cpp
     )
     target_include_directories(Vertex PRIVATE src)
     target_link_libraries(Vertex PRIVATE
-        vertex_engine d2d1 dwrite comctl32 ole32
+        vertex_engine d2d1 dwrite comctl32 ole32 strmiids
     )
     if (MSVC)
         target_link_options(Vertex PRIVATE /STACK:67108864)

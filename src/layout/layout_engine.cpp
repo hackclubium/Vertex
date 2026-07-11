@@ -196,6 +196,20 @@ bool TagIsReplacedImage(const Node* n, const std::string& baseUrl, std::string& 
     return false;
 }
 
+bool TagIsMedia(const Node* n, const std::string& baseUrl, std::string& urlOut) {
+    if (!n || (n->tagName != "video" && n->tagName != "audio")) return false;
+    std::string src = n->attr("src");
+    if (src.empty()) {
+        for (const auto& child : n->children) {
+            if (!child || child->type != NodeType::Element || child->tagName != "source") continue;
+            src = child->attr("src");
+            if (!src.empty()) break;
+        }
+    }
+    if (!src.empty()) urlOut = ResolveUrlAgainstBase(src, baseUrl);
+    return true;
+}
+
 // ─── inheritance + UA defaults ───────────────────────────────────────────────
 
 void InheritInto(ComputedStyle& s, const ComputedStyle& parent) {
@@ -561,6 +575,8 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
 
     std::string imgUrl;
     bool replaced = TagIsReplacedImage(node, bc.baseUrl, imgUrl);
+    std::string mediaUrl;
+    bool media = TagIsMedia(node, bc.baseUrl, mediaUrl);
     bool formControl = (tag == "input" || tag == "textarea" || tag == "select"
                      || (tag == "button" && !HasElementChild(node)));
     bool isCanvas = (tag == "canvas");
@@ -577,11 +593,11 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
         return box;
     }
 
-    if (replaced || formControl || isCanvas) {
+    if (replaced || media || formControl || isCanvas) {
         // Atomic replaced box. inline-block if not display:block.
         box->kind = (disp == 1) ? BoxKind::InlineBlock : BoxKind::Replaced;
         if (disp == 1) box->kind = BoxKind::InlineBlock; // atomic, block-positioned handled by flow
-        box->replacedUrl = imgUrl;
+        box->replacedUrl = media ? mediaUrl : imgUrl;
         if (replaced && bc.measure) {
             float iw = 0, ih = 0;
             if (bc.measure->ImageIntrinsic(imgUrl, iw, ih)) {
@@ -599,6 +615,10 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
                 box->intrinsicW = attrPx("width");
                 box->intrinsicH = attrPx("height");
             }
+        }
+        if (media) {
+            box->intrinsicW = 300.f;
+            box->intrinsicH = (tag == "audio") ? 32.f : 150.f;
         }
         if (formControl) {
             if (tag == "textarea") {
@@ -1383,10 +1403,9 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
             float dy = mirrorY - line.lineY;
             for (size_t idx : line.indices)
                 TranslateSubtree(*allItems[idx].box, 0.f, dy);
+                }
+            }
         }
-    }
-}
-
 // ─── table layout (auto algorithm) ───────────────────────────────────────────
 // ─── grid layout ─────────────────────────────────────────────────────────────
 // Handles fixed, percentage, fr, and auto columns with gap. Items are placed

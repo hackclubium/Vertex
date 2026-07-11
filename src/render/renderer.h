@@ -3,6 +3,7 @@
 #include "css/stylesheet.h"
 #include "layout/box.h"
 #include "js/canvas_surface.h"
+#include "platform/media_win32.h"
 #include <windows.h>
 #include <d2d1.h>
 #include <dwrite.h>
@@ -134,6 +135,7 @@ private:
     std::function<void(std::string)>    m_imageRequestCb;
 
     std::map<const Node*, std::unique_ptr<D2DCanvasSurface>> m_canvasSurfaces;
+    std::map<const Node*, std::unique_ptr<Win32MediaPlayer>> m_mediaPlayers;
 
     std::vector<ID2D1SolidColorBrush*>  m_tempBrushes;
     std::map<unsigned int, ID2D1SolidColorBrush*> m_tempBrushCache;

@@ -182,6 +182,32 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto mediaDom = ParseHtml(
+            "<html><body><video id=\"v\"><source src=\"movie.mp4\"></video>"
+            "<audio id=\"a\" src=\"sound.mp3\"></audio></body></html>");
+        auto mediaSheet = ParseStylesheet("");
+        FixedMeasure mediaMeasure;
+        LayoutInput mediaInput;
+        mediaInput.document = mediaDom.get();
+        mediaInput.sheet = &mediaSheet;
+        mediaInput.measure = &mediaMeasure;
+        mediaInput.viewportW = 640.f;
+        mediaInput.viewportH = 480.f;
+        mediaInput.baseUrl = "https://example.test/path/page.html";
+        auto mediaLayout = LayoutDocument(mediaInput);
+        auto* video = FindEngineBoxById(mediaLayout.get(), "v");
+        auto* audio = FindEngineBoxById(mediaLayout.get(), "a");
+        std::string actual = std::string(video ? video->replacedUrl : "missing")
+            + " video=" + (video ? std::to_string((int)video->contentW) + "x" + std::to_string((int)video->contentH) : "missing")
+            + " audio=" + (audio ? std::to_string((int)audio->contentW) + "x" + std::to_string((int)audio->contentH) : "missing")
+            + "\n";
+        ExpectEqual("layout-engine/media-elements-are-replaced",
+            actual,
+            "https://example.test/path/movie.mp4 video=300x150 audio=300x32\n",
+            result);
+    }
+
+    {
         auto gridDom = ParseHtml(
             "<html><body><div id=\"grid\"><div id=\"g1\"></div><div id=\"g2\"></div>"
             "<div id=\"g3\"></div></div></body></html>");

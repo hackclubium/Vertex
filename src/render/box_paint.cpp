@@ -415,6 +415,58 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
         }
     }
 
+    if (box.kind == BoxKind::Replaced && box.node
+        && (box.node->tagName == "video" || box.node->tagName == "audio")) {
+        const bool isVideo = box.node->tagName == "video";
+        float cx = box.contentX();
+        float cy = box.contentY() - scrollY + topInset;
+        float cw = box.contentW;
+        float ch = box.contentH;
+        auto* fill = TempBrush(isVideo ? D2D1::ColorF(0.02f, 0.02f, 0.025f, 1.f)
+                                       : D2D1::ColorF(0.94f, 0.94f, 0.94f, 1.f));
+        auto* border = TempBrush(D2D1::ColorF(0.35f, 0.35f, 0.38f, 1.f));
+        if (fill) m_rt->FillRectangle(D2D1::RectF(cx, cy, cx + cw, cy + ch), fill);
+        if (border) m_rt->DrawRectangle(D2D1::RectF(cx, cy, cx + cw, cy + ch), border, 1.f);
+
+        if (!box.replacedUrl.empty()) {
+            auto& player = m_mediaPlayers[box.node];
+            if (!player) player = std::make_unique<Win32MediaPlayer>();
+            if (player->Url() != box.replacedUrl || player->HasVideo() != isVideo) {
+                const bool autoplay = box.node->attrs.find("autoplay") != box.node->attrs.end();
+                player->Load(m_hwnd, box.replacedUrl, isVideo, autoplay);
+            }
+            if (isVideo) player->SetRect(cx, cy, cw, ch);
+        }
+
+        if (box.node->attrs.find("controls") != box.node->attrs.end()) {
+            float barH = std::min(32.f, ch);
+            auto* bar = TempBrush(D2D1::ColorF(0.f, 0.f, 0.f, isVideo ? 0.55f : 0.08f));
+            auto* fg = TempBrush(isVideo ? D2D1::ColorF(1.f, 1.f, 1.f, 1.f)
+                                         : D2D1::ColorF(0.1f, 0.1f, 0.1f, 1.f));
+            if (bar) m_rt->FillRectangle(D2D1::RectF(cx, cy + ch - barH, cx + cw, cy + ch), bar);
+            if (fg) {
+                D2D1_POINT_2F p1 = { cx + 12.f, cy + ch - barH + 8.f };
+                D2D1_POINT_2F p2 = { cx + 12.f, cy + ch - 8.f };
+                D2D1_POINT_2F p3 = { cx + 24.f, cy + ch - barH / 2.f };
+                ID2D1PathGeometry* geom = nullptr;
+                if (m_factory && SUCCEEDED(m_factory->CreatePathGeometry(&geom)) && geom) {
+                    ID2D1GeometrySink* sink = nullptr;
+                    if (SUCCEEDED(geom->Open(&sink)) && sink) {
+                        sink->BeginFigure(p1, D2D1_FIGURE_BEGIN_FILLED);
+                        sink->AddLine(p2);
+                        sink->AddLine(p3);
+                        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                        sink->Close();
+                        sink->Release();
+                        m_rt->FillGeometry(geom, fg);
+                    }
+                    geom->Release();
+                }
+                m_rt->DrawLine(D2D1::Point2F(cx + 38.f, cy + ch - barH / 2.f), D2D1::Point2F(cx + cw - 12.f, cy + ch - barH / 2.f), fg, 2.f);
+            }
+        }
+    }
+
     // Form controls: draw simple native-ish chrome for atomic controls that
     // are not backed by an image resource.
     if (box.kind == BoxKind::Replaced && box.node && box.replacedUrl.empty()) {

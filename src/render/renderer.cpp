@@ -262,6 +262,7 @@ void Renderer::SetPaintDirtyRect(const RECT& rect) {
 void Renderer::InvalidateLayout() {
     m_layoutRoot.reset();
     m_layoutBaseStyles.clear();
+    m_mediaPlayers.clear();
     m_layoutDocKey = nullptr;
     m_lastHoverNodeValid = false;
     m_lastHoverNode = nullptr;
