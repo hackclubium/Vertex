@@ -48,11 +48,13 @@ where
         let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
         if n == 0 {
             if buf.is_empty() { return Err("empty response before headers".into()); }
-            let trimmed: u8 = buf.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(0u8);
-            if trimmed == b'<' || trimmed.is_ascii_alphanumeric() {
-                return Ok((200, "text/html".into(), buf));
-            }
-            return Err(format!("missing response headers; first bytes: {}", String::from_utf8_lossy(&buf[..buf.len().min(120)])));
+            // No header delimiter before connection close: HTTP/0.9-style raw body, not an error.
+            let content_type = if buf.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'<') {
+                "text/html"
+            } else {
+                "application/octet-stream"
+            };
+            return Ok((200, content_type.into(), buf));
         }
         buf.extend_from_slice(&chunk[..n]);
         if buf.len() > max_bytes + 256 * 1024 { return Err("response exceeds size limit".into()); }
