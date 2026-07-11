@@ -121,12 +121,12 @@ async fn fetch_once(parsed: &Url, max_bytes: usize) -> Result<(i32, String, Vec<
         let mut tls = connector.connect(server_name, stream).await.map_err(|e| e.to_string())?;
         tls.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
         tls.flush().await.map_err(|e| e.to_string())?;
-        read_http_response(&mut tls, max_bytes).await?
+        read_http_response(&mut tls, max_bytes).await
     } else {
         let mut plain = stream;
         plain.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
         plain.flush().await.map_err(|e| e.to_string())?;
-        read_http_response(&mut plain, max_bytes).await?
+        read_http_response(&mut plain, max_bytes).await
     }
 }
 
