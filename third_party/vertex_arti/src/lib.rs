@@ -42,24 +42,53 @@ where
 {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
-    loop {
+    let header_end = loop {
         let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
-        if n == 0 { break; }
+        if n == 0 {
+            return Err(if buf.is_empty() {
+                "empty response before headers".into()
+            } else {
+                format!("missing response headers; first bytes: {}", String::from_utf8_lossy(&buf[..buf.len().min(120)]))
+            });
+        }
         buf.extend_from_slice(&chunk[..n]);
         if buf.len() > max_bytes + 256 * 1024 { return Err("response exceeds size limit".into()); }
-    }
-    let header_end = buf.windows(4).position(|w| w == b"\r\n\r\n").ok_or("missing response headers")?;
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break pos; }
+        if buf.len() > 256 * 1024 { return Err("response headers exceed size limit".into()); }
+    };
     let header = String::from_utf8_lossy(&buf[..header_end]);
     let mut lines = header.lines();
     let status_line = lines.next().ok_or("missing status line")?;
+    if !status_line.starts_with("HTTP/") {
+        return Err(format!("bad status line from onion service: {}", status_line));
+    }
     let status = status_line.split_whitespace().nth(1).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
     let mut content_type = String::new();
+    let mut content_length: Option<usize> = None;
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
             if name.eq_ignore_ascii_case("content-type") { content_type = value.trim().to_string(); }
+            if name.eq_ignore_ascii_case("content-length") { content_length = value.trim().parse::<usize>().ok(); }
         }
     }
-    let body = buf[(header_end + 4)..].to_vec();
+    let mut body = buf[(header_end + 4)..].to_vec();
+    if let Some(want) = content_length {
+        let want = want.min(max_bytes);
+        while body.len() < want {
+            let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            body.extend_from_slice(&chunk[..n]);
+            if body.len() > max_bytes { body.truncate(max_bytes); break; }
+        }
+        body.truncate(want.min(body.len()));
+    } else {
+        while body.len() < max_bytes {
+            let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            body.extend_from_slice(&chunk[..n]);
+            if body.len() > max_bytes { body.truncate(max_bytes); break; }
+        }
+    }
     Ok((status, content_type, body))
 }
 
@@ -93,10 +122,12 @@ async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, 
         let server_name = ServerName::try_from(host.clone()).map_err(|e| e.to_string())?;
         let mut tls = connector.connect(server_name, stream).await.map_err(|e| e.to_string())?;
         tls.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        tls.flush().await.map_err(|e| e.to_string())?;
         read_http_response(&mut tls, max_bytes).await?
     } else {
         let mut plain = stream;
         plain.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        plain.flush().await.map_err(|e| e.to_string())?;
         read_http_response(&mut plain, max_bytes).await?
     };
 
