@@ -175,6 +175,7 @@ elseif (APPLE)
     add_executable(Vertex MACOSX_BUNDLE
         src/platform/main_macos.mm
         src/platform/platform_macos.mm
+        src/platform/media_macos.mm
         src/render/canvas_coregraphics.cpp
         src/platform/vertex_icon.icns
         src/platform/vertex_icon_light.icns
@@ -183,6 +184,8 @@ elseif (APPLE)
     target_link_libraries(Vertex PRIVATE
         vertex_engine
         "-framework Cocoa"
+        "-framework AVFoundation"
+        "-framework QuartzCore"
         "-framework CoreGraphics"
         "-framework CoreText"
     )
@@ -202,6 +205,7 @@ elseif (UNIX)
     add_executable(Vertex
         src/platform/main_linux.cpp
         src/platform/platform_linux.cpp
+        src/platform/media_linux.cpp
         src/render/canvas_raster.cpp
     )
     target_include_directories(Vertex PRIVATE src ${XCB_INCLUDE_DIRS})

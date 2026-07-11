@@ -292,7 +292,7 @@ static std::string MediaSourceFromNode(Node* n) {
 bool Renderer::MediaPlay(Node* mediaNode) {
     if (!mediaNode || (mediaNode->tagName != "video" && mediaNode->tagName != "audio")) return false;
     auto& player = m_mediaPlayers[mediaNode];
-    if (!player) player = std::make_unique<Win32MediaPlayer>();
+    if (!player) player = std::make_unique<PlatformMediaPlayer>();
     std::string src = MediaSourceFromNode(mediaNode);
     if (src.empty()) return false;
     std::string url = ResolveUrl(src, m_curBaseUrl);

@@ -175,6 +175,16 @@ struct ChromeCallbacks {
     // no-op-safe defaults).
     std::function<void(Node* target)> scrollIntoView;
     std::function<ICanvasSurface*(Node*)> getCanvasSurface;
+    std::function<bool(Node*)> mediaPlay;
+    std::function<void(Node*)> mediaPause;
+    std::function<void(Node*, double)> mediaSetCurrentTime;
+    std::function<double(Node*)> mediaCurrentTime;
+    std::function<double(Node*)> mediaDuration;
+    std::function<void(Node*, double)> mediaSetVolume;
+    std::function<double(Node*)> mediaVolume;
+    std::function<void(Node*, bool)> mediaSetMuted;
+    std::function<bool(Node*)> mediaMuted;
+    std::function<bool(Node*)> mediaPaused;
 };
 
 // ── Chrome controller ───────────────────────────────────────────────────────
@@ -446,6 +456,16 @@ private:
             };
             callbacks.scrollIntoView = cb.scrollIntoView;
             callbacks.getCanvasSurface = cb.getCanvasSurface;
+            callbacks.mediaPlay = cb.mediaPlay;
+            callbacks.mediaPause = cb.mediaPause;
+            callbacks.mediaSetCurrentTime = cb.mediaSetCurrentTime;
+            callbacks.mediaCurrentTime = cb.mediaCurrentTime;
+            callbacks.mediaDuration = cb.mediaDuration;
+            callbacks.mediaSetVolume = cb.mediaSetVolume;
+            callbacks.mediaVolume = cb.mediaVolume;
+            callbacks.mediaSetMuted = cb.mediaSetMuted;
+            callbacks.mediaMuted = cb.mediaMuted;
+            callbacks.mediaPaused = cb.mediaPaused;
 
             state.js.setDocument(tab.page->dom, repaint, tab.page->url, std::move(callbacks));
 

@@ -44,6 +44,7 @@ struct PaintState {
     FormState* form = nullptr;
     std::vector<ScrollableRegion>* scrollables = nullptr;
     std::map<const Node*, float>* elementScrollY = nullptr;
+    std::function<void(const LayoutBox&, float, float, float, float)> mediaRect;
 };
 
 struct PaintYExtent {
@@ -281,6 +282,17 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
                 ps.r->DrawBitmap(it->second, cx, cy, box.contentW, box.contentH);
             }
         }
+    }
+
+    if (box.kind == BoxKind::Replaced && box.node
+        && (box.node->tagName == "video" || box.node->tagName == "audio")) {
+        float cx = box.contentX();
+        float cy = box.contentY() - ps.scrollY + ps.topInset;
+        ps.r->FillRect(cx, cy, box.contentW, box.contentH,
+            box.node->tagName == "video" ? PlatColor{0.02f, 0.02f, 0.025f, 1.f}
+                                         : PlatColor{0.94f, 0.94f, 0.94f, 1.f});
+        ps.r->DrawRect(cx, cy, box.contentW, box.contentH, PlatColor{0.35f, 0.35f, 0.38f, 1.f}, 1.f);
+        if (ps.mediaRect) ps.mediaRect(box, cx, cy, box.contentW, box.contentH);
     }
 
     // Borders

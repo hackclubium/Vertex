@@ -15,7 +15,9 @@
 #include "platform/profile.h"
 #include "platform/downloads.h"
 #include "platform/platform_features.h"
+#include "platform/media_player.h"
 #include "network/resource_cache.h"
+#include "network/url.h"
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
 #include "js/dom_bridge.h"
@@ -227,6 +229,7 @@ static std::string PlatformFeaturesPageHtml() {
 // snapshots must be released each time or they'd leak.
 static std::map<const Node*, std::unique_ptr<CoreGraphicsCanvasSurface>> g_canvasSurfaces;
 static std::map<const Node*, PlatBitmap> g_canvasBitmaps;
+static std::map<const Node*, std::unique_ptr<PlatformMediaPlayer>> g_mediaPlayers;
 
 static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
     if (!n) return nullptr;
@@ -247,6 +250,30 @@ static ICanvasSurface* GetOrCreateCanvasSurface(Node* n) {
     ICanvasSurface* raw = surface.get();
     g_canvasSurfaces[n] = std::move(surface);
     return raw;
+}
+
+static std::string MediaSrc(Node* n) {
+    if (!n) return {};
+    std::string src = n->attr("src");
+    if (!src.empty()) return src;
+    for (auto& child : n->children)
+        if (child && child->type == NodeType::Element && child->tagName == "source" && !child->attr("src").empty())
+            return child->attr("src");
+    return {};
+}
+
+static PlatformMediaPlayer* EnsureMediaPlayer(Node* n) {
+    if (!n || (n->tagName != "video" && n->tagName != "audio")) return nullptr;
+    auto& player = g_mediaPlayers[n];
+    if (!player) player = std::make_unique<PlatformMediaPlayer>();
+    std::string src = MediaSrc(n);
+    if (src.empty()) return player.get();
+    std::string base = (g_activeTab >= 0 && g_activeTab < (int)g_tabs.size() && g_tabs[g_activeTab].page) ? g_tabs[g_activeTab].page->url : "";
+    std::string url = ResolveUrlAgainstBase(src, base);
+    bool video = n->tagName == "video";
+    if (player->Url() != url || player->HasVideo() != video)
+        player->Load((__bridge PlatformMediaOwner)g_view, url, video, n->attrs.count("autoplay") > 0);
+    return player.get();
 }
 
 static Tab& CurTab() { return g_tabs[g_activeTab]; }
@@ -399,6 +426,9 @@ static Stylesheet CollectCSS(const Node* root) {
             ps.hits = &g_hits;
             ps.fontCache = &g_fontCache;
             ps.form = &g_formState;
+            ps.mediaRect = [](const LayoutBox& box, float x, float y, float w, float h) {
+                if (auto* p = EnsureMediaPlayer(const_cast<Node*>(box.node))) p->SetRect(x, y, w, h);
+            };
             PaintBoxTree(ps, *g_layoutRoot);
             tab.docHeight = g_layoutRoot->contentH + 32.f;
         }
@@ -766,6 +796,16 @@ int main(int argc, const char* argv[]) {
             if (g_statusField) [g_statusField setStringValue:[NSString stringWithUTF8String:s.c_str()]];
         };
         g_chrome.cb.getCanvasSurface = [](Node* n) { return GetOrCreateCanvasSurface(n); };
+        g_chrome.cb.mediaPlay = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) { p->Play(); return true; } return false; };
+        g_chrome.cb.mediaPause = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) p->Pause(); };
+        g_chrome.cb.mediaSetCurrentTime = [](Node* n, double v) { if (auto* p = EnsureMediaPlayer(n)) p->SetCurrentTime(v); };
+        g_chrome.cb.mediaCurrentTime = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) return p->CurrentTime(); return 0.0; };
+        g_chrome.cb.mediaDuration = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) return p->Duration(); return 0.0; };
+        g_chrome.cb.mediaSetVolume = [](Node* n, double v) { if (auto* p = EnsureMediaPlayer(n)) p->SetVolume(v); };
+        g_chrome.cb.mediaVolume = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) return p->Volume(); return 1.0; };
+        g_chrome.cb.mediaSetMuted = [](Node* n, bool v) { if (auto* p = EnsureMediaPlayer(n)) p->SetMuted(v); };
+        g_chrome.cb.mediaMuted = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) return p->Muted(); return n && n->attrs.count("muted") > 0; };
+        g_chrome.cb.mediaPaused = [](Node* n) { if (auto* p = EnsureMediaPlayer(n)) return p->Paused(); return true; };
         g_chrome.cb.scrollIntoView = [](Node* target) {
             if (!target || !g_layoutRoot) return;
             std::function<bool(const LayoutBox*, float&)> findBox =

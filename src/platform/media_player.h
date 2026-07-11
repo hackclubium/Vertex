@@ -1,14 +1,20 @@
 #pragma once
 
-#include <windows.h>
 #include <string>
 
-class Win32MediaPlayer {
-public:
-    Win32MediaPlayer();
-    ~Win32MediaPlayer();
+#ifdef _WIN32
+#include <windows.h>
+using PlatformMediaOwner = HWND;
+#else
+using PlatformMediaOwner = void*;
+#endif
 
-    bool Load(HWND owner, const std::string& url, bool hasVideo, bool autoplay);
+class PlatformMediaPlayer {
+public:
+    PlatformMediaPlayer();
+    ~PlatformMediaPlayer();
+
+    bool Load(PlatformMediaOwner owner, const std::string& url, bool hasVideo, bool autoplay);
     void SetRect(float x, float y, float w, float h);
     void Play();
     void Pause();
@@ -19,7 +25,7 @@ public:
     void SetVolume(double volume);
     double Volume() const;
     void SetMuted(bool muted);
-    bool Muted() const { return m_muted; }
+    bool Muted() const;
     bool Paused() const;
     const std::string& Url() const { return m_url; }
     bool HasVideo() const { return m_hasVideo; }

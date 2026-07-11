@@ -430,7 +430,7 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
 
         if (!box.replacedUrl.empty()) {
             auto& player = m_mediaPlayers[box.node];
-            if (!player) player = std::make_unique<Win32MediaPlayer>();
+            if (!player) player = std::make_unique<PlatformMediaPlayer>();
             if (player->Url() != box.replacedUrl || player->HasVideo() != isVideo) {
                 const bool autoplay = box.node->attrs.find("autoplay") != box.node->attrs.end();
                 player->Load(m_hwnd, box.replacedUrl, isVideo, autoplay);
