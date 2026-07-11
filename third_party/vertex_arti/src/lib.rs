@@ -80,7 +80,9 @@ async fn fetch_inner(url: &str, max_bytes: usize) -> Result<VertexArtiResponse, 
         path_query, host
     );
 
-    let client = TorClient::create_bootstrapped(TorClientConfig::default()).await.map_err(|e| e.to_string())?;
+    let mut config = TorClientConfig::builder();
+    config.address_filter().allow_onion_addrs(true);
+    let client = TorClient::create_bootstrapped(config.build().map_err(|e| e.to_string())?).await.map_err(|e| e.to_string())?;
     let stream = client.connect((host.as_str(), port)).await.map_err(|e| e.to_string())?;
 
     let (status, content_type, body) = if scheme == "https" {
