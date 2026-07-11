@@ -1,4 +1,5 @@
 #include "network/http_client.h"
+#include "network/arti_client.h"
 #include "network/socket.h"
 #include "network/tls_socket.h"
 #include "network/cookies.h"
@@ -277,6 +278,9 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
             return r;
         }
         visited.insert(currentUrl);
+        if (IsOnionUrl(currentUrl) && std::getenv("VERTEX_TOR_SOCKS") == nullptr) {
+            if (FetchViaEmbeddedArti(currentUrl, maxResponseBytes, r)) return r;
+        }
         
         HttpUrl parsed;
         if (!ParseHttpUrl(currentUrl, parsed)) { r.error = "Unsupported or malformed URL"; return r; }

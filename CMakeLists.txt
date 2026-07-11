@@ -74,6 +74,7 @@ add_library(vertex_engine STATIC
     src/network/url.cpp
     src/network/websocket.cpp
     src/network/socket.cpp
+    src/network/arti_client.cpp
     src/network/http_client.cpp
     src/network/tls_windows.cpp
     src/network/tls_linux.cpp
@@ -115,6 +116,29 @@ elseif (APPLE)
     target_link_libraries(vertex_engine PUBLIC "-framework Security" "-framework CoreFoundation")
 elseif (UNIX)
     target_link_libraries(vertex_engine PUBLIC mbedtls mbedx509 mbedcrypto)
+    target_link_libraries(vertex_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
+find_program(CARGO_EXECUTABLE cargo)
+if (CARGO_EXECUTABLE)
+    if (WIN32)
+        set(VERTEX_ARTI_LIB_NAME vertex_arti.dll)
+    elseif (APPLE)
+        set(VERTEX_ARTI_LIB_NAME libvertex_arti.dylib)
+    else()
+        set(VERTEX_ARTI_LIB_NAME libvertex_arti.so)
+    endif()
+    add_custom_target(vertex_arti
+        COMMAND ${CARGO_EXECUTABLE} build --release
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/third_party/vertex_arti/target/release/${VERTEX_ARTI_LIB_NAME}
+            ${CMAKE_BINARY_DIR}/$<CONFIG>/${VERTEX_ARTI_LIB_NAME}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/vertex_arti
+        COMMENT "Building embedded Arti bridge"
+        VERBATIM
+    )
+else()
+    message(STATUS "cargo not found — embedded Arti bridge disabled; .onion falls back to VERTEX_TOR_SOCKS")
 endif()
 
 # ── platform backends ─────────────────────────────────────────────────────────
@@ -189,6 +213,10 @@ elseif (UNIX)
     )
 endif()
 
+if (TARGET vertex_arti)
+    add_dependencies(Vertex vertex_arti)
+endif()
+
 add_executable(VertexUpdater
     src/platform/updater_helper.cpp
 )
@@ -254,6 +282,24 @@ install(TARGETS Vertex
     RUNTIME DESTINATION .
 )
 
+if (CARGO_EXECUTABLE)
+    if (APPLE)
+        install(CODE "
+            set(_arti \"${CMAKE_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/${VERTEX_ARTI_LIB_NAME}\")
+            if (EXISTS \"\${_arti}\")
+                file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/Vertex.app/Contents/MacOS\" TYPE FILE FILES \"\${_arti}\")
+            endif()
+        ")
+    else()
+        install(CODE "
+            set(_arti \"${CMAKE_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/${VERTEX_ARTI_LIB_NAME}\")
+            if (EXISTS \"\${_arti}\")
+                file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}\" TYPE FILE FILES \"\${_arti}\")
+            endif()
+        ")
+    endif()
+endif()
+
 if (APPLE)
     install(TARGETS VertexUpdater
         RUNTIME DESTINATION Vertex.app/Contents/MacOS
@@ -311,14 +357,22 @@ if (WIN32)
         # paths instead.
         file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" VERTEX_BUILD_DIR_NATIVE)
         file(TO_NATIVE_PATH "${VERTEX_INSTALLER_OUTPUT}" VERTEX_INSTALLER_OUTPUT_NATIVE)
+        set(VERTEX_NSIS_EXTRA_DEFINES)
+        set(VERTEX_INSTALLER_DEPS)
+        if (CARGO_EXECUTABLE)
+            list(APPEND VERTEX_NSIS_EXTRA_DEFINES
+                "/DVERTEX_ARTI_LIB_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\${VERTEX_ARTI_LIB_NAME}")
+            list(APPEND VERTEX_INSTALLER_DEPS vertex_arti)
+        endif()
         add_custom_command(
             OUTPUT "${VERTEX_INSTALLER_OUTPUT}"
             COMMAND ${MAKENSIS_EXECUTABLE}
                 "/DVERTEX_EXE_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\Vertex.exe"
                 "/DVERTEX_UPDATER_EXE_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\VertexUpdater.exe"
                 "/DVERTEX_INSTALLER_OUTPUT=${VERTEX_INSTALLER_OUTPUT_NATIVE}"
+                ${VERTEX_NSIS_EXTRA_DEFINES}
                 "${CMAKE_BINARY_DIR}/vertex.nsi"
-            DEPENDS Vertex VertexUpdater "${CMAKE_BINARY_DIR}/vertex.nsi"
+            DEPENDS Vertex VertexUpdater ${VERTEX_INSTALLER_DEPS} "${CMAKE_BINARY_DIR}/vertex.nsi"
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
             COMMENT "Building Vertex Windows installer with NSIS"
             VERBATIM

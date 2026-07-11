@@ -31,6 +31,7 @@ It's early days, but Vertex can load real websites and do a decent amount:
 |---|---|
 | Platforms | Windows, macOS, Linux, all sharing the same engine |
 | Pages | HTTP/HTTPS, images, CSS, JS, SVGs, `<canvas>`, and `vertex://` internal pages |
+| Onion sites | `.onion` over Tor, either through the embedded Arti bridge or a local SOCKS proxy |
 | UI | Tabs, address bar, history, bookmarks, downloads, reload, zoom, find-in-page, context menus |
 | Search | DuckDuckGo for address bar queries |
 | Updates | Checks GitHub for new releases, downloads in the background, `F12` to install |
@@ -87,6 +88,8 @@ Linux doesn't use any of those. Windowing (XCB), 2D rendering, text, `<canvas>`,
 
 Everything is built from scratch in this repo.
 
+One exception worth calling out: `.onion` support can use Arti, the Tor Project's Rust Tor implementation. The browser still does its own URL parsing, HTTP, TLS plumbing, and SOCKS fallback, but Tor itself is not something we want to fake badly in browser code. If the Arti bridge is built, Vertex loads it next to the app. If not, it falls back to a local Tor/Arti SOCKS proxy.
+
 ## Download
 
 Grab a release: [github.com/hackclubium/Vertex/releases](https://github.com/hackclubium/Vertex/releases)
@@ -98,6 +101,8 @@ Grab a release: [github.com/hackclubium/Vertex/releases](https://github.com/hack
 | Linux | `Vertex-linux-installer.tar.gz` |
 
 Each release also has portable updater binaries. Vertex checks for new releases on startup, and you can press `F12` to install one. It launches `VertexUpdater`, swaps the binary, and restarts.
+
+Releases built with Rust installed also include the Arti bridge (`vertex_arti.dll`, `libvertex_arti.dylib`, or `libvertex_arti.so`). That means `.onion` URLs can work without you starting `tor` in a terminal first. If the bridge is missing, Vertex still supports `.onion` through a SOCKS proxy at `127.0.0.1:9050`, or whatever you put in `VERTEX_TOR_SOCKS`.
 
 ## Where Profile Data Lives
 
@@ -114,6 +119,8 @@ Profile stuff includes `history.tsv`, `bookmarks.tsv`, `downloads.tsv`, `setting
 ## Building
 
 CMake and C++17. Version comes from the latest git tag.
+
+Rust is optional. If `cargo` is on PATH, the build also builds the embedded Arti bridge and copies it next to Vertex. If Rust is not installed, the browser still builds; `.onion` just uses the SOCKS fallback instead.
 
 ### Windows
 
@@ -143,6 +150,44 @@ sudo apt-get install -y build-essential cmake libxcb1-dev pkg-config
 cmake -B build
 cmake --build build
 ./build/Vertex
+```
+
+### Optional Arti bridge
+
+If you want `.onion` support without running a separate Tor process, install Rust and build the `vertex_arti` target once:
+
+```sh
+rustup default stable
+cmake -B build
+cmake --build build --target vertex_arti
+cmake --build build
+```
+
+On Windows with Visual Studio builds:
+
+```bat
+cmake -S . -B build
+cmake --build build --config Release --target vertex_arti
+cmake --build build --config Release
+```
+
+No Rust? Still fine. Run Tor or Arti yourself and Vertex will use the SOCKS proxy:
+
+```sh
+VERTEX_TOR_SOCKS=127.0.0.1:9050 ./build/Vertex
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:VERTEX_TOR_SOCKS="127.0.0.1:9050"
+.\build\Release\Vertex.exe
+```
+
+If you built the Arti library somewhere else, point Vertex at it:
+
+```sh
+VERTEX_ARTI_LIB=/path/to/libvertex_arti.so ./build/Vertex
 ```
 
 ## Keyboard Shortcuts

@@ -72,6 +72,9 @@ Section "Install"
     SetOutPath "$INSTDIR"
     File "${VERTEX_EXE_PATH}"
     File "${VERTEX_UPDATER_EXE_PATH}"
+    !ifdef VERTEX_ARTI_LIB_PATH
+        File "${VERTEX_ARTI_LIB_PATH}"
+    !endif
     WriteUninstaller "$INSTDIR\Uninstall.exe"
 
     WriteRegStr HKCU "Software\Vertex" "InstallDir" "$INSTDIR"
@@ -95,6 +98,7 @@ Section "Uninstall"
     Delete "$INSTDIR\Vertex-update.exe"
     Delete "$INSTDIR\Vertex.exe.old"
     Delete "$INSTDIR\VertexUpdater.exe"
+    Delete "$INSTDIR\vertex_arti.dll"
     Delete "$INSTDIR\vertex_updater.log"
     Delete "$INSTDIR\Uninstall.exe"
     RMDir "$INSTDIR"
