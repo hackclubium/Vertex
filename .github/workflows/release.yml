@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_NET_RETRY: 10
+
 jobs:
   build:
     strategy:
@@ -15,13 +18,13 @@ jobs:
         include:
           - os: windows-latest
             name: windows
-            configure: cmake -B build -A x64
+            configure: cmake -B build -A x64 -DVERTEX_BUILD_ARTI=ON
           - os: macos-latest
             name: macos
-            configure: cmake -B build
+            configure: cmake -B build -DVERTEX_BUILD_ARTI=ON
           - os: ubuntu-latest
             name: linux
-            configure: cmake -B build
+            configure: cmake -B build -DVERTEX_BUILD_ARTI=ON
 
     runs-on: ${{ matrix.os }}
 
@@ -36,6 +39,23 @@ jobs:
       - name: Install Windows packaging deps
         if: matrix.name == 'windows'
         run: choco install nsis -y
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust crates
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/vertex_arti
+
+      - name: Fetch Arti crates
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            cargo fetch --manifest-path third_party/vertex_arti/Cargo.toml && exit 0
+            sleep $((i * 10))
+          done
+          cargo fetch --manifest-path third_party/vertex_arti/Cargo.toml
 
       - name: Configure
         run: ${{ matrix.configure }}
@@ -67,7 +87,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vertex-windows-portable
-          path: build/Release/Vertex.exe
+          path: |
+            build/Release/Vertex.exe
+            build/Release/vertex_arti.dll
 
       - name: Upload artifact (macOS)
         if: matrix.name == 'macos'
@@ -81,7 +103,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vertex-macos-portable
-          path: build/Vertex.app/Contents/MacOS/Vertex
+          path: |
+            build/Vertex.app/Contents/MacOS/Vertex
+            build/Release/libvertex_arti.dylib
+            build/libvertex_arti.dylib
 
       - name: Upload artifact (Linux)
         if: matrix.name == 'linux'
@@ -95,7 +120,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vertex-linux-portable
-          path: build/Vertex
+          path: |
+            build/Vertex
+            build/libvertex_arti.so
 
   release:
     needs: build
@@ -112,9 +139,9 @@ jobs:
           mv vertex-windows-installer/Vertex-*.exe Vertex-windows-installer.exe || true
           mv vertex-macos-installer/Vertex-*.dmg Vertex-macos-installer.dmg || true
           mv vertex-linux-installer/Vertex-*.tar.gz Vertex-linux-installer.tar.gz || true
-          mv vertex-windows-portable/Vertex.exe Vertex-windows-portable.exe || true
-          mv vertex-macos-portable/Vertex Vertex-macos-portable || true
-          mv vertex-linux-portable/Vertex Vertex-linux-portable || true
+          [ -d vertex-windows-portable ] && (cd vertex-windows-portable && zip -r ../Vertex-windows-portable.zip .) || true
+          [ -d vertex-macos-portable ] && (cd vertex-macos-portable && zip -r ../Vertex-macos-portable.zip .) || true
+          [ -d vertex-linux-portable ] && (cd vertex-linux-portable && tar -czf ../Vertex-linux-portable.tar.gz .) || true
 
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 && \
             gh release upload "$tag" Vertex-* --repo "$GITHUB_REPOSITORY" --clobber || \

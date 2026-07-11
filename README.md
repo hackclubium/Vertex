@@ -102,7 +102,7 @@ Grab a release: [github.com/hackclubium/Vertex/releases](https://github.com/hack
 
 Each release also has portable updater binaries. Vertex checks for new releases on startup, and you can press `F12` to install one. It launches `VertexUpdater`, swaps the binary, and restarts.
 
-Releases built with Rust installed also include the Arti bridge (`vertex_arti.dll`, `libvertex_arti.dylib`, or `libvertex_arti.so`). That means `.onion` URLs can work without you starting `tor` in a terminal first. If the bridge is missing, Vertex still supports `.onion` through a SOCKS proxy at `127.0.0.1:9050`, or whatever you put in `VERTEX_TOR_SOCKS`.
+Releases built with `-DVERTEX_BUILD_ARTI=ON` include the Arti bridge (`vertex_arti.dll`, `libvertex_arti.dylib`, or `libvertex_arti.so`). That means `.onion` URLs can work without you starting `tor` in a terminal first. If the bridge is missing, Vertex still supports `.onion` through a SOCKS proxy at `127.0.0.1:9050`, or whatever you put in `VERTEX_TOR_SOCKS`.
 
 ## Where Profile Data Lives
 
@@ -120,7 +120,7 @@ Profile stuff includes `history.tsv`, `bookmarks.tsv`, `downloads.tsv`, `setting
 
 CMake and C++17. Version comes from the latest git tag.
 
-Rust is optional. If `cargo` is on PATH, the build also builds the embedded Arti bridge and copies it next to Vertex. If Rust is not installed, the browser still builds; `.onion` just uses the SOCKS fallback instead.
+Rust is optional. By default, the browser builds without downloading Rust crates, and `.onion` uses the SOCKS fallback. If you want the embedded Arti bridge, opt in with `-DVERTEX_BUILD_ARTI=ON`.
 
 ### Windows
 
@@ -158,7 +158,7 @@ If you want `.onion` support without running a separate Tor process, install Rus
 
 ```sh
 rustup default stable
-cmake -B build
+cmake -B build -DVERTEX_BUILD_ARTI=ON
 cmake --build build --target vertex_arti
 cmake --build build
 ```
@@ -166,7 +166,7 @@ cmake --build build
 On Windows with Visual Studio builds:
 
 ```bat
-cmake -S . -B build
+cmake -S . -B build -DVERTEX_BUILD_ARTI=ON
 cmake --build build --config Release --target vertex_arti
 cmake --build build --config Release
 ```

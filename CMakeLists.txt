@@ -119,8 +119,9 @@ elseif (UNIX)
     target_link_libraries(vertex_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
+option(VERTEX_BUILD_ARTI "Build embedded Arti bridge (downloads Rust crates)" OFF)
 find_program(CARGO_EXECUTABLE cargo)
-if (CARGO_EXECUTABLE)
+if (VERTEX_BUILD_ARTI AND CARGO_EXECUTABLE)
     if (WIN32)
         set(VERTEX_ARTI_LIB_NAME vertex_arti.dll)
     elseif (APPLE)
@@ -137,8 +138,10 @@ if (CARGO_EXECUTABLE)
         COMMENT "Building embedded Arti bridge"
         VERBATIM
     )
+elseif (VERTEX_BUILD_ARTI)
+    message(STATUS "VERTEX_BUILD_ARTI=ON but cargo not found — embedded Arti bridge disabled")
 else()
-    message(STATUS "cargo not found — embedded Arti bridge disabled; .onion falls back to VERTEX_TOR_SOCKS")
+    message(STATUS "embedded Arti bridge disabled (set VERTEX_BUILD_ARTI=ON to build it); .onion falls back to VERTEX_TOR_SOCKS")
 endif()
 
 # ── platform backends ─────────────────────────────────────────────────────────
@@ -282,7 +285,7 @@ install(TARGETS Vertex
     RUNTIME DESTINATION .
 )
 
-if (CARGO_EXECUTABLE)
+if (VERTEX_BUILD_ARTI AND CARGO_EXECUTABLE)
     if (APPLE)
         install(CODE "
             set(_arti \"${CMAKE_BINARY_DIR}/\${CMAKE_INSTALL_CONFIG_NAME}/${VERTEX_ARTI_LIB_NAME}\")
@@ -359,7 +362,7 @@ if (WIN32)
         file(TO_NATIVE_PATH "${VERTEX_INSTALLER_OUTPUT}" VERTEX_INSTALLER_OUTPUT_NATIVE)
         set(VERTEX_NSIS_EXTRA_DEFINES)
         set(VERTEX_INSTALLER_DEPS)
-        if (CARGO_EXECUTABLE)
+        if (VERTEX_BUILD_ARTI AND CARGO_EXECUTABLE)
             list(APPEND VERTEX_NSIS_EXTRA_DEFINES
                 "/DVERTEX_ARTI_LIB_PATH=${VERTEX_BUILD_DIR_NATIVE}\\$<CONFIG>\\${VERTEX_ARTI_LIB_NAME}")
             list(APPEND VERTEX_INSTALLER_DEPS vertex_arti)
