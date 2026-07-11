@@ -14,6 +14,7 @@
 #include "platform/plat_text_measure.h"
 #include "platform/profile.h"
 #include "platform/downloads.h"
+#include "platform/platform_features.h"
 #include "network/resource_cache.h"
 #include "layout/layout_engine.h"
 #include "css/stylesheet.h"
@@ -50,6 +51,7 @@ static vertex::profile::ProfilePaths g_profilePaths;
 static std::vector<vertex::downloads::DownloadRecord> g_downloads;
 static std::vector<std::vector<std::string>> g_bookmarks;
 static std::vector<std::vector<std::string>> g_history;
+static vertex::platform_features::State g_platformFeatures;
 
 static Semaphore g_imageFetchGate(6);
 
@@ -188,7 +190,8 @@ static std::string SettingsPageHtml() {
         "<div class=\"meta\"><a href=\"vertex://history\">History</a> | "
         "<a href=\"vertex://bookmarks\">Bookmarks</a> | "
         "<a href=\"vertex://downloads\">Downloads</a> | "
-        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<a href=\"vertex://site-data\">Site data</a> | "
+        "<a href=\"vertex://platform-features\">Platform features</a></div></div>"
         "<div class=\"item\"><div class=\"name\">Current defaults</div>"
         "<div class=\"meta\">JavaScript on | Images on | Cache on | Search engine Bing</div></div>"
         "</main></body></html>";
@@ -210,6 +213,10 @@ static std::string SiteDataPageHtml() {
         "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
         + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
         "</main></body></html>";
+}
+
+static std::string PlatformFeaturesPageHtml() {
+    return vertex::platform_features::PageHtml(g_platformFeatures, AppPageCss());
 }
 
 // <canvas> 2D backend. Owns each canvas element's CoreGraphics bitmap
@@ -482,6 +489,26 @@ static Stylesheet CollectCSS(const Node* root) {
 }
 
 - (void)keyDown:(NSEvent*)event {
+    NSEventModifierFlags flags = [event modifierFlags];
+    bool cmd = (flags & NSEventModifierFlagCommand) != 0;
+    bool shift = (flags & NSEventModifierFlagShift) != 0;
+    NSString* chars = [[event charactersIgnoringModifiers] lowercaseString];
+    if ([event keyCode] == 103) {
+        [g_window toggleFullScreen:nil];
+        g_platformFeatures.fullscreen = !g_platformFeatures.fullscreen;
+        vertex::platform_features::Event(g_platformFeatures, "fullscreenchange", g_platformFeatures.fullscreen ? "active" : "inactive");
+        return;
+    }
+    if (cmd && shift && [chars isEqualToString:@"m"]) {
+        g_chrome.navigate("vertex://platform-features");
+        return;
+    }
+    if (cmd && shift && [chars isEqualToString:@"u"]) {
+        vertex::platform_features::TouchAll(g_platformFeatures);
+        if (g_statusField) [g_statusField setStringValue:@"Platform features updated"];
+        [self setNeedsDisplay:YES];
+        return;
+    }
     if (!g_formState.focusedInput) { [super keyDown:event]; return; }
     unsigned short kc = [event keyCode];
     if (kc == 36) { // Return
@@ -509,7 +536,7 @@ static Stylesheet CollectCSS(const Node* root) {
         [self setNeedsDisplay:YES]; return;
     }
     if (kc == 53) { g_formState.blur(); [self setNeedsDisplay:YES]; return; } // Escape
-    NSString* chars = [event characters];
+    chars = [event characters];
     if ([chars length] > 0) {
         unichar uc = [chars characterAtIndex:0];
         if (uc >= 32 && uc < 127) {
@@ -763,7 +790,7 @@ int main(int argc, const char* argv[]) {
             // Handle internal pages
             if (url == "vertex://history" || url == "vertex://bookmarks" || 
                 url == "vertex://downloads" || url == "vertex://settings" || 
-                url == "vertex://site-data") {
+                url == "vertex://site-data" || url == "vertex://platform-features") {
                 auto* page = new Page();
                 page->url = url;
                 if (url == "vertex://history") page->dom = ParseHtml(HistoryPageHtml());
@@ -771,6 +798,7 @@ int main(int argc, const char* argv[]) {
                 else if (url == "vertex://downloads") page->dom = ParseHtml(DownloadsPageHtml());
                 else if (url == "vertex://settings") page->dom = ParseHtml(SettingsPageHtml());
                 else if (url == "vertex://site-data") page->dom = ParseHtml(SiteDataPageHtml());
+                else if (url == "vertex://platform-features") page->dom = ParseHtml(PlatformFeaturesPageHtml());
                 dispatch_async(dispatch_get_main_queue(), ^{
                     g_chrome.onPageReady(tabIdx, page);
                     [g_view setNeedsDisplay:YES];
@@ -805,6 +833,7 @@ int main(int argc, const char* argv[]) {
         // Initialize profile paths and load existing data
         g_profilePaths = vertex::profile::DefaultPaths();
         vertex::profile::EnsureDirectories(g_profilePaths);
+        vertex::platform_features::Seed(g_platformFeatures, "macos-cocoa");
         g_history = vertex::profile::ReadTsvRows(g_profilePaths.historyFile, 1000);
         g_bookmarks = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile, 1000);
         auto downloadRows = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile, 1000);

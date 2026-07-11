@@ -645,6 +645,10 @@ static void UpdateTitle() {
 }
 
 static void LayoutControls();
+static void ClampScroll();
+static void UpdateScrollbar();
+static RECT ContentPaintRect();
+static void InvalidateContent();
 
 static bool AnyTabLoading() {
     for (const auto& tab : g_tabs)
@@ -1072,7 +1076,7 @@ static std::string ReadClipboardText() {
 static void WriteClipboardHtml(const std::string& html) {
     g_lastClipboardHtml = html;
     UINT htmlFormat = RegisterClipboardFormatW(L"HTML Format");
-    std::string prefix = "Version:0.9\r\nStartHTML:00000097\r\nEndHTML:%08u\r\nStartFragment:00000131\r\nEndFragment:%08u\r\n<html><body><!--StartFragment-->");
+    std::string prefix = "Version:0.9\r\nStartHTML:00000097\r\nEndHTML:%08u\r\nStartFragment:00000131\r\nEndFragment:%08u\r\n<html><body><!--StartFragment-->";
     std::string suffix = "<!--EndFragment--></body></html>";
     unsigned endFragment = (unsigned)(131 + html.size());
     unsigned endHtml = (unsigned)(131 + html.size() + suffix.size());

@@ -25,6 +25,7 @@
 #include "platform/plat_text_measure.h"
 #include "platform/profile.h"
 #include "platform/downloads.h"
+#include "platform/platform_features.h"
 #include "network/resource_cache.h"
 #include "render/svg.h"
 #include "render/canvas_raster.h"
@@ -66,6 +67,7 @@ constexpr xcb_keysym_t XK_Home      = 0xFF50;
 constexpr xcb_keysym_t XK_Left      = 0xFF51;
 constexpr xcb_keysym_t XK_Right     = 0xFF53;
 constexpr xcb_keysym_t XK_End       = 0xFF57;
+constexpr xcb_keysym_t XK_F11       = 0xFFC8;
 // Keysyms 0x20..0x7E map directly onto ASCII/Latin-1 by protocol definition.
 
 // ── XCB window state ─────────────────────────────────────────────────────────
@@ -82,6 +84,7 @@ static int               g_width = 1280, g_height = 800;
 static bool              g_running = true;
 static bool              g_needsRedraw = true;
 static bool              g_prefersDarkScheme = false;
+static vertex::platform_features::State g_platformFeatures;
 
 static void RequestRedraw() { g_needsRedraw = true; }
 
@@ -184,6 +187,32 @@ static void SetWindowTitle(const std::string& t) {
     xcb_change_property(g_conn, XCB_PROP_MODE_REPLACE, g_win,
         XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, (uint32_t)t.size(), t.c_str());
     xcb_flush(g_conn);
+}
+
+static void SetLinuxFullscreen(bool fullscreen) {
+    if (!g_conn || !g_win) return;
+    xcb_atom_t wmState = InternAtom(g_conn, "_NET_WM_STATE");
+    xcb_atom_t fsAtom = InternAtom(g_conn, "_NET_WM_STATE_FULLSCREEN");
+    if (wmState == XCB_ATOM_NONE || fsAtom == XCB_ATOM_NONE) return;
+    xcb_client_message_event_t ev{};
+    ev.response_type = XCB_CLIENT_MESSAGE;
+    ev.window = g_win;
+    ev.type = wmState;
+    ev.format = 32;
+    ev.data.data32[0] = fullscreen ? 1 : 0;
+    ev.data.data32[1] = fsAtom;
+    ev.data.data32[2] = 0;
+    xcb_send_event(g_conn, false, g_screen->root,
+        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
+        reinterpret_cast<const char*>(&ev));
+    xcb_flush(g_conn);
+    g_platformFeatures.fullscreen = fullscreen;
+    vertex::platform_features::Event(g_platformFeatures, "fullscreenchange", fullscreen ? "active" : "inactive");
+    RequestRedraw();
+}
+
+static void ToggleLinuxFullscreen() {
+    SetLinuxFullscreen(!g_platformFeatures.fullscreen);
 }
 
 // ── clipboard (ICCCM selection ownership) ─────────────────────────────────
@@ -920,7 +949,8 @@ static std::string SettingsPageHtml() {
         "<div class=\"meta\"><a href=\"vertex://history\">History</a> | "
         "<a href=\"vertex://bookmarks\">Bookmarks</a> | "
         "<a href=\"vertex://downloads\">Downloads</a> | "
-        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<a href=\"vertex://site-data\">Site data</a> | "
+        "<a href=\"vertex://platform-features\">Platform features</a></div></div>"
         "<div class=\"item\"><div class=\"name\">Current defaults</div>"
         "<div class=\"meta\">JavaScript on | Images on | Cache on | Search engine Bing</div></div>"
         "</main></body></html>";
@@ -942,6 +972,10 @@ static std::string SiteDataPageHtml() {
         "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
         + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
         "</main></body></html>";
+}
+
+static std::string PlatformFeaturesPageHtml() {
+    return vertex::platform_features::PageHtml(g_platformFeatures, AppPageCss());
 }
 
 static void platformFetch(int tabIdx, const std::string& url) {
@@ -994,6 +1028,17 @@ static void platformFetch(int tabIdx, const std::string& url) {
         auto* page = new Page();
         page->url = url;
         page->dom = ParseHtml(SiteDataPageHtml());
+        PostToMainThread([tabIdx, page]() {
+            g_chrome.onPageReady(tabIdx, page);
+            SetWindowTitle(g_chrome.state.title());
+            RequestRedraw();
+        });
+        return;
+    }
+    if (url == "vertex://platform-features") {
+        auto* page = new Page();
+        page->url = url;
+        page->dom = ParseHtml(PlatformFeaturesPageHtml());
         PostToMainThread([tabIdx, page]() {
             g_chrome.onPageReady(tabIdx, page);
             SetWindowTitle(g_chrome.state.title());
@@ -1190,6 +1235,20 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
     if (!sym) return;
 
     // Global shortcuts (work everywhere)
+    if (sym == XK_F11) {
+        ToggleLinuxFullscreen();
+        return;
+    }
+    if (ctrl && shift && (sym == 'm' || sym == 'M')) {
+        g_chrome.navigate("vertex://platform-features");
+        return;
+    }
+    if (ctrl && shift && (sym == 'u' || sym == 'U')) {
+        vertex::platform_features::TouchAll(g_platformFeatures);
+        g_statusText = "Platform features updated";
+        RequestRedraw();
+        return;
+    }
     if (ctrl && !shift && sym == 'l') {
         g_urlEdit.focused = true;
         RequestRedraw();
@@ -1507,6 +1566,7 @@ int main(int argc, char* argv[]) {
     // Initialize profile paths and load existing data
     g_profilePaths = vertex::profile::DefaultPaths();
     vertex::profile::EnsureDirectories(g_profilePaths);
+    vertex::platform_features::Seed(g_platformFeatures, "linux-xcb");
     g_history = vertex::profile::ReadTsvRows(g_profilePaths.historyFile, 1000);
     g_bookmarks = vertex::profile::ReadTsvRows(g_profilePaths.bookmarksFile, 1000);
     auto downloadRows = vertex::profile::ReadTsvRows(g_profilePaths.downloadsFile, 1000);
