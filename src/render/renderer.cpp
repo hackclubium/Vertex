@@ -826,6 +826,7 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                       && m_layoutWKey    == m_width
                       && m_layoutHKey    == m_height
                       && m_layoutZoomKey == effZoom
+                      && !AnimationManager::instance().hasActiveAnimations()
                       && !hoverMayAffectStyle;
             m_lastTimings.layoutReused = reuse;
             if (!reuse) {

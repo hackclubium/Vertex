@@ -142,6 +142,8 @@ private:
 
         ComputedStyle out = a->style;
         auto lerp = [&](float x, float y) { return x + (y - x) * local; };
+        auto lerpSet = [&](float& dst, float x, float y) { dst = lerp(x, y); };
+        auto bothSet = [](float x, float y) { return x > kCssNotSet + 1.f && y > kCssNotSet + 1.f; };
         auto lerpColor = [&](CssColor x, CssColor y) {
             x.r = lerp(x.r, y.r);
             x.g = lerp(x.g, y.g);
@@ -151,6 +153,43 @@ private:
         };
         if (a->style.opacitySet && b->style.opacitySet)
             out.opacity = lerp(a->style.opacity, b->style.opacity);
+        if (a->style.fontSize > 0 && b->style.fontSize > 0) lerpSet(out.fontSize, a->style.fontSize, b->style.fontSize);
+        if (a->style.lineHeight > 0 && b->style.lineHeight > 0) lerpSet(out.lineHeight, a->style.lineHeight, b->style.lineHeight);
+        if (a->style.letterSpacingSet && b->style.letterSpacingSet) { out.letterSpacing = lerp(a->style.letterSpacing, b->style.letterSpacing); out.letterSpacingSet = true; }
+        if (bothSet(a->style.marginTop, b->style.marginTop)) lerpSet(out.marginTop, a->style.marginTop, b->style.marginTop);
+        if (bothSet(a->style.marginRight, b->style.marginRight)) lerpSet(out.marginRight, a->style.marginRight, b->style.marginRight);
+        if (bothSet(a->style.marginBottom, b->style.marginBottom)) lerpSet(out.marginBottom, a->style.marginBottom, b->style.marginBottom);
+        if (bothSet(a->style.marginLeft, b->style.marginLeft)) lerpSet(out.marginLeft, a->style.marginLeft, b->style.marginLeft);
+        if (a->style.paddingTop >= 0 && b->style.paddingTop >= 0) lerpSet(out.paddingTop, a->style.paddingTop, b->style.paddingTop);
+        if (a->style.paddingRight >= 0 && b->style.paddingRight >= 0) lerpSet(out.paddingRight, a->style.paddingRight, b->style.paddingRight);
+        if (a->style.paddingBottom >= 0 && b->style.paddingBottom >= 0) lerpSet(out.paddingBottom, a->style.paddingBottom, b->style.paddingBottom);
+        if (a->style.paddingLeft >= 0 && b->style.paddingLeft >= 0) lerpSet(out.paddingLeft, a->style.paddingLeft, b->style.paddingLeft);
+        if (a->style.borderWidth >= 0 && b->style.borderWidth >= 0) lerpSet(out.borderWidth, a->style.borderWidth, b->style.borderWidth);
+        if (a->style.borderTopWidth >= 0 && b->style.borderTopWidth >= 0) lerpSet(out.borderTopWidth, a->style.borderTopWidth, b->style.borderTopWidth);
+        if (a->style.borderRightWidth >= 0 && b->style.borderRightWidth >= 0) lerpSet(out.borderRightWidth, a->style.borderRightWidth, b->style.borderRightWidth);
+        if (a->style.borderBottomWidth >= 0 && b->style.borderBottomWidth >= 0) lerpSet(out.borderBottomWidth, a->style.borderBottomWidth, b->style.borderBottomWidth);
+        if (a->style.borderLeftWidth >= 0 && b->style.borderLeftWidth >= 0) lerpSet(out.borderLeftWidth, a->style.borderLeftWidth, b->style.borderLeftWidth);
+        if (a->style.width >= 0 && b->style.width >= 0) lerpSet(out.width, a->style.width, b->style.width);
+        if (a->style.widthPercent >= 0 && b->style.widthPercent >= 0) lerpSet(out.widthPercent, a->style.widthPercent, b->style.widthPercent);
+        if (a->style.height >= 0 && b->style.height >= 0) lerpSet(out.height, a->style.height, b->style.height);
+        if (a->style.heightPercent >= 0 && b->style.heightPercent >= 0) lerpSet(out.heightPercent, a->style.heightPercent, b->style.heightPercent);
+        if (a->style.minWidth >= 0 && b->style.minWidth >= 0) lerpSet(out.minWidth, a->style.minWidth, b->style.minWidth);
+        if (a->style.maxWidth >= 0 && b->style.maxWidth >= 0) lerpSet(out.maxWidth, a->style.maxWidth, b->style.maxWidth);
+        if (a->style.minHeight >= 0 && b->style.minHeight >= 0) lerpSet(out.minHeight, a->style.minHeight, b->style.minHeight);
+        if (a->style.maxHeight >= 0 && b->style.maxHeight >= 0) lerpSet(out.maxHeight, a->style.maxHeight, b->style.maxHeight);
+        if (a->style.topSet && b->style.topSet && a->style.topPercent == b->style.topPercent) { out.top = lerp(a->style.top, b->style.top); out.topSet = true; out.topPercent = a->style.topPercent; }
+        if (a->style.rightSet && b->style.rightSet && a->style.rightPercent == b->style.rightPercent) { out.right = lerp(a->style.right, b->style.right); out.rightSet = true; out.rightPercent = a->style.rightPercent; }
+        if (a->style.bottomSet && b->style.bottomSet && a->style.bottomPercent == b->style.bottomPercent) { out.bottom = lerp(a->style.bottom, b->style.bottom); out.bottomSet = true; out.bottomPercent = a->style.bottomPercent; }
+        if (a->style.leftSet && b->style.leftSet && a->style.leftPercent == b->style.leftPercent) { out.left = lerp(a->style.left, b->style.left); out.leftSet = true; out.leftPercent = a->style.leftPercent; }
+        if (a->style.flexGrowSet && b->style.flexGrowSet) { out.flexGrow = lerp(a->style.flexGrow, b->style.flexGrow); out.flexGrowSet = true; }
+        if (a->style.flexShrinkSet && b->style.flexShrinkSet) { out.flexShrink = lerp(a->style.flexShrink, b->style.flexShrink); out.flexShrinkSet = true; }
+        if (a->style.flexBasisSet && b->style.flexBasisSet) { out.flexBasis = lerp(a->style.flexBasis, b->style.flexBasis); out.flexBasisSet = true; }
+        if (a->style.flexGap >= 0 && b->style.flexGap >= 0) lerpSet(out.flexGap, a->style.flexGap, b->style.flexGap);
+        if (a->style.flexRowGap >= 0 && b->style.flexRowGap >= 0) lerpSet(out.flexRowGap, a->style.flexRowGap, b->style.flexRowGap);
+        if (a->style.flexColumnGap >= 0 && b->style.flexColumnGap >= 0) lerpSet(out.flexColumnGap, a->style.flexColumnGap, b->style.flexColumnGap);
+        if (a->style.gridGap >= 0 && b->style.gridGap >= 0) lerpSet(out.gridGap, a->style.gridGap, b->style.gridGap);
+        if (a->style.gridRowGap >= 0 && b->style.gridRowGap >= 0) lerpSet(out.gridRowGap, a->style.gridRowGap, b->style.gridRowGap);
+        if (a->style.gridColumnGap >= 0 && b->style.gridColumnGap >= 0) lerpSet(out.gridColumnGap, a->style.gridColumnGap, b->style.gridColumnGap);
         if (a->style.bgColor.valid && b->style.bgColor.valid) { out.bgColor = lerpColor(a->style.bgColor, b->style.bgColor); out.bgColorSet = true; }
         if (a->style.color.valid && b->style.color.valid) out.color = lerpColor(a->style.color, b->style.color);
         if (a->style.borderColor.valid && b->style.borderColor.valid) out.borderColor = lerpColor(a->style.borderColor, b->style.borderColor);
@@ -205,6 +244,43 @@ private:
     // (used for delay/fill-mode edge cases where there's no pair to blend).
     static void applyStop(const ComputedStyle& stop, ComputedStyle& style) {
         if (stop.opacitySet) { style.opacity = stop.opacity; style.opacitySet = true; }
+        if (stop.fontSize > 0) style.fontSize = stop.fontSize;
+        if (stop.lineHeight > 0) style.lineHeight = stop.lineHeight;
+        if (stop.letterSpacingSet) { style.letterSpacing = stop.letterSpacing; style.letterSpacingSet = true; }
+        if (stop.marginTopSet()) style.marginTop = stop.marginTop;
+        if (stop.marginRightSet()) style.marginRight = stop.marginRight;
+        if (stop.marginBottomSet()) style.marginBottom = stop.marginBottom;
+        if (stop.marginLeftSet()) style.marginLeft = stop.marginLeft;
+        if (stop.paddingTop >= 0) style.paddingTop = stop.paddingTop;
+        if (stop.paddingRight >= 0) style.paddingRight = stop.paddingRight;
+        if (stop.paddingBottom >= 0) style.paddingBottom = stop.paddingBottom;
+        if (stop.paddingLeft >= 0) style.paddingLeft = stop.paddingLeft;
+        if (stop.borderWidth >= 0) style.borderWidth = stop.borderWidth;
+        if (stop.borderTopWidth >= 0) style.borderTopWidth = stop.borderTopWidth;
+        if (stop.borderRightWidth >= 0) style.borderRightWidth = stop.borderRightWidth;
+        if (stop.borderBottomWidth >= 0) style.borderBottomWidth = stop.borderBottomWidth;
+        if (stop.borderLeftWidth >= 0) style.borderLeftWidth = stop.borderLeftWidth;
+        if (stop.width >= 0) style.width = stop.width;
+        if (stop.widthPercent >= 0) style.widthPercent = stop.widthPercent;
+        if (stop.height >= 0) style.height = stop.height;
+        if (stop.heightPercent >= 0) style.heightPercent = stop.heightPercent;
+        if (stop.minWidth >= 0) style.minWidth = stop.minWidth;
+        if (stop.maxWidth >= 0) style.maxWidth = stop.maxWidth;
+        if (stop.minHeight >= 0) style.minHeight = stop.minHeight;
+        if (stop.maxHeight >= 0) style.maxHeight = stop.maxHeight;
+        if (stop.topSet) { style.top = stop.top; style.topSet = true; style.topPercent = stop.topPercent; }
+        if (stop.rightSet) { style.right = stop.right; style.rightSet = true; style.rightPercent = stop.rightPercent; }
+        if (stop.bottomSet) { style.bottom = stop.bottom; style.bottomSet = true; style.bottomPercent = stop.bottomPercent; }
+        if (stop.leftSet) { style.left = stop.left; style.leftSet = true; style.leftPercent = stop.leftPercent; }
+        if (stop.flexGrowSet) { style.flexGrow = stop.flexGrow; style.flexGrowSet = true; }
+        if (stop.flexShrinkSet) { style.flexShrink = stop.flexShrink; style.flexShrinkSet = true; }
+        if (stop.flexBasisSet) { style.flexBasis = stop.flexBasis; style.flexBasisSet = true; }
+        if (stop.flexGap >= 0) style.flexGap = stop.flexGap;
+        if (stop.flexRowGap >= 0) style.flexRowGap = stop.flexRowGap;
+        if (stop.flexColumnGap >= 0) style.flexColumnGap = stop.flexColumnGap;
+        if (stop.gridGap >= 0) style.gridGap = stop.gridGap;
+        if (stop.gridRowGap >= 0) style.gridRowGap = stop.gridRowGap;
+        if (stop.gridColumnGap >= 0) style.gridColumnGap = stop.gridColumnGap;
         if (stop.bgColor.valid) { style.bgColor = stop.bgColor; style.bgColorSet = true; }
         if (stop.color.valid) style.color = stop.color;
         if (stop.borderColor.valid) style.borderColor = stop.borderColor;

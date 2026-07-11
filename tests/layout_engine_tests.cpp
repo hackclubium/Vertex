@@ -5,6 +5,7 @@
 #include "layout/layout_engine.h"
 #include "platform/browser_core.h"
 #include "platform/form_state.h"
+#include "render/animation.h"
 
 #include <sstream>
 
@@ -107,6 +108,33 @@ TestResult RunLayoutEngineTests() {
             actual,
             "wrapW=720 wrapX=140 markDisplay=1 linksDisplay=0\n",
             result);
+    }
+
+    {
+        AnimationManager::instance().clear();
+        auto animDom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
+        auto animSheet = ParseStylesheet(
+            "@keyframes grow-box { from { width: 40px; height: 20px; margin-left: 6px; } to { width: 120px; height: 60px; margin-left: 18px; } }"
+            "#target { animation: grow-box 1s 10s backwards; width: 10px; height: 10px; }");
+        FixedMeasure animMeasure;
+        LayoutInput animInput;
+        animInput.document = animDom.get();
+        animInput.sheet = &animSheet;
+        animInput.measure = &animMeasure;
+        animInput.viewportW = 320.f;
+        animInput.viewportH = 200.f;
+        auto animLayout = LayoutDocument(animInput);
+        auto* target = FindEngineBoxById(animLayout.get(), "target");
+        std::string actual = target
+            ? "w=" + std::to_string((int)(target->contentW + 0.5f))
+                + " h=" + std::to_string((int)(target->contentH + 0.5f))
+                + " x=" + std::to_string((int)(target->x + 0.5f)) + "\n"
+            : "missing\n";
+        ExpectEqual("layout-engine/css-animation-affects-layout",
+            actual,
+            "w=40 h=20 x=14\n",
+            result);
+        AnimationManager::instance().clear();
     }
 
     {

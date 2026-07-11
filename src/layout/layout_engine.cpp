@@ -1,4 +1,5 @@
 #include "layout/layout_engine.h"
+#include "render/animation.h"
 #include "network/url.h"
 
 #include <algorithm>
@@ -352,6 +353,10 @@ void BuildChildren(const Node* node, const ComputedStyle& style, const BuildCtx&
             InheritInto(childStyle, style);
             ApplyUaDefaults(child->tagName, childStyle);
             ResolveStyleVariables(childStyle);
+            if (bc.sheet && childStyle.animationSet) {
+                AnimationManager::instance().ensureStarted(child.get(), childStyle, *bc.sheet);
+                AnimationManager::instance().applyAnimation(child.get(), childStyle);
+            }
 
             std::string childHref = href;
             if (child->tagName == "a") {
@@ -525,6 +530,10 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
         InheritInto(s, parentStyle);
         ApplyUaDefaults(tag, s);
         ResolveStyleVariables(s);
+        if (bc.sheet && s.animationSet) {
+            AnimationManager::instance().ensureStarted(node, s, *bc.sheet);
+            AnimationManager::instance().applyAnimation(node, s);
+        }
     }
     if (s.isDisplayNone()) return nullptr;
 
