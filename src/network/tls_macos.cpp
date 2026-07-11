@@ -59,10 +59,8 @@ struct TlsConnection::Impl {
 TlsConnection::TlsConnection() : impl_(new Impl()) {}
 TlsConnection::~TlsConnection() { Close(); delete impl_; }
 
-bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+bool TlsConnection::Handshake(const std::string& host, int timeoutMs) {
     Impl& im = *impl_;
-    if (!im.sock.Connect(host, port, timeoutMs)) return false;
-
     im.ctx = SSLCreateContext(kCFAllocatorDefault, kSSLClientSide, kSSLStreamType);
     if (!im.ctx) return false;
 
@@ -83,6 +81,20 @@ bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
 
     im.handshakeDone = true;
     return true;
+}
+
+bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+    Impl& im = *impl_;
+    if (!im.sock.Connect(host, port, timeoutMs)) return false;
+    return Handshake(host, timeoutMs);
+}
+
+bool TlsConnection::ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                                  const std::string& targetHost, int targetPort,
+                                  int timeoutMs) {
+    Impl& im = *impl_;
+    if (!im.sock.ConnectSocks5(proxyHost, proxyPort, targetHost, targetPort, timeoutMs)) return false;
+    return Handshake(targetHost, timeoutMs);
 }
 
 bool TlsConnection::SendAll(const char* data, size_t len) {

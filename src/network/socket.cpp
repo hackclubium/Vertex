@@ -108,6 +108,64 @@ bool TcpSocket::Connect(const std::string& host, int port, int timeoutMs) {
     return connected;
 }
 
+bool TcpSocket::ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                              const std::string& targetHost, int targetPort,
+                              int timeoutMs) {
+    if (targetHost.empty() || targetHost.size() > 255 || targetPort <= 0 || targetPort > 65535)
+        return false;
+    if (!Connect(proxyHost, proxyPort, timeoutMs)) return false;
+
+    auto recvExact = [&](char* out, size_t len) -> bool {
+        size_t got = 0;
+        while (got < len) {
+            int n = Recv(out + got, len - got, timeoutMs);
+            if (n <= 0) return false;
+            got += (size_t)n;
+        }
+        return true;
+    };
+
+    const char hello[] = { 0x05, 0x01, 0x00 };
+    if (!SendAll(hello, sizeof(hello))) { Close(); return false; }
+    char helloReply[2] = {};
+    if (!recvExact(helloReply, sizeof(helloReply)) || helloReply[0] != 0x05 || helloReply[1] != 0x00) {
+        Close();
+        return false;
+    }
+
+    std::string req;
+    req.reserve(7 + targetHost.size());
+    req.push_back(0x05);
+    req.push_back(0x01);
+    req.push_back(0x00);
+    req.push_back(0x03);
+    req.push_back((char)targetHost.size());
+    req += targetHost;
+    req.push_back((char)((targetPort >> 8) & 0xff));
+    req.push_back((char)(targetPort & 0xff));
+    if (!SendAll(req.data(), req.size())) { Close(); return false; }
+
+    char head[4] = {};
+    if (!recvExact(head, sizeof(head)) || head[0] != 0x05 || head[1] != 0x00) {
+        Close();
+        return false;
+    }
+    size_t addrLen = 0;
+    if (head[3] == 0x01) addrLen = 4;
+    else if (head[3] == 0x04) addrLen = 16;
+    else if (head[3] == 0x03) {
+        char len = 0;
+        if (!recvExact(&len, 1)) { Close(); return false; }
+        addrLen = (unsigned char)len;
+    } else {
+        Close();
+        return false;
+    }
+    std::string discard(addrLen + 2, '\0');
+    if (!recvExact(discard.data(), discard.size())) { Close(); return false; }
+    return true;
+}
+
 bool TcpSocket::SendAll(const char* data, size_t len) {
     if (fd_ == -1) return false;
     size_t sent = 0;
@@ -152,4 +210,10 @@ void TcpSocket::Close() {
 #endif
         fd_ = -1;
     }
+}
+
+intptr_t TcpSocket::Detach() {
+    intptr_t fd = fd_;
+    fd_ = -1;
+    return fd;
 }

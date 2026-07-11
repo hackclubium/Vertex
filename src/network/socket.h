@@ -21,6 +21,9 @@ public:
     // Resolves `host` and connects to `port`. Returns false on DNS failure,
     // connection refused, or timeout.
     bool Connect(const std::string& host, int port, int timeoutMs = 15000);
+    bool ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                       const std::string& targetHost, int targetPort,
+                       int timeoutMs = 15000);
 
     // Sends all of `len` bytes, looping internally as needed. Returns false
     // on any send error.
@@ -32,6 +35,8 @@ public:
 
     void Close();
     bool IsValid() const { return fd_ != -1; }
+    intptr_t NativeHandle() const { return fd_; }
+    intptr_t Detach();
 
 private:
     intptr_t fd_ = -1; // SOCKET (Windows, unsigned pointer-sized) or int (POSIX), both fit in intptr_t

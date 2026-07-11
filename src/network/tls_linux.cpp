@@ -1,5 +1,6 @@
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "network/tls_socket.h"
+#include "network/socket.h"
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -67,7 +68,7 @@ struct TlsConnection::Impl {
 TlsConnection::TlsConnection() : impl_(new Impl()) {}
 TlsConnection::~TlsConnection() { Close(); delete impl_; }
 
-bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+bool TlsConnection::Handshake(const std::string& host, int timeoutMs) {
     Impl& im = *impl_;
 
     // Reseeding a fresh DRBG per connection (rather than sharing one, mutex-
@@ -93,10 +94,6 @@ bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
     if (mbedtls_ssl_setup(&im.sslCtx, &im.sslConf) != 0) return false;
     if (mbedtls_ssl_set_hostname(&im.sslCtx, host.c_str()) != 0) return false; // SNI + hostname verification
 
-    std::string portStr = std::to_string(port);
-    if (mbedtls_net_connect(&im.netCtx, host.c_str(), portStr.c_str(), MBEDTLS_NET_PROTO_TCP) != 0)
-        return false;
-
     // f_recv left null in favor of f_recv_timeout — the documented mbedTLS
     // pattern for giving reads a bounded timeout instead of blocking forever.
     mbedtls_ssl_set_bio(&im.sslCtx, &im.netCtx, mbedtls_net_send, nullptr, mbedtls_net_recv_timeout);
@@ -111,6 +108,24 @@ bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
 
     im.handshakeDone = true;
     return true;
+}
+
+bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+    Impl& im = *impl_;
+    std::string portStr = std::to_string(port);
+    if (mbedtls_net_connect(&im.netCtx, host.c_str(), portStr.c_str(), MBEDTLS_NET_PROTO_TCP) != 0)
+        return false;
+    return Handshake(host, timeoutMs);
+}
+
+bool TlsConnection::ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                                  const std::string& targetHost, int targetPort,
+                                  int timeoutMs) {
+    Impl& im = *impl_;
+    TcpSocket sock;
+    if (!sock.ConnectSocks5(proxyHost, proxyPort, targetHost, targetPort, timeoutMs)) return false;
+    im.netCtx.fd = (int)sock.Detach();
+    return Handshake(targetHost, timeoutMs);
 }
 
 bool TlsConnection::SendAll(const char* data, size_t len) {

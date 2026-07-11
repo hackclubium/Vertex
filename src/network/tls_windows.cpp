@@ -38,10 +38,8 @@ struct TlsConnection::Impl {
 TlsConnection::TlsConnection() : impl_(new Impl()) {}
 TlsConnection::~TlsConnection() { Close(); delete impl_; }
 
-bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+bool TlsConnection::Handshake(const std::string& host, int timeoutMs) {
     Impl& im = *impl_;
-    if (!im.sock.Connect(host, port, timeoutMs)) return false;
-
     SCHANNEL_CRED cred = {};
     cred.dwVersion = SCHANNEL_CRED_VERSION;
     cred.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_USE_STRONG_CRYPTO;
@@ -132,6 +130,20 @@ bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
 
     im.handshakeDone = true;
     return true;
+}
+
+bool TlsConnection::Connect(const std::string& host, int port, int timeoutMs) {
+    Impl& im = *impl_;
+    if (!im.sock.Connect(host, port, timeoutMs)) return false;
+    return Handshake(host, timeoutMs);
+}
+
+bool TlsConnection::ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                                  const std::string& targetHost, int targetPort,
+                                  int timeoutMs) {
+    Impl& im = *impl_;
+    if (!im.sock.ConnectSocks5(proxyHost, proxyPort, targetHost, targetPort, timeoutMs)) return false;
+    return Handshake(targetHost, timeoutMs);
 }
 
 bool TlsConnection::SendAll(const char* data, size_t len) {

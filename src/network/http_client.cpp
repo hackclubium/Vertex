@@ -6,6 +6,7 @@
 #include "codec/inflate.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <set>
 
 namespace {
@@ -72,6 +73,24 @@ std::string Trim(const std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
     size_t end = s.find_last_not_of(" \t\r\n");
     return start == std::string::npos ? "" : s.substr(start, end - start + 1);
+}
+
+bool EndsWithOnion(const std::string& host) {
+    std::string lower = ToLower(host);
+    return lower.size() > 6 && lower.compare(lower.size() - 6, 6, ".onion") == 0;
+}
+
+void TorProxy(std::string& host, int& port) {
+    host = "127.0.0.1";
+    port = 9050;
+    const char* env = std::getenv("VERTEX_TOR_SOCKS");
+    if (!env || !*env) return;
+    std::string value = env;
+    size_t colon = value.rfind(':');
+    if (colon == std::string::npos) { host = value; return; }
+    host = value.substr(0, colon);
+    try { port = std::stoi(value.substr(colon + 1)); } catch (...) { port = 9050; }
+    if (host.empty()) host = "127.0.0.1";
 }
 
 struct HeaderLine { std::string name, value; };
@@ -265,13 +284,24 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
         std::string outBody;
         std::vector<HeaderLine> headers;
         bool ok;
+        const bool onion = EndsWithOnion(parsed.host);
         if (parsed.secure) {
             TlsConnection tls;
-            if (!tls.Connect(parsed.host, parsed.port)) { r.error = "TLS connection failed"; return r; }
+            if (onion) {
+                std::string proxyHost;
+                int proxyPort = 0;
+                TorProxy(proxyHost, proxyPort);
+                if (!tls.ConnectSocks5(proxyHost, proxyPort, parsed.host, parsed.port)) { r.error = "Tor SOCKS5 TLS connection failed"; return r; }
+            } else if (!tls.Connect(parsed.host, parsed.port)) { r.error = "TLS connection failed"; return r; }
             ok = PerformRequest(tls, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
         } else {
             TcpSocket sock;
-            if (!sock.Connect(parsed.host, parsed.port)) { r.error = "Connection failed"; return r; }
+            if (onion) {
+                std::string proxyHost;
+                int proxyPort = 0;
+                TorProxy(proxyHost, proxyPort);
+                if (!sock.ConnectSocks5(proxyHost, proxyPort, parsed.host, parsed.port)) { r.error = "Tor SOCKS5 connection failed"; return r; }
+            } else if (!sock.Connect(parsed.host, parsed.port)) { r.error = "Connection failed"; return r; }
             ok = PerformRequest(sock, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
         }
         if (!ok) return r;

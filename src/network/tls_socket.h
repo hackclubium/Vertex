@@ -29,6 +29,9 @@ public:
     // OS (or, on Linux, mbedTLS's bundled) trust store and checking the
     // hostname matches. Returns false on any failure at any stage.
     bool Connect(const std::string& host, int port, int timeoutMs = 15000);
+    bool ConnectSocks5(const std::string& proxyHost, int proxyPort,
+                       const std::string& targetHost, int targetPort,
+                       int timeoutMs = 15000);
 
     bool SendAll(const char* data, size_t len);
 
@@ -41,5 +44,6 @@ public:
 
 private:
     struct Impl;
+    bool Handshake(const std::string& host, int timeoutMs);
     Impl* impl_ = nullptr;
 };
