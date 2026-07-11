@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-arti-client = { version = "0.25", default-features = true }
+arti-client = { version = "0.25", default-features = true, features = ["onion-service-client"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time"] }
 tokio-rustls = "0.26"
 rustls = "0.23"
