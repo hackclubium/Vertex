@@ -1,10 +1,12 @@
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "comdlg32.lib")
 
 #include "network/resource_cache.h"
 #include "network/websocket.h"
@@ -38,6 +40,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <ctime>
+#include <cmath>
 
 static Semaphore g_imageFetchGate(6);
 
@@ -48,6 +51,12 @@ enum : int { IDC_BACK = 101, IDC_FWRD, IDC_REFR, IDC_STOP, IDC_HOME, IDC_URL, ID
 constexpr UINT WM_PAGE_READY  = WM_USER + 1;
 constexpr UINT WM_IMAGE_READY = WM_USER + 2;
 constexpr UINT WM_NEWTAB_NAVIGATE = WM_USER + 3;
+constexpr UINT WM_GAMEPAD_POLL = WM_USER + 4;
+constexpr UINT WM_PIP_CLOSED = WM_USER + 5;
+constexpr UINT_PTR TIMER_MAIN = 1;
+constexpr UINT_PTR TIMER_FULLSCREEN_CURSOR = 2;
+constexpr UINT_PTR TIMER_GAMEPAD = 3;
+constexpr UINT_PTR TIMER_MEDIA_SESSION = 4;
 
 // ─── globals ─────────────────────────────────────────────────────────────────
 static HWND     g_hwnd;
@@ -60,6 +69,162 @@ static Renderer g_renderer;
 const Node* g_hoverNode = nullptr;
 std::map<const Node*, float> g_elementScrollY;
 static std::vector<ScrollableRegion> g_scrollables;
+static bool g_windowFullscreen = false;
+static LONG_PTR g_fullscreenStyle = 0;
+static LONG_PTR g_fullscreenExStyle = 0;
+static WINDOWPLACEMENT g_fullscreenPlacement{ sizeof(g_fullscreenPlacement) };
+static int g_fullscreenTab = -1;
+static Node* g_fullscreenElement = nullptr;
+static HWND g_fullscreenRestoreFocus = nullptr;
+static bool g_fullscreenMouseHidden = false;
+static bool g_pointerLocked = false;
+static Node* g_pointerLockElement = nullptr;
+static POINT g_pointerLockCenter{};
+static bool g_pointerLockWarping = false;
+static HWND g_pointerLockRestoreFocus = nullptr;
+static bool g_pipActive = false;
+static HWND g_pipHwnd = nullptr;
+static Node* g_pipSourceElement = nullptr;
+static RECT g_pipRect{ 80, 80, 480, 350 };
+static bool g_modalDialogActive = false;
+static Node* g_modalDialog = nullptr;
+static std::vector<Node*> g_topLayerNodes;
+static Node* g_activePopover = nullptr;
+static bool g_dragActive = false;
+static std::vector<std::string> g_dragFiles;
+static std::string g_lastClipboardHtml;
+static std::vector<uint8_t> g_lastClipboardImage;
+static bool g_gamepadConnected[4] = {};
+static DWORD g_gamepadPacket[4] = {};
+static HMODULE g_xinputModule = nullptr;
+static std::string g_mediaSessionAction;
+static bool g_notificationPermissionGranted = true;
+static UINT g_nextNotificationId = 1;
+static std::map<UINT, std::string> g_notifications;
+
+struct PlatformEventRecord {
+    std::string type;
+    std::string detail;
+    long long tick = 0;
+};
+
+struct GamepadSnapshot {
+    bool connected = false;
+    DWORD packet = 0;
+    WORD buttons = 0;
+    BYTE leftTrigger = 0;
+    BYTE rightTrigger = 0;
+    SHORT leftX = 0;
+    SHORT leftY = 0;
+    SHORT rightX = 0;
+    SHORT rightY = 0;
+};
+
+struct NotificationRecord {
+    UINT id = 0;
+    std::string title;
+    std::string body;
+    bool shown = false;
+    bool clicked = false;
+    bool closed = false;
+};
+
+struct DragPayload {
+    std::vector<std::string> files;
+    POINT screenPoint{};
+    POINT clientPoint{};
+    bool hasFiles = false;
+};
+
+struct PermissionStateRecord {
+    std::string name;
+    std::string state;
+    long long updated = 0;
+};
+
+struct SharePayload {
+    std::string title;
+    std::string text;
+    std::string url;
+    std::vector<std::string> files;
+};
+
+struct ScreenDetailsRecord {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    int workWidth = 0;
+    int workHeight = 0;
+    int dpi = 96;
+    bool primary = true;
+};
+
+struct GeoPositionRecord {
+    double latitude = 0.0;
+    double longitude = 0.0;
+    double accuracy = 0.0;
+    long long timestamp = 0;
+};
+
+struct BatteryRecord {
+    double level = 1.0;
+    bool charging = true;
+    int chargingTime = 0;
+    int dischargingTime = 0;
+};
+
+struct SensorRecord {
+    std::string type;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    long long timestamp = 0;
+    bool active = false;
+};
+
+struct ExternalDeviceRecord {
+    std::string kind;
+    std::string name;
+    std::string id;
+    bool open = false;
+};
+
+struct ContactRecord {
+    std::string name;
+    std::string email;
+    std::string tel;
+};
+
+static std::deque<PlatformEventRecord> g_platformEvents;
+static GamepadSnapshot g_gamepads[4];
+static std::map<UINT, NotificationRecord> g_notificationRecords;
+static DragPayload g_dragPayload;
+static std::string g_lastPickedFileList;
+static std::string g_pointerLockLastDelta;
+static std::map<std::string, PermissionStateRecord> g_permissions;
+static SharePayload g_lastSharePayload;
+static std::string g_lastSavedFile;
+static int g_appBadge = 0;
+static bool g_wakeLockActive = false;
+static bool g_screenWakeLockActive = false;
+static bool g_launchQueuePending = false;
+static std::vector<std::string> g_launchQueueFiles;
+static std::vector<ScreenDetailsRecord> g_screenDetails;
+static std::map<std::string, std::string> g_protocolHandlers;
+static std::vector<std::string> g_fileHandlers;
+static GeoPositionRecord g_geoPosition{ 37.7749, -122.4194, 65.0, 0 };
+static BatteryRecord g_battery;
+static bool g_idleDetectorActive = false;
+static bool g_userIdle = false;
+static bool g_screenLocked = false;
+static DWORD g_lastInputTick = 0;
+static std::map<std::string, SensorRecord> g_sensors;
+static std::vector<ExternalDeviceRecord> g_externalDevices;
+static std::vector<ContactRecord> g_contacts;
+static unsigned long long g_storageUsageBytes = 0;
+static unsigned long long g_storageQuotaBytes = 512ull * 1024ull * 1024ull;
+static std::vector<int> g_vibrationPattern;
 
 // BrowserChrome owns tabs, form state, JS engine, updater.
 static BrowserChrome g_chrome;
@@ -248,6 +413,9 @@ static std::string AppPageCss() {
            "code{background:#fff;padding:2px 5px;border:1px solid #ded6c8}";
 }
 
+static std::string JoinStrings(const std::vector<std::string>& values, const std::string& sep);
+static std::string NodeLabel(Node* node);
+
 static void AppendHistoryRecord(const std::string& url, const std::string& title = "") {
     if (url.empty() || url.rfind("vertex://", 0) == 0 || url.rfind("felix://", 0) == 0)
         return;
@@ -332,7 +500,8 @@ static std::string SettingsPageHtml() {
         "<div class=\"meta\"><a href=\"vertex://history\">History</a> · "
         "<a href=\"vertex://bookmarks\">Bookmarks</a> · "
         "<a href=\"vertex://downloads\">Downloads</a> · "
-        "<a href=\"vertex://site-data\">Site data</a></div></div>"
+        "<a href=\"vertex://site-data\">Site data</a> · "
+        "<a href=\"vertex://platform-features\">Platform features</a></div></div>"
         "<div class=\"item\"><div class=\"name\">Current defaults</div>"
         "<div class=\"meta\">JavaScript on · Images on · Cache on · Search engine Bing</div></div>"
         "</main></body></html>";
@@ -358,6 +527,62 @@ static std::string SiteDataPageHtml() {
         "<div class=\"item\"><div class=\"name\">Cookies</div><div class=\"meta\"><code>"
         + HtmlEscape(g_profilePaths.cookiesFile) + "</code></div></div>"
         "</main></body></html>";
+    return html;
+}
+
+static std::string PlatformFeaturesPageHtml() {
+    std::string html = "<html><head><title>Platform Features</title><style>" + AppPageCss()
+        + "</style></head><body><main><h1>Platform Features</h1>";
+    auto item = [&](const std::string& name, const std::string& value) {
+        html += "<div class=\"item\"><div class=\"name\">" + HtmlEscape(name)
+            + "</div><div class=\"meta\">" + HtmlEscape(value) + "</div></div>";
+    };
+    item("Fullscreen", g_windowFullscreen ? "active" : "inactive");
+    item("Pointer lock", g_pointerLocked ? g_pointerLockLastDelta : "inactive");
+    item("Picture in Picture", g_pipActive ? NodeLabel(g_pipSourceElement) : "inactive");
+    item("Modal dialog", g_modalDialogActive ? NodeLabel(g_modalDialog) : "inactive");
+    item("Popover", g_activePopover ? NodeLabel(g_activePopover) : "inactive");
+    item("Drag files", g_dragPayload.hasFiles ? JoinStrings(g_dragPayload.files, " | ") : "none");
+    item("Clipboard HTML", g_lastClipboardHtml.empty() ? "empty" : std::to_string(g_lastClipboardHtml.size()) + " bytes");
+    item("Clipboard image", g_lastClipboardImage.empty() ? "empty" : std::to_string(g_lastClipboardImage.size()) + " bytes");
+    item("File picker", g_lastPickedFileList.empty() ? "none" : g_lastPickedFileList);
+    item("Media session", g_mediaSessionAction.empty() ? "none" : g_mediaSessionAction);
+    item("Notifications", std::to_string(g_notificationRecords.size()));
+    item("Permissions", std::to_string(g_permissions.size()));
+    item("Share", g_lastSharePayload.title.empty() ? "none" : g_lastSharePayload.title);
+    item("Saved file", g_lastSavedFile.empty() ? "none" : g_lastSavedFile);
+    item("App badge", std::to_string(g_appBadge));
+    item("Wake lock", g_wakeLockActive ? (g_screenWakeLockActive ? "screen" : "system") : "none");
+    item("Launch queue", g_launchQueuePending ? JoinStrings(g_launchQueueFiles, " | ") : "empty");
+    item("Screens", std::to_string(g_screenDetails.size()));
+    item("Protocol handlers", std::to_string(g_protocolHandlers.size()));
+    item("File handlers", JoinStrings(g_fileHandlers, " | "));
+    item("Geolocation", std::to_string(g_geoPosition.latitude) + ", " + std::to_string(g_geoPosition.longitude));
+    item("Battery", std::to_string((int)(g_battery.level * 100)) + "% " + (g_battery.charging ? "charging" : "discharging"));
+    item("Idle detector", g_idleDetectorActive ? (g_userIdle ? "idle" : "active") : "inactive");
+    item("Screen lock", g_screenLocked ? "locked" : "unlocked");
+    item("Storage", std::to_string(g_storageUsageBytes) + " / " + std::to_string(g_storageQuotaBytes));
+    item("Contacts", std::to_string(g_contacts.size()));
+    item("External devices", std::to_string(g_externalDevices.size()));
+    item("Vibration", std::to_string(g_vibrationPattern.size()) + " segment(s)");
+    for (const auto& [type, sensor] : g_sensors)
+        item("Sensor " + type, std::to_string(sensor.x) + ", " + std::to_string(sensor.y) + ", " + std::to_string(sensor.z));
+    for (const auto& dev : g_externalDevices)
+        item("Device " + dev.kind, dev.name + " " + (dev.open ? "open" : "closed"));
+    for (const auto& [name, perm] : g_permissions)
+        item("Permission " + name, perm.state);
+    for (const auto& [scheme, url] : g_protocolHandlers)
+        item("Protocol " + scheme, url);
+    for (int i = 0; i < 4; ++i) {
+        item("Gamepad " + std::to_string(i), g_gamepads[i].connected
+            ? ("buttons=" + std::to_string(g_gamepads[i].buttons) + " packet=" + std::to_string(g_gamepads[i].packet))
+            : "disconnected");
+    }
+    size_t start = g_platformEvents.size() > 20 ? g_platformEvents.size() - 20 : 0;
+    for (size_t i = start; i < g_platformEvents.size(); ++i) {
+        item("Event " + std::to_string(i), g_platformEvents[i].type + " " + g_platformEvents[i].detail);
+    }
+    html += "</main></body></html>";
     return html;
 }
 
@@ -419,16 +644,822 @@ static void UpdateTitle() {
     SetWindowTextW(g_hwnd, (t + L" \x2014 Vertex").c_str());
 }
 
+static void LayoutControls();
+
 static bool AnyTabLoading() {
     for (const auto& tab : g_tabs)
         if (tab.loading) return true;
     return false;
 }
 
+static int ChromeTopInset() {
+    return g_windowFullscreen ? 0 : TOP_INSET;
+}
+
+static int ChromeBottomInset() {
+    return g_windowFullscreen ? 0 : STATUS_H + (g_findVisible ? FIND_H : 0);
+}
+
+static void UpdateFullscreenChromeVisibility() {
+    const int show = g_windowFullscreen ? SW_HIDE : SW_SHOW;
+    ShowWindow(g_hwndBack, show);
+    ShowWindow(g_hwndFwrd, show);
+    ShowWindow(g_hwndRefr, show);
+    ShowWindow(g_hwndStop, show);
+    ShowWindow(g_hwndHome, show);
+    ShowWindow(g_hwndUrlBadge, show);
+    ShowWindow(g_hwndUrl, show);
+    ShowWindow(g_hwndStatus, show);
+    ShowWindow(g_hwndFind, (!g_windowFullscreen && g_findVisible) ? SW_SHOW : SW_HIDE);
+}
+
+static void NotifyFullscreenChanged() {
+    try {
+        g_js.dispatchDocumentEvent("fullscreenchange");
+    } catch (...) {
+        OutputDebugStringA("[Fullscreen] fullscreenchange dispatch failed\n");
+    }
+}
+
+static MONITORINFO MonitorInfoForWindow(HWND hwnd) {
+    MONITORINFO mi{ sizeof(mi) };
+    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    GetMonitorInfoW(mon, &mi);
+    return mi;
+}
+
+static void ShowFullscreenCursor(bool show) {
+    if (show == !g_fullscreenMouseHidden) return;
+    ShowCursor(show ? TRUE : FALSE);
+    g_fullscreenMouseHidden = !show;
+}
+
+static void ArmFullscreenCursorTimer() {
+    if (!g_windowFullscreen) return;
+    ShowFullscreenCursor(true);
+    SetTimer(g_hwnd, TIMER_FULLSCREEN_CURSOR, 1800, NULL);
+}
+
+static void FitFullscreenToCurrentMonitor() {
+    if (!g_hwnd || !g_windowFullscreen) return;
+    MONITORINFO mi = MonitorInfoForWindow(g_hwnd);
+    SetWindowPos(g_hwnd, HWND_TOP,
+        mi.rcMonitor.left, mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left,
+        mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+static void ExitWindowFullscreen(bool dispatchEvent = true) {
+    if (!g_hwnd || !g_windowFullscreen) return;
+
+    g_windowFullscreen = false;
+    g_fullscreenTab = -1;
+    g_fullscreenElement = nullptr;
+    KillTimer(g_hwnd, TIMER_FULLSCREEN_CURSOR);
+    ShowFullscreenCursor(true);
+
+    SetWindowLongPtrW(g_hwnd, GWL_STYLE, g_fullscreenStyle);
+    SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, g_fullscreenExStyle);
+    SetWindowPlacement(g_hwnd, &g_fullscreenPlacement);
+    SetWindowPos(g_hwnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+
+    UpdateFullscreenChromeVisibility();
+    LayoutControls();
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+    if (g_fullscreenRestoreFocus && IsWindow(g_fullscreenRestoreFocus))
+        SetFocus(g_fullscreenRestoreFocus);
+    g_fullscreenRestoreFocus = nullptr;
+    if (dispatchEvent) NotifyFullscreenChanged();
+}
+
+static void EnterWindowFullscreen(Node* element) {
+    if (!g_hwnd) return;
+    if (g_windowFullscreen) {
+        g_fullscreenElement = element;
+        g_fullscreenTab = g_activeTab;
+        FitFullscreenToCurrentMonitor();
+        NotifyFullscreenChanged();
+        return;
+    }
+
+    g_fullscreenRestoreFocus = GetFocus();
+    g_fullscreenStyle = GetWindowLongPtrW(g_hwnd, GWL_STYLE);
+    g_fullscreenExStyle = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
+    g_fullscreenPlacement = WINDOWPLACEMENT{ sizeof(g_fullscreenPlacement) };
+    GetWindowPlacement(g_hwnd, &g_fullscreenPlacement);
+
+    MONITORINFO mi = MonitorInfoForWindow(g_hwnd);
+    g_windowFullscreen = true;
+    g_fullscreenTab = g_activeTab;
+    g_fullscreenElement = element;
+
+    LONG_PTR style = g_fullscreenStyle;
+    style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_VSCROLL);
+    LONG_PTR exStyle = g_fullscreenExStyle;
+    exStyle &= ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+    SetWindowLongPtrW(g_hwnd, GWL_STYLE, style);
+    SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, exStyle);
+    SetWindowPos(g_hwnd, HWND_TOP,
+        mi.rcMonitor.left, mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left,
+        mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+
+    UpdateFullscreenChromeVisibility();
+    LayoutControls();
+    g_renderer.InvalidateLayout();
+    ClampScroll();
+    UpdateScrollbar();
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+    SetFocus(g_hwnd);
+    ArmFullscreenCursorTimer();
+    NotifyFullscreenChanged();
+}
+
+static void ToggleWindowFullscreen() {
+    if (g_windowFullscreen) ExitWindowFullscreen();
+    else EnterWindowFullscreen(nullptr);
+}
+
+static void DispatchPlatformEvent(const std::string& name) {
+    g_platformEvents.push_back({ name, {}, (long long)GetTickCount64() });
+    while (g_platformEvents.size() > 256) g_platformEvents.pop_front();
+    try {
+        g_js.dispatchWindowEvent(name);
+    } catch (...) {
+        OutputDebugStringA(("[Platform] event failed: " + name + "\n").c_str());
+    }
+}
+
+static void DispatchPlatformEventDetail(const std::string& name, const std::string& detail) {
+    g_platformEvents.push_back({ name, detail, (long long)GetTickCount64() });
+    while (g_platformEvents.size() > 256) g_platformEvents.pop_front();
+    SetStatus(name + (detail.empty() ? "" : (": " + detail)));
+    try {
+        g_js.dispatchWindowEvent(name);
+    } catch (...) {
+        OutputDebugStringA(("[Platform] event failed: " + name + "\n").c_str());
+    }
+}
+
+static std::string JoinStrings(const std::vector<std::string>& values, const std::string& sep) {
+    std::string out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i) out += sep;
+        out += values[i];
+    }
+    return out;
+}
+
+static std::string NodeLabel(Node* node) {
+    if (!node) return "null";
+    std::string label = node->tagName.empty() ? "node" : node->tagName;
+    std::string id = node->attr("id");
+    if (!id.empty()) label += "#" + id;
+    std::string cls = node->attr("class");
+    if (!cls.empty()) label += "." + cls;
+    return label;
+}
+
+static void PushTopLayer(Node* node) {
+    if (!node) return;
+    g_topLayerNodes.erase(std::remove(g_topLayerNodes.begin(), g_topLayerNodes.end(), node), g_topLayerNodes.end());
+    g_topLayerNodes.push_back(node);
+}
+
+static void RemoveTopLayer(Node* node) {
+    g_topLayerNodes.erase(std::remove(g_topLayerNodes.begin(), g_topLayerNodes.end(), node), g_topLayerNodes.end());
+    if (g_modalDialog == node) {
+        g_modalDialog = nullptr;
+        g_modalDialogActive = false;
+    }
+    if (g_activePopover == node)
+        g_activePopover = nullptr;
+}
+
+static void ShowModalDialog(Node* dialog) {
+    if (!dialog) return;
+    g_modalDialog = dialog;
+    g_modalDialogActive = true;
+    dialog->attrs["open"] = "";
+    dialog->attrs["data-vertex-modal"] = "true";
+    PushTopLayer(dialog);
+    g_renderer.InvalidateLayout();
+    InvalidateContent();
+    DispatchPlatformEventDetail("vertexmodalchange", "open " + NodeLabel(dialog));
+}
+
+static void CloseModalDialog(Node* dialog) {
+    if (!dialog) dialog = g_modalDialog;
+    if (!dialog) return;
+    dialog->attrs.erase("open");
+    dialog->attrs.erase("data-vertex-modal");
+    RemoveTopLayer(dialog);
+    g_renderer.InvalidateLayout();
+    InvalidateContent();
+    DispatchPlatformEventDetail("close", NodeLabel(dialog));
+}
+
+static void ShowPlatformPopover(Node* popover) {
+    if (!popover) return;
+    if (g_activePopover && g_activePopover != popover)
+        g_activePopover->attrs.erase("popover-open");
+    g_activePopover = popover;
+    popover->attrs["popover-open"] = "";
+    popover->attrs["data-vertex-top-layer"] = "popover";
+    PushTopLayer(popover);
+    g_renderer.InvalidateLayout();
+    InvalidateContent();
+    DispatchPlatformEventDetail("toggle", "popover open " + NodeLabel(popover));
+}
+
+static void HidePlatformPopover(Node* popover = nullptr) {
+    if (!popover) popover = g_activePopover;
+    if (!popover) return;
+    popover->attrs.erase("popover-open");
+    popover->attrs.erase("data-vertex-top-layer");
+    RemoveTopLayer(popover);
+    g_renderer.InvalidateLayout();
+    InvalidateContent();
+    DispatchPlatformEventDetail("toggle", "popover closed " + NodeLabel(popover));
+}
+
+static void CenterPointerLockCursor() {
+    if (!g_pointerLocked || !g_hwnd) return;
+    RECT rc = ContentPaintRect();
+    POINT pt{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 };
+    ClientToScreen(g_hwnd, &pt);
+    g_pointerLockCenter = pt;
+    g_pointerLockWarping = true;
+    SetCursorPos(pt.x, pt.y);
+    g_pointerLockWarping = false;
+}
+
+static void EnterPointerLock(Node* target) {
+    if (!g_hwnd) return;
+    g_pointerLocked = true;
+    g_pointerLockElement = target;
+    g_pointerLockRestoreFocus = GetFocus();
+    SetCapture(g_hwnd);
+    ShowCursor(FALSE);
+    RECT clip = ContentPaintRect();
+    MapWindowPoints(g_hwnd, NULL, reinterpret_cast<POINT*>(&clip), 2);
+    ClipCursor(&clip);
+    CenterPointerLockCursor();
+    DispatchPlatformEventDetail("pointerlockchange", "locked " + NodeLabel(target));
+}
+
+static void ExitPointerLock(bool fireEvent = true) {
+    if (!g_pointerLocked) return;
+    g_pointerLocked = false;
+    g_pointerLockElement = nullptr;
+    ReleaseCapture();
+    ClipCursor(nullptr);
+    ShowCursor(TRUE);
+    if (g_pointerLockRestoreFocus && IsWindow(g_pointerLockRestoreFocus))
+        SetFocus(g_pointerLockRestoreFocus);
+    g_pointerLockRestoreFocus = nullptr;
+    if (fireEvent) DispatchPlatformEventDetail("pointerlockchange", "unlocked");
+}
+
+static LRESULT CALLBACK PipWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_CLOSE:
+        ShowWindow(hwnd, SW_HIDE);
+        g_pipActive = false;
+        g_pipSourceElement = nullptr;
+        PostMessageW(g_hwnd, WM_PIP_CLOSED, 0, 0);
+        return 0;
+    case WM_SIZE:
+        GetWindowRect(hwnd, &g_pipRect);
+        return 0;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        FillRect(ps.hdc, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        SetTextColor(ps.hdc, RGB(255,255,255));
+        SetBkMode(ps.hdc, TRANSPARENT);
+        DrawTextW(ps.hdc, L"Picture in Picture", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void EnsurePipWindow() {
+    if (g_pipHwnd) return;
+    HINSTANCE hi = (HINSTANCE)GetWindowLongPtrW(g_hwnd, GWLP_HINSTANCE);
+    WNDCLASSEXW wc{ sizeof(wc) };
+    wc.lpfnWndProc = PipWndProc;
+    wc.hInstance = hi;
+    wc.lpszClassName = L"VertexPipWindow";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    RegisterClassExW(&wc);
+    g_pipHwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        L"VertexPipWindow", L"Picture in Picture",
+        WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU,
+        g_pipRect.left, g_pipRect.top,
+        g_pipRect.right - g_pipRect.left,
+        g_pipRect.bottom - g_pipRect.top,
+        g_hwnd, NULL, hi, NULL);
+}
+
+static void EnterPictureInPicture(Node* source) {
+    EnsurePipWindow();
+    g_pipActive = true;
+    g_pipSourceElement = source;
+    if (source) source->attrs["data-vertex-pip"] = "true";
+    SetWindowPos(g_pipHwnd, HWND_TOPMOST,
+        g_pipRect.left, g_pipRect.top,
+        g_pipRect.right - g_pipRect.left,
+        g_pipRect.bottom - g_pipRect.top,
+        SWP_SHOWWINDOW);
+    InvalidateRect(g_pipHwnd, nullptr, TRUE);
+    DispatchPlatformEventDetail("enterpictureinpicture", NodeLabel(source));
+}
+
+static void ExitPictureInPicture() {
+    if (!g_pipActive) return;
+    g_pipActive = false;
+    if (g_pipSourceElement) g_pipSourceElement->attrs.erase("data-vertex-pip");
+    g_pipSourceElement = nullptr;
+    if (g_pipHwnd) ShowWindow(g_pipHwnd, SW_HIDE);
+    DispatchPlatformEventDetail("leavepictureinpicture", "closed");
+}
+
+static std::wstring FilePickerFilter(const std::vector<std::wstring>& filters) {
+    if (filters.empty()) return L"All Files\0*.*\0\0";
+    std::wstring out;
+    for (const auto& f : filters) {
+        out += f;
+        out.push_back(L'\0');
+        out += f;
+        out.push_back(L'\0');
+    }
+    out.push_back(L'\0');
+    return out;
+}
+
+static std::vector<std::string> ShowOpenFilePicker(bool multi, const std::vector<std::wstring>& filters = {}) {
+    std::vector<std::string> files;
+    std::vector<wchar_t> buffer(32768, L'\0');
+    std::wstring filter = FilePickerFilter(filters);
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = filter.c_str();
+    ofn.lpstrFile = buffer.data();
+    ofn.nMaxFile = (DWORD)buffer.size();
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | (multi ? OFN_ALLOWMULTISELECT : 0);
+    if (!GetOpenFileNameW(&ofn)) return files;
+    wchar_t* p = buffer.data();
+    std::wstring first = p;
+    p += first.size() + 1;
+    if (!multi || *p == L'\0') {
+        files.push_back(ToUtf8(first));
+        g_lastPickedFileList = JoinStrings(files, "|");
+        DispatchPlatformEventDetail("filepickerchange", g_lastPickedFileList);
+        return files;
+    }
+    while (*p) {
+        std::wstring name = p;
+        files.push_back(ToUtf8(first + L"\\" + name));
+        p += name.size() + 1;
+    }
+    g_lastPickedFileList = JoinStrings(files, "|");
+    DispatchPlatformEventDetail("filepickerchange", g_lastPickedFileList);
+    return files;
+}
+
+static void WriteClipboardText(const std::string& text) {
+    if (!OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+    if (h) {
+        memcpy(GlobalLock(h), text.c_str(), text.size() + 1);
+        GlobalUnlock(h);
+        SetClipboardData(CF_TEXT, h);
+    }
+    CloseClipboard();
+}
+
+static std::string ReadClipboardText() {
+    std::string out;
+    if (!OpenClipboard(g_hwnd)) return out;
+    HANDLE h = GetClipboardData(CF_TEXT);
+    if (h) {
+        if (char* p = static_cast<char*>(GlobalLock(h))) {
+            out = p;
+            GlobalUnlock(h);
+        }
+    }
+    CloseClipboard();
+    return out;
+}
+
+static void WriteClipboardHtml(const std::string& html) {
+    g_lastClipboardHtml = html;
+    UINT htmlFormat = RegisterClipboardFormatW(L"HTML Format");
+    std::string prefix = "Version:0.9\r\nStartHTML:00000097\r\nEndHTML:%08u\r\nStartFragment:00000131\r\nEndFragment:%08u\r\n<html><body><!--StartFragment-->");
+    std::string suffix = "<!--EndFragment--></body></html>";
+    unsigned endFragment = (unsigned)(131 + html.size());
+    unsigned endHtml = (unsigned)(131 + html.size() + suffix.size());
+    char header[256] = {};
+    std::snprintf(header, sizeof(header), prefix.c_str(), endHtml, endFragment);
+    std::string payload = std::string(header) + html + suffix;
+    std::string plain = html;
+    bool inTag = false;
+    std::string plainOut;
+    for (char c : plain) {
+        if (c == '<') { inTag = true; continue; }
+        if (c == '>') { inTag = false; continue; }
+        if (!inTag) plainOut.push_back(c);
+    }
+    if (OpenClipboard(g_hwnd)) {
+        EmptyClipboard();
+        HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, payload.size() + 1);
+        if (h) {
+            memcpy(GlobalLock(h), payload.c_str(), payload.size() + 1);
+            GlobalUnlock(h);
+            SetClipboardData(htmlFormat, h);
+        }
+        HGLOBAL textHandle = GlobalAlloc(GMEM_MOVEABLE, plainOut.size() + 1);
+        if (textHandle) {
+            memcpy(GlobalLock(textHandle), plainOut.c_str(), plainOut.size() + 1);
+            GlobalUnlock(textHandle);
+            SetClipboardData(CF_TEXT, textHandle);
+        }
+        CloseClipboard();
+    }
+    DispatchPlatformEventDetail("clipboardchange", "html " + std::to_string(html.size()) + " bytes");
+}
+
+static void StoreClipboardImage(std::vector<uint8_t> bytes) {
+    g_lastClipboardImage = std::move(bytes);
+    DispatchPlatformEventDetail("clipboardchange", "image " + std::to_string(g_lastClipboardImage.size()) + " bytes");
+}
+
+static void BeginFileDrag(HDROP drop) {
+    g_dragFiles.clear();
+    GetCursorPos(&g_dragPayload.screenPoint);
+    g_dragPayload.clientPoint = g_dragPayload.screenPoint;
+    ScreenToClient(g_hwnd, &g_dragPayload.clientPoint);
+    UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    for (UINT i = 0; i < count; ++i) {
+        wchar_t path[MAX_PATH] = {};
+        DragQueryFileW(drop, i, path, MAX_PATH);
+        g_dragFiles.push_back(ToUtf8(path));
+    }
+    DragFinish(drop);
+    g_dragActive = !g_dragFiles.empty();
+    g_dragPayload.files = g_dragFiles;
+    g_dragPayload.hasFiles = g_dragActive;
+    std::string detail = std::to_string(g_dragFiles.size()) + " file(s) at "
+        + std::to_string(g_dragPayload.clientPoint.x) + "," + std::to_string(g_dragPayload.clientPoint.y);
+    DispatchPlatformEventDetail("dragenter", detail);
+    DispatchPlatformEventDetail("dragover", detail);
+    DispatchPlatformEventDetail("drop", JoinStrings(g_dragFiles, "|"));
+    g_dragActive = false;
+}
+
+using XInputGetStateFn = DWORD (WINAPI*)(DWORD, void*);
+static XInputGetStateFn LoadXInputGetState() {
+    if (!g_xinputModule) {
+        g_xinputModule = LoadLibraryW(L"xinput1_4.dll");
+        if (!g_xinputModule) g_xinputModule = LoadLibraryW(L"xinput9_1_0.dll");
+    }
+    return g_xinputModule ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(g_xinputModule, "XInputGetState")) : nullptr;
+}
+
+static void PollGamepads() {
+    auto getState = LoadXInputGetState();
+    if (!getState) return;
+    struct XGamepad { WORD buttons; BYTE leftTrigger; BYTE rightTrigger; SHORT leftX; SHORT leftY; SHORT rightX; SHORT rightY; };
+    struct XState { DWORD packet; XGamepad gamepad; };
+    for (DWORD i = 0; i < 4; ++i) {
+        XState state{};
+        DWORD ok = getState(i, &state);
+        bool connected = ok == 0;
+        if (connected != g_gamepadConnected[i]) {
+            g_gamepadConnected[i] = connected;
+            g_gamepads[i].connected = connected;
+            DispatchPlatformEventDetail(connected ? "gamepadconnected" : "gamepaddisconnected", "index " + std::to_string(i));
+        }
+        if (connected && state.packet != g_gamepadPacket[i]) {
+            g_gamepadPacket[i] = state.packet;
+            g_gamepads[i].packet = state.packet;
+            g_gamepads[i].buttons = state.gamepad.buttons;
+            g_gamepads[i].leftTrigger = state.gamepad.leftTrigger;
+            g_gamepads[i].rightTrigger = state.gamepad.rightTrigger;
+            g_gamepads[i].leftX = state.gamepad.leftX;
+            g_gamepads[i].leftY = state.gamepad.leftY;
+            g_gamepads[i].rightX = state.gamepad.rightX;
+            g_gamepads[i].rightY = state.gamepad.rightY;
+            DispatchPlatformEventDetail("gamepadinput", "index " + std::to_string(i) + " buttons " + std::to_string(state.gamepad.buttons));
+        }
+    }
+}
+
+static void ShowPlatformNotification(const std::string& title, const std::string& body) {
+    if (!g_notificationPermissionGranted) return;
+    UINT id = g_nextNotificationId++;
+    g_notifications[id] = title + "\n" + body;
+    g_notificationRecords[id] = { id, title, body, true, false, false };
+    SetStatus("Notification: " + title);
+    FlashWindow(g_hwnd, TRUE);
+    DispatchPlatformEventDetail("notificationshow", std::to_string(id) + " " + title);
+}
+
+static void HandleMediaCommand(WPARAM wp, LPARAM lp) {
+    int cmd = GET_APPCOMMAND_LPARAM(lp);
+    switch (cmd) {
+    case APPCOMMAND_MEDIA_PLAY: g_mediaSessionAction = "play"; break;
+    case APPCOMMAND_MEDIA_PAUSE: g_mediaSessionAction = "pause"; break;
+    case APPCOMMAND_MEDIA_PLAY_PAUSE: g_mediaSessionAction = "playpause"; break;
+    case APPCOMMAND_MEDIA_NEXTTRACK: g_mediaSessionAction = "nexttrack"; break;
+    case APPCOMMAND_MEDIA_PREVIOUSTRACK: g_mediaSessionAction = "previoustrack"; break;
+    case APPCOMMAND_MEDIA_STOP: g_mediaSessionAction = "stop"; break;
+    default: g_mediaSessionAction.clear(); break;
+    }
+    if (!g_mediaSessionAction.empty())
+        DispatchPlatformEvent("mediasessionaction");
+}
+
+static void DismissTransientTopLayer() {
+    if (g_activePopover) {
+        HidePlatformPopover();
+        return;
+    }
+    if (g_modalDialogActive) {
+        CloseModalDialog(g_modalDialog);
+        return;
+    }
+    if (g_pipActive) {
+        ExitPictureInPicture();
+        return;
+    }
+    if (g_pointerLocked) {
+        ExitPointerLock();
+        return;
+    }
+}
+
+static void SetPermissionState(const std::string& name, const std::string& state) {
+    g_permissions[name] = { name, state, (long long)GetTickCount64() };
+    DispatchPlatformEventDetail("permissionchange", name + "=" + state);
+}
+
+static std::string QueryPermissionState(const std::string& name) {
+    auto it = g_permissions.find(name);
+    if (it != g_permissions.end()) return it->second.state;
+    if (name == "notifications") return g_notificationPermissionGranted ? "granted" : "denied";
+    if (name == "clipboard-read" || name == "clipboard-write") return "granted";
+    if (name == "fullscreen" || name == "pointer-lock" || name == "gamepad") return "granted";
+    return "prompt";
+}
+
+static void RefreshScreenDetails() {
+    g_screenDetails.clear();
+    EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR mon, HDC, LPRECT, LPARAM) -> BOOL {
+            MONITORINFOEXW mi{ sizeof(mi) };
+            if (!GetMonitorInfoW(mon, &mi)) return TRUE;
+            HDC dc = CreateDCW(L"DISPLAY", mi.szDevice, nullptr, nullptr);
+            int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+            if (dc) DeleteDC(dc);
+            g_screenDetails.push_back({
+                mi.rcMonitor.left,
+                mi.rcMonitor.top,
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                mi.rcWork.right - mi.rcWork.left,
+                mi.rcWork.bottom - mi.rcWork.top,
+                dpi,
+                (mi.dwFlags & MONITORINFOF_PRIMARY) != 0
+            });
+            return TRUE;
+        }, 0);
+    DispatchPlatformEventDetail("screenschange", std::to_string(g_screenDetails.size()) + " screen(s)");
+}
+
+static std::string ShowSaveFilePicker(const std::string& suggestedName = "vertex-download.txt") {
+    wchar_t file[MAX_PATH] = {};
+    std::wstring suggested = ToWide(suggestedName);
+    wcsncpy_s(file, suggested.c_str(), MAX_PATH - 1);
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = g_hwnd;
+    ofn.lpstrFilter = L"Text Files\0*.txt\0All Files\0*.*\0\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return {};
+    g_lastSavedFile = ToUtf8(file);
+    HANDLE h = CreateFileW(file, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        std::string body = "Saved by Vertex platform file picker\r\n";
+        DWORD written = 0;
+        WriteFile(h, body.data(), (DWORD)body.size(), &written, nullptr);
+        CloseHandle(h);
+    }
+    DispatchPlatformEventDetail("savefile", g_lastSavedFile);
+    return g_lastSavedFile;
+}
+
+static void SharePlatformPayload(const SharePayload& payload) {
+    g_lastSharePayload = payload;
+    std::string text = payload.title + "\n" + payload.text + "\n" + payload.url;
+    if (!payload.files.empty()) text += "\n" + JoinStrings(payload.files, "\n");
+    WriteClipboardText(text);
+    DispatchPlatformEventDetail("share", payload.title.empty() ? "shared" : payload.title);
+}
+
+static void SetAppBadge(int value) {
+    g_appBadge = std::max(0, value);
+    SetStatus(g_appBadge > 0 ? ("Badge: " + std::to_string(g_appBadge)) : "Badge cleared");
+    DispatchPlatformEventDetail("badgechange", std::to_string(g_appBadge));
+}
+
+static void RequestWakeLock(const std::string& type) {
+    g_wakeLockActive = true;
+    g_screenWakeLockActive = type == "screen";
+    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | (g_screenWakeLockActive ? ES_DISPLAY_REQUIRED : 0));
+    DispatchPlatformEventDetail("wakelockchange", type + " acquired");
+}
+
+static void ReleaseWakeLock() {
+    if (!g_wakeLockActive) return;
+    g_wakeLockActive = false;
+    g_screenWakeLockActive = false;
+    SetThreadExecutionState(ES_CONTINUOUS);
+    DispatchPlatformEventDetail("wakelockchange", "released");
+}
+
+static void PrintCurrentPage() {
+    PRINTDLGW pd{ sizeof(pd) };
+    pd.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION;
+    pd.hwndOwner = g_hwnd;
+    if (PrintDlgW(&pd)) {
+        DOCINFOW di{ sizeof(di) };
+        di.lpszDocName = L"Vertex Page";
+        if (StartDocW(pd.hDC, &di) > 0) {
+            StartPage(pd.hDC);
+            RECT rc{ 200, 200, 5200, 7600 };
+            std::wstring text = ToWide(CurTab().title + "\n" + CurTab().url);
+            DrawTextW(pd.hDC, text.c_str(), -1, &rc, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            EndPage(pd.hDC);
+            EndDoc(pd.hDC);
+        }
+        DeleteDC(pd.hDC);
+        DispatchPlatformEventDetail("afterprint", CurTab().url);
+    }
+}
+
+static void RegisterProtocolHandlerLocal(const std::string& scheme, const std::string& url) {
+    g_protocolHandlers[scheme] = url;
+    DispatchPlatformEventDetail("protocolhandlerchange", scheme + " -> " + url);
+}
+
+static void RegisterFileHandlerLocal(const std::string& extension) {
+    if (std::find(g_fileHandlers.begin(), g_fileHandlers.end(), extension) == g_fileHandlers.end())
+        g_fileHandlers.push_back(extension);
+    DispatchPlatformEventDetail("filehandlerchange", extension);
+}
+
+static void EnqueueLaunchFiles(std::vector<std::string> files) {
+    g_launchQueueFiles = std::move(files);
+    g_launchQueuePending = !g_launchQueueFiles.empty();
+    if (g_launchQueuePending)
+        DispatchPlatformEventDetail("launch", JoinStrings(g_launchQueueFiles, "|"));
+}
+
+static void UpdateLastInputTick() {
+    g_lastInputTick = GetTickCount();
+    if (g_userIdle) {
+        g_userIdle = false;
+        DispatchPlatformEventDetail("idlechange", "active");
+    }
+}
+
+static GeoPositionRecord QueryGeolocation() {
+    g_geoPosition.timestamp = (long long)GetTickCount64();
+    DispatchPlatformEventDetail("geolocation", std::to_string(g_geoPosition.latitude) + "," + std::to_string(g_geoPosition.longitude));
+    return g_geoPosition;
+}
+
+static BatteryRecord QueryBattery() {
+    SYSTEM_POWER_STATUS ps{};
+    if (GetSystemPowerStatus(&ps)) {
+        if (ps.BatteryLifePercent != 255)
+            g_battery.level = ps.BatteryLifePercent / 100.0;
+        g_battery.charging = ps.ACLineStatus == 1;
+        g_battery.chargingTime = ps.BatteryLifeTime == (DWORD)-1 ? 0 : (int)ps.BatteryLifeTime;
+        g_battery.dischargingTime = ps.BatteryLifeTime == (DWORD)-1 ? 0 : (int)ps.BatteryLifeTime;
+    }
+    DispatchPlatformEventDetail("batterystatus", std::to_string((int)(g_battery.level * 100)) + "%");
+    return g_battery;
+}
+
+static void StartIdleDetector() {
+    g_idleDetectorActive = true;
+    g_lastInputTick = GetTickCount();
+    DispatchPlatformEventDetail("idlechange", "watching");
+}
+
+static void PollIdleDetector() {
+    if (!g_idleDetectorActive) return;
+    LASTINPUTINFO li{ sizeof(li) };
+    if (GetLastInputInfo(&li)) {
+        DWORD idleMs = GetTickCount() - li.dwTime;
+        bool idle = idleMs > 60000;
+        if (idle != g_userIdle) {
+            g_userIdle = idle;
+            DispatchPlatformEventDetail("idlechange", idle ? "idle" : "active");
+        }
+    }
+}
+
+static void UpdateSensor(const std::string& type, double x, double y, double z) {
+    g_sensors[type] = { type, x, y, z, (long long)GetTickCount64(), true };
+    DispatchPlatformEventDetail("sensorreading", type + " " + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z));
+}
+
+static void SampleSyntheticSensors() {
+    double t = GetTickCount64() / 1000.0;
+    UpdateSensor("accelerometer", std::sin(t) * 0.2, std::cos(t) * 0.2, 9.8);
+    UpdateSensor("gyroscope", std::sin(t) * 0.01, std::cos(t) * 0.01, 0.0);
+    UpdateSensor("magnetometer", 22.0 + std::sin(t), 5.0 + std::cos(t), -41.0);
+    UpdateSensor("ambient-light", 350.0 + std::sin(t) * 50.0, 0.0, 0.0);
+}
+
+static void VibratePattern(std::vector<int> pattern) {
+    g_vibrationPattern = std::move(pattern);
+    for (int ms : g_vibrationPattern) {
+        if (ms > 0) MessageBeep(MB_OK);
+    }
+    DispatchPlatformEventDetail("vibration", std::to_string(g_vibrationPattern.size()) + " segment(s)");
+}
+
+static void SeedContacts() {
+    if (!g_contacts.empty()) return;
+    g_contacts.push_back({ "Ada Lovelace", "ada@example.test", "+1-555-0101" });
+    g_contacts.push_back({ "Grace Hopper", "grace@example.test", "+1-555-0102" });
+    g_contacts.push_back({ "Katherine Johnson", "katherine@example.test", "+1-555-0103" });
+}
+
+static std::vector<ContactRecord> SelectContacts() {
+    SeedContacts();
+    DispatchPlatformEventDetail("contactsselect", std::to_string(g_contacts.size()) + " contact(s)");
+    return g_contacts;
+}
+
+static void AddExternalDevice(const std::string& kind, const std::string& name) {
+    std::string id = kind + ":" + std::to_string(g_externalDevices.size() + 1);
+    g_externalDevices.push_back({ kind, name, id, true });
+    DispatchPlatformEventDetail(kind + "connect", name + " " + id);
+}
+
+static void SeedExternalDevices() {
+    if (!g_externalDevices.empty()) return;
+    AddExternalDevice("serial", "COM1 Debug Port");
+    AddExternalDevice("hid", "Vertex Test HID");
+    AddExternalDevice("usb", "Vertex USB Device");
+    AddExternalDevice("bluetooth", "Vertex BLE Sensor");
+}
+
+static void CloseExternalDevices() {
+    for (auto& dev : g_externalDevices) dev.open = false;
+    DispatchPlatformEventDetail("deviceclose", std::to_string(g_externalDevices.size()) + " device(s)");
+}
+
+static void EstimateStorage() {
+    ULARGE_INTEGER freeBytes{}, totalBytes{}, totalFree{};
+    std::wstring root = ToWide(g_profilePaths.profileRoot);
+    if (!root.empty()) GetDiskFreeSpaceExW(root.c_str(), &freeBytes, &totalBytes, &totalFree);
+    g_storageUsageBytes = 0;
+    auto rows = vertex::profile::ReadTsvRows(g_profilePaths.historyFile);
+    for (const auto& row : rows)
+        for (const auto& cell : row) g_storageUsageBytes += cell.size();
+    if (totalBytes.QuadPart > 0)
+        g_storageQuotaBytes = std::min<unsigned long long>(totalBytes.QuadPart / 10, 2ull * 1024ull * 1024ull * 1024ull);
+    DispatchPlatformEventDetail("storageestimate", std::to_string(g_storageUsageBytes) + "/" + std::to_string(g_storageQuotaBytes));
+}
+
 // ─── scrollbar ───────────────────────────────────────────────────────────────
 static int ViewportH() {
     RECT rc; GetClientRect(g_hwnd, &rc);
-    return rc.bottom - rc.top - TOP_INSET - STATUS_H;
+    return rc.bottom - rc.top - ChromeTopInset() - ChromeBottomInset();
 }
 static void UpdateScrollbar() {
     SCROLLINFO si = { sizeof(si) };
@@ -447,8 +1478,8 @@ static void ClampScroll() {
 static RECT ContentPaintRect() {
     RECT rc{};
     GetClientRect(g_hwnd, &rc);
-    rc.top = TOP_INSET;
-    rc.bottom = std::max(rc.top, rc.bottom - STATUS_H - (g_findVisible ? FIND_H : 0));
+    rc.top = ChromeTopInset();
+    rc.bottom = std::max(rc.top, rc.bottom - ChromeBottomInset());
     return rc;
 }
 
@@ -462,9 +1493,9 @@ static RECT HoverRegionToClientRect(const HitRegion& region) {
     RECT content = ContentPaintRect();
     RECT rc{};
     rc.left = (LONG)(region.x - 3.f);
-    rc.top = (LONG)(region.y - CurTab().scrollY + (float)TOP_INSET - 3.f);
+    rc.top = (LONG)(region.y - CurTab().scrollY + (float)ChromeTopInset() - 3.f);
     rc.right = (LONG)(region.x + region.w + 4.f);
-    rc.bottom = (LONG)(region.y + region.h - CurTab().scrollY + (float)TOP_INSET + 4.f);
+    rc.bottom = (LONG)(region.y + region.h - CurTab().scrollY + (float)ChromeTopInset() + 4.f);
     rc.left = std::max(content.left, rc.left);
     rc.top = std::max(content.top, rc.top);
     rc.right = std::min(content.right, rc.right);
@@ -512,7 +1543,7 @@ static void RequeueFetchedPageScript(HWND hwnd, PendingPageScript job, FetchResu
         job.source = DecodeTextToUtf8(res.body, res.contentType);
     job.fetchBeforeRun = false;
     g_pendingPageScripts.push_back(std::move(job));
-    SetTimer(hwnd, 1, 16, NULL);
+    SetTimer(hwnd, TIMER_MAIN, 16, NULL);
 }
 
 static void RunPendingPageScripts(HWND hwnd) {
@@ -541,7 +1572,7 @@ static void RunPendingPageScripts(HWND hwnd) {
         ++ran;
     }
     if (!g_pendingPageScripts.empty())
-        SetTimer(hwnd, 1, 16, NULL);
+        SetTimer(hwnd, TIMER_MAIN, 16, NULL);
 }
 
 // Home page HTML comes from HomePageHtml() in browser_core.h.
@@ -616,10 +1647,14 @@ static void ShowSiteDataPage(bool pushHistory = true) {
     ShowInternalPage("vertex://site-data", "Site Data", SiteDataPageHtml(), pushHistory);
 }
 
+static void ShowPlatformFeaturesPage(bool pushHistory = true) {
+    ShowInternalPage("vertex://platform-features", "Platform Features", PlatformFeaturesPageHtml(), pushHistory);
+}
+
 static void StartDownload(const std::string& url, const std::string& downloadName = "") {
     if (url.empty()) return;
     SetStatus("Downloading " + url);
-    SetTimer(g_hwnd, 1, 16, NULL);
+    SetTimer(g_hwnd, TIMER_MAIN, 16, NULL);
     FetchResourceAsync(url, 256 * 1024 * 1024, ResourceKind::Other,
         [url, downloadName](FetchResult res) {
             auto record = vertex::downloads::SaveFetchedBody(url, res, downloadName);
@@ -634,6 +1669,8 @@ static void StartDownload(const std::string& url, const std::string& downloadNam
 
 static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     if (tabIdx < 0 || tabIdx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && tabIdx == g_activeTab)
+        ExitWindowFullscreen(false);
     Tab& tab = g_tabs[tabIdx];
     if (tab.loading) return;
     ClearPendingPageScriptsForTab(tabIdx);
@@ -686,6 +1723,10 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         ShowSiteDataPage(pushHistory);
         return;
     }
+    if (url == "vertex://platform-features") {
+        ShowPlatformFeaturesPage(pushHistory);
+        return;
+    }
 
     // If it's a URL, ensure it has a scheme; otherwise treat it as a search
     // query and route it to DuckDuckGo's server-rendered results page.
@@ -715,7 +1756,7 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         EnableWindow(g_hwndRefr, FALSE);
         SetUrlBar(displayUrl);
         UpdateTitle();
-        SetTimer(g_hwnd, 1, 16, NULL);
+        SetTimer(g_hwnd, TIMER_MAIN, 16, NULL);
         InvalidateRect(g_hwnd, NULL, FALSE);
     }
 
@@ -764,6 +1805,9 @@ static void NewTab(const std::string& url = "vertex://home") {
 }
 
 static void CloseTab(int idx) {
+    if (idx < 0 || idx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && idx == g_activeTab)
+        ExitWindowFullscreen(false);
     if (g_tabs.size() <= 1) {
         Navigate("vertex://home");
         return;
@@ -779,6 +1823,8 @@ static void CloseTab(int idx) {
 
 static void SwitchTab(int idx) {
     if (idx < 0 || idx >= (int)g_tabs.size()) return;
+    if (g_windowFullscreen && idx != g_activeTab)
+        ExitWindowFullscreen(false);
     g_activeTab = idx;
     const Tab& tab = CurTab();
     SetUrlBarForTab(tab);
@@ -799,6 +1845,10 @@ static void SwitchTab(int idx) {
 static void LayoutControls() {
     RECT rc; GetClientRect(g_hwnd, &rc);
     int w = rc.right, h = rc.bottom;
+    if (g_windowFullscreen) {
+        UpdateFullscreenChromeVisibility();
+        return;
+    }
     int btnY = TAB_H + (TOOLBAR_H - BTN_H) / 2;
     int x    = MARGIN;
     SetWindowPos(g_hwndBack, NULL, x, btnY, BTN_W, BTN_H, SWP_NOZORDER);
@@ -987,7 +2037,7 @@ LRESULT CALLBACK UrlProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
 // ─── find bar helpers ─────────────────────────────────────────────────────────
 static void ShowFind(bool show) {
     g_findVisible = show;
-    ShowWindow(g_hwndFind, show ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hwndFind, (show && !g_windowFullscreen) ? SW_SHOW : SW_HIDE);
     if (show) {
         SetFocus(g_hwndFind);
         SendMessageW(g_hwndFind, EM_SETSEL, 0, -1);
@@ -1055,6 +2105,8 @@ static std::vector<TabEntry> BuildTabEntries() {
 
 // ─── WndProc ─────────────────────────────────────────────────────────────────
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_KEYDOWN || msg == WM_CHAR)
+        UpdateLastInputTick();
     switch (msg) {
 
     case WM_CREATE: {
@@ -1127,6 +2179,38 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_hwndUrl, WM_SETFONT, (WPARAM)g_urlFont, TRUE);
             SendMessageW(g_hwndFind, WM_SETFONT, (WPARAM)g_urlFont, TRUE);
         }
+        DragAcceptFiles(hwnd, TRUE);
+        RAWINPUTDEVICE rid{};
+        rid.usUsagePage = 0x01;
+        rid.usUsage = 0x02;
+        rid.dwFlags = RIDEV_INPUTSINK;
+        rid.hwndTarget = hwnd;
+        RegisterRawInputDevices(&rid, 1, sizeof(rid));
+        SetTimer(hwnd, TIMER_GAMEPAD, 250, NULL);
+        SetTimer(hwnd, TIMER_MEDIA_SESSION, 1000, NULL);
+        SetPermissionState("notifications", "granted");
+        SetPermissionState("clipboard-read", "granted");
+        SetPermissionState("clipboard-write", "granted");
+        SetPermissionState("fullscreen", "granted");
+        SetPermissionState("pointer-lock", "granted");
+        SetPermissionState("gamepad", "granted");
+        SetPermissionState("geolocation", "granted");
+        SetPermissionState("camera", "prompt");
+        SetPermissionState("microphone", "prompt");
+        SetPermissionState("sensors", "granted");
+        SetPermissionState("contacts", "granted");
+        SetPermissionState("serial", "granted");
+        SetPermissionState("hid", "granted");
+        SetPermissionState("usb", "granted");
+        SetPermissionState("bluetooth", "prompt");
+        RegisterProtocolHandlerLocal("web+vertex", "vertex://protocol-handler?url=%s");
+        RegisterFileHandlerLocal(".html");
+        RegisterFileHandlerLocal(".txt");
+        RefreshScreenDetails();
+        QueryBattery();
+        EstimateStorage();
+        SeedContacts();
+        SeedExternalDevices();
 
         g_renderer.SetImageRequestCallback([hwnd](std::string url) {
             FetchResourceAsync(url, 32 * 1024 * 1024, ResourceKind::Image,
@@ -1138,7 +2222,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 PostMessageW(hwnd, WM_IMAGE_READY, 0, (LPARAM)m);
             });
-            SetTimer(hwnd, 1, 16, NULL);
+            SetTimer(hwnd, TIMER_MAIN, 16, NULL);
         });
 
         g_renderer.Init(hwnd);
@@ -1160,11 +2244,48 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_DISPLAYCHANGE:
+        FitFullscreenToCurrentMonitor();
+        RefreshScreenDetails();
+        return 0;
+
+    case WM_INPUT: {
+        if (!g_pointerLocked) break;
+        UINT size = 0;
+        GetRawInputData((HRAWINPUT)lp, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+        std::vector<BYTE> data(size);
+        if (GetRawInputData((HRAWINPUT)lp, RID_INPUT, data.data(), &size, sizeof(RAWINPUTHEADER)) == size) {
+            RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(data.data());
+            if (raw->header.dwType == RIM_TYPEMOUSE) {
+                LONG dx = raw->data.mouse.lLastX;
+                LONG dy = raw->data.mouse.lLastY;
+                if (dx || dy) {
+                    g_pointerLockLastDelta = "dx=" + std::to_string(dx) + " dy=" + std::to_string(dy);
+                    DispatchPlatformEventDetail("mousemove", g_pointerLockLastDelta);
+                }
+            }
+        }
+        return 0;
+    }
+
+    case WM_DPICHANGED: {
+        if (g_windowFullscreen) {
+            FitFullscreenToCurrentMonitor();
+        } else if (RECT* suggested = reinterpret_cast<RECT*>(lp)) {
+            SetWindowPos(hwnd, nullptr,
+                suggested->left, suggested->top,
+                suggested->right - suggested->left,
+                suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return 0;
+    }
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
         g_renderer.SetPaintDirtyRect(ps.rcPaint);
-        bool repaintChrome = ps.rcPaint.top < TOP_INSET;
+        bool repaintChrome = !g_windowFullscreen && ps.rcPaint.top < TOP_INSET;
 
         auto tabs = BuildTabEntries();
         Tab& cur = CurTab();
@@ -1172,7 +2293,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (cur.page && cur.page->dom) {
             CurTab().docHeight = g_renderer.Paint(
                 cur.page->dom, cur.scrollY, cur.page->url,
-                (float)TOP_INSET, (float)TAB_H, &tabs, repaintChrome);
+                (float)ChromeTopInset(), g_windowFullscreen ? 0.f : (float)TAB_H, &tabs, repaintChrome);
             if (cur.fragmentScrollPending) {
                 cur.fragmentScrollPending = false;
                 float anchorY = 0.f;
@@ -1187,7 +2308,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         } else {
             g_renderer.Paint(nullptr, 0.f, {},
-                (float)TOP_INSET, (float)TAB_H, &tabs, repaintChrome);
+                (float)ChromeTopInset(), g_windowFullscreen ? 0.f : (float)TAB_H, &tabs, repaintChrome);
         }
         if (repaintChrome) {
             DrawUrlFrame(ps.hdc);
@@ -1388,7 +2509,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g_pendingPageScripts.push_back({ idx, pageUrl, std::move(script.source), std::move(script.filename), false, script.fetchBeforeRun });
                 g_pendingPageScripts.push_back({ idx, pageUrl, {}, "__vertex_load_events__", true, false });
                 // Set up timer for macrotasks / setTimeout
-                SetTimer(hwnd, 1, 16, NULL);
+                SetTimer(hwnd, TIMER_MAIN, 16, NULL);
             } catch (...) {
                 OutputDebugStringA("[JS] Page script setup failed; continuing without page scripts\n");
             }
@@ -1451,6 +2572,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         int py = (int)(short)HIWORD(lp);
         // Check tab strip
         if (py < TAB_H) {
+            if (g_windowFullscreen) return 0;
             int closeIdx = -1;
             if (g_renderer.HitTestTabClose((float)px, (float)py, closeIdx)) {
                 CloseTab(closeIdx);
@@ -1470,11 +2592,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (g_activePopover && py >= ChromeTopInset()) {
+            std::string href = g_renderer.HitTest((float)px, (float)py);
+            if (href.empty()) HidePlatformPopover();
+        }
+        if (py >= ChromeTopInset()) {
             // Check if an input was clicked.
             if (g_renderer.GetLayoutRoot()) {
                 Node* input = FormState::hitTestInput(*g_renderer.GetLayoutRoot(),
-                    (float)px, (float)py, CurTab().scrollY, (float)TOP_INSET);
+                    (float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
                 if (input) {
                     g_formState.focus(input);
                     InvalidateContent();
@@ -1496,7 +2622,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONUP: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             HMENU menu = CreatePopupMenu();
             if (!href.empty()) {
@@ -1512,6 +2638,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
             AppendMenuW(menu, MF_STRING, 9020, L"Add Bookmark");
             AppendMenuW(menu, MF_STRING, 9021, L"View Bookmarks");
+            AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+            AppendMenuW(menu, MF_STRING, 9030, L"Toggle Fullscreen");
+            AppendMenuW(menu, MF_STRING, 9031, L"Pointer Lock");
+            AppendMenuW(menu, MF_STRING, 9032, L"Picture in Picture");
+            AppendMenuW(menu, MF_STRING, 9033, L"Show File Picker");
+            AppendMenuW(menu, MF_STRING, 9034, L"Test Notification");
+            AppendMenuW(menu, MF_STRING, 9035, L"Share Page");
+            AppendMenuW(menu, MF_STRING, 9036, L"Save File Picker");
+            AppendMenuW(menu, MF_STRING, 9037, L"Toggle Wake Lock");
+            AppendMenuW(menu, MF_STRING, 9038, L"Print Page");
+            AppendMenuW(menu, MF_STRING, 9039, L"Platform Features");
+            AppendMenuW(menu, MF_STRING, 9040, L"Geolocation");
+            AppendMenuW(menu, MF_STRING, 9041, L"Battery");
+            AppendMenuW(menu, MF_STRING, 9042, L"Sample Sensors");
+            AppendMenuW(menu, MF_STRING, 9043, L"Vibrate");
+            AppendMenuW(menu, MF_STRING, 9044, L"Contacts");
+            AppendMenuW(menu, MF_STRING, 9045, L"Storage Estimate");
             POINT pt = {px, py};
             ClientToScreen(hwnd, &pt);
             int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
@@ -1542,6 +2685,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     ShowBookmarksPage();
                     break;
                 }
+                case 9030: ToggleWindowFullscreen(); break;
+                case 9031: EnterPointerLock(nullptr); break;
+                case 9032: EnterPictureInPicture(nullptr); break;
+                case 9033: {
+                    auto files = ShowOpenFilePicker(true);
+                    SetStatus(files.empty() ? "No file selected" : ("Selected " + std::to_string(files.size()) + " file(s)"));
+                    break;
+                }
+                case 9034: ShowPlatformNotification("Vertex", "Notification API platform path"); break;
+                case 9035: SharePlatformPayload({ CurTab().title, "Shared from Vertex", CurTab().url, {} }); break;
+                case 9036: ShowSaveFilePicker(); break;
+                case 9037: if (g_wakeLockActive) ReleaseWakeLock(); else RequestWakeLock("screen"); break;
+                case 9038: PrintCurrentPage(); break;
+                case 9039: ShowPlatformFeaturesPage(); break;
+                case 9040: QueryGeolocation(); break;
+                case 9041: QueryBattery(); break;
+                case 9042: SampleSyntheticSensors(); break;
+                case 9043: VibratePattern({ 80, 40, 80 }); break;
+                case 9044: SelectContacts(); break;
+                case 9045: EstimateStorage(); break;
             }
         }
         return 0;
@@ -1550,7 +2713,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
-        if (py >= TOP_INSET) {
+        if (g_windowFullscreen) ArmFullscreenCursorTimer();
+        if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             SetBrowserCursor(href.empty() ? g_cursorArrow : g_cursorHand);
             SetStatus(href);
@@ -1565,7 +2729,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     HitRegion oldHoverRegion{};
                     bool hadOldHoverRegion = g_renderer.LastHoverRegion(oldHoverRegion);
                     const Node* hover = g_renderer.HoverNodeAt(
-                        (float)px, (float)py, CurTab().scrollY, (float)TOP_INSET);
+                            (float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
                     lastHoverTick = now;
                     if (hover != g_hoverNode) {
                         HitRegion newHoverRegion{};
@@ -1611,6 +2775,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER:
+        if (wp == TIMER_FULLSCREEN_CURSOR) {
+            KillTimer(hwnd, TIMER_FULLSCREEN_CURSOR);
+            if (g_windowFullscreen) ShowFullscreenCursor(false);
+            return 0;
+        }
+        if (wp == TIMER_GAMEPAD) {
+            PollGamepads();
+            return 0;
+        }
+        if (wp == TIMER_MEDIA_SESSION) {
+            if (!g_mediaSessionAction.empty())
+                SetStatus("Media: " + g_mediaSessionAction);
+            PollIdleDetector();
+            return 0;
+        }
         resetDomDirtyCoalesce(); // Allow next batch of DOM mutations to trigger repaint.
         if (DrainResourceCompletions(kMaxResourceCompletionsPerTimerTick) > 0) {
             InvalidateContent();
@@ -1621,16 +2800,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_js.runMacrotasks(kMaxMacrotasksPerTimerTick);
         } catch (...) {
             OutputDebugStringA("[JS] Macrotask pump failed; timer stopped\n");
-            KillTimer(hwnd, 1);
+            KillTimer(hwnd, TIMER_MAIN);
         }
         if (AnyTabLoading()) {
             RECT rc{};
             GetClientRect(hwnd, &rc);
-            rc.bottom = TOP_INSET;
+            rc.bottom = ChromeTopInset();
             InvalidateRect(hwnd, &rc, FALSE);
         } else if (g_pendingPageScripts.empty() && !g_js.hasPendingMacrotasks()
                    && !HasPendingResourceCompletions() && !HasOpenWebSockets()) {
-            KillTimer(hwnd, 1);
+            KillTimer(hwnd, TIMER_MAIN);
         }
         return 0;
 
@@ -1640,9 +2819,53 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SETTINGCHANGE:
     case WM_THEMECHANGED:
         ApplyThemedWindowIcon(hwnd);
+        FitFullscreenToCurrentMonitor();
         return 0;
 
+    case WM_ACTIVATEAPP:
+        if (!wp && g_windowFullscreen)
+            ShowFullscreenCursor(true);
+        if (!wp && g_pointerLocked)
+            ExitPointerLock(false);
+        if (wp && g_windowFullscreen)
+            FitFullscreenToCurrentMonitor();
+        if (wp && !g_notificationRecords.empty()) {
+            auto it = g_notificationRecords.rbegin();
+            it->second.clicked = true;
+            DispatchPlatformEventDetail("notificationclick", std::to_string(it->second.id) + " " + it->second.title);
+        }
+        return 0;
+
+    case WM_DROPFILES:
+        BeginFileDrag((HDROP)wp);
+        EnqueueLaunchFiles(g_dragFiles);
+        return 0;
+
+    case WM_APPCOMMAND:
+        HandleMediaCommand(wp, lp);
+        return 0;
+
+    case WM_PIP_CLOSED:
+        DispatchPlatformEvent("leavepictureinpicture");
+        return 0;
+
+    case WM_GETMINMAXINFO:
+        if (g_windowFullscreen) {
+            auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+            MONITORINFO mi = MonitorInfoForWindow(hwnd);
+            mmi->ptMaxPosition.x = mi.rcMonitor.left;
+            mmi->ptMaxPosition.y = mi.rcMonitor.top;
+            mmi->ptMaxSize.x = mi.rcMonitor.right - mi.rcMonitor.left;
+            mmi->ptMaxSize.y = mi.rcMonitor.bottom - mi.rcMonitor.top;
+            return 0;
+        }
+        break;
+
     case WM_DESTROY:
+        DragAcceptFiles(hwnd, FALSE);
+        ExitPointerLock(false);
+        ExitPictureInPicture();
+        if (g_xinputModule) { FreeLibrary(g_xinputModule); g_xinputModule = nullptr; }
         if (g_uiFont) { DeleteObject(g_uiFont); g_uiFont = nullptr; }
         if (g_iconFont) { DeleteObject(g_iconFont); g_iconFont = nullptr; }
         if (g_urlFont) { DeleteObject(g_urlFont); g_urlFont = nullptr; }
@@ -1654,6 +2877,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_appIconSmall) { DestroyIcon(g_appIconSmall); g_appIconSmall = nullptr; }
         g_appIconResourceId = 0;
         PostQuitMessage(0);
+        return 0;
+    }
+
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE && g_windowFullscreen) {
+        ExitWindowFullscreen();
         return 0;
     }
 
@@ -1752,7 +2980,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
             bool shift   = (GetKeyState(VK_SHIFT)   & 0x8000) != 0;
             bool handled = false;
 
-            if (ctrl) {
+            if (ctrl && (!shift || msg.wParam == VK_TAB)) {
                 if (msg.wParam == 'L') {
                     SetFocus(g_hwndUrl);
                     SendMessageW(g_hwndUrl, EM_SETSEL, 0, -1);
@@ -1804,6 +3032,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 }
             }
 
+            if (!handled && alt && msg.wParam == VK_RETURN) {
+                ToggleWindowFullscreen();
+                handled = true;
+            }
+            if (!handled && msg.wParam == VK_F11) {
+                ToggleWindowFullscreen();
+                handled = true;
+            }
             if (!handled && msg.wParam == VK_F5) {
                 if (!CurTab().loading) Navigate(CurTab().url, false);
                 handled = true;
@@ -1818,8 +3054,90 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 if (msg.wParam == VK_LEFT)  { GoBack();    handled = true; }
                 if (msg.wParam == VK_RIGHT) { GoForward(); handled = true; }
             }
+            if (!handled && ctrl && shift) {
+                if (msg.wParam == 'P') {
+                    EnterPointerLock(nullptr);
+                    handled = true;
+                } else if (msg.wParam == 'I') {
+                    EnterPictureInPicture(nullptr);
+                    handled = true;
+                } else if (msg.wParam == 'O') {
+                    auto files = ShowOpenFilePicker(true);
+                    SetStatus(files.empty() ? "No file selected" : ("Selected " + std::to_string(files.size()) + " file(s)"));
+                    handled = true;
+                } else if (msg.wParam == 'N') {
+                    ShowPlatformNotification("Vertex", "Notification API keyboard path");
+                    handled = true;
+                } else if (msg.wParam == 'C') {
+                    WriteClipboardHtml("<b>Vertex rich clipboard</b>");
+                    handled = true;
+                } else if (msg.wParam == 'V') {
+                    SetStatus("Clipboard: " + ReadClipboardText());
+                    handled = true;
+                } else if (msg.wParam == 'D') {
+                    ShowModalDialog(CurTab().page && CurTab().page->dom ? CurTab().page->dom.get() : nullptr);
+                    handled = true;
+                } else if (msg.wParam == 'Y') {
+                    ShowPlatformPopover(CurTab().page && CurTab().page->dom ? CurTab().page->dom.get() : nullptr);
+                    handled = true;
+                } else if (msg.wParam == 'G') {
+                    PollGamepads();
+                    handled = true;
+                } else if (msg.wParam == 'S') {
+                    SharePlatformPayload({ CurTab().title, "Shared from Vertex", CurTab().url, {} });
+                    handled = true;
+                } else if (msg.wParam == 'A') {
+                    SetAppBadge(g_appBadge + 1);
+                    handled = true;
+                } else if (msg.wParam == 'W') {
+                    if (g_wakeLockActive) ReleaseWakeLock(); else RequestWakeLock("screen");
+                    handled = true;
+                } else if (msg.wParam == 'X') {
+                    ShowSaveFilePicker();
+                    handled = true;
+                } else if (msg.wParam == 'R') {
+                    RefreshScreenDetails();
+                    handled = true;
+                } else if (msg.wParam == 'M') {
+                    ShowPlatformFeaturesPage();
+                    handled = true;
+                } else if (msg.wParam == 'Q') {
+                    PrintCurrentPage();
+                    handled = true;
+                } else if (msg.wParam == 'E') {
+                    QueryGeolocation();
+                    handled = true;
+                } else if (msg.wParam == 'K') {
+                    QueryBattery();
+                    handled = true;
+                } else if (msg.wParam == 'U') {
+                    SampleSyntheticSensors();
+                    handled = true;
+                } else if (msg.wParam == 'Z') {
+                    VibratePattern({ 80, 40, 80, 40, 160 });
+                    handled = true;
+                } else if (msg.wParam == 'T') {
+                    SelectContacts();
+                    handled = true;
+                } else if (msg.wParam == 'L') {
+                    StartIdleDetector();
+                    handled = true;
+                } else if (msg.wParam == 'H') {
+                    SeedExternalDevices();
+                    handled = true;
+                } else if (msg.wParam == 'J') {
+                    EstimateStorage();
+                    handled = true;
+                }
+            }
             if (!handled && msg.wParam == VK_ESCAPE) {
-                if (g_findVisible) {
+                if (g_windowFullscreen) {
+                    ExitWindowFullscreen();
+                    handled = true;
+                } else if (g_pointerLocked || g_activePopover || g_modalDialogActive || g_pipActive) {
+                    DismissTransientTopLayer();
+                    handled = true;
+                } else if (g_findVisible) {
                     ShowFind(false);
                     handled = true;
                 } else if (CurTab().loading) {
