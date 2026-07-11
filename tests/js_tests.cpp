@@ -83,6 +83,40 @@ static std::string RunEngineDeepDomRegistrationSnapshot() {
     return ok ? "registered\n" : "script failed\n";
 }
 
+static Node* FindById(Node* n, const std::string& id);
+
+static std::string RunMediaElementApiSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><video id=\"v\" src=\"clip.mp4\" muted></video></body></html>");
+    int plays = 0, pauses = 0;
+    double seek = -1, volume = -1;
+    bool muted = false;
+    DomBridgeCallbacks callbacks;
+    callbacks.mediaPlay = [&](Node*) { ++plays; return true; };
+    callbacks.mediaPause = [&](Node*) { ++pauses; };
+    callbacks.mediaSetCurrentTime = [&](Node*, double v) { seek = v; };
+    callbacks.mediaCurrentTime = [](Node*) { return 3.0; };
+    callbacks.mediaDuration = [](Node*) { return 9.0; };
+    callbacks.mediaSetVolume = [&](Node*, double v) { volume = v; };
+    callbacks.mediaVolume = [](Node*) { return 0.5; };
+    callbacks.mediaSetMuted = [&](Node*, bool v) { muted = v; };
+    callbacks.mediaMuted = [](Node*) { return true; };
+    callbacks.mediaPaused = [](Node*) { return true; };
+    engine.setDocument(dom, []() {}, "https://example.test/", callbacks);
+    bool ok = engine.runScript(
+        "var v = document.getElementById('v');"
+        "var p = v.play(); v.currentTime = 7; v.volume = 0.25; v.muted = false; v.pause();"
+        "v.setAttribute('data-result', typeof p.then + ':' + v.duration + ':' + v.currentTime + ':' + v.volume + ':' + v.muted + ':' + v.paused);",
+        "media-api");
+    std::string script = ok ? "ok" : "fail";
+    Node* video = FindById(dom.get(), "v");
+    return script + " calls=" + std::to_string(plays) + ":" + std::to_string(pauses)
+        + " seek=" + std::to_string((int)seek)
+        + " volume=" + std::to_string((int)(volume * 100.0 + 0.5))
+        + " muted=" + std::to_string(muted ? 1 : 0)
+        + " result=" + (video ? video->attr("data-result") : "missing") + "\n";
+}
+
 static Node* FindByTag(Node* n, const std::string& tag) {
     if (!n) return nullptr;
     if (n->tagName == tag) return n;
@@ -2011,6 +2045,12 @@ TestResult RunJsTests() {
         "js/dom/canvas-width-height-writes-reflect-to-attributes",
         RunCanvasResizeSnapshot(),
         "500x400\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/media-element-api-calls-backend",
+        RunMediaElementApiSnapshot(),
+        "ok calls=1:1 seek=7 volume=25 muted=0 result=function:9:7:0.25:false:true\n",
         result);
 
     ExpectEqual(

@@ -2430,6 +2430,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 callbacks.getCanvasSurface = [](Node* n) {
                     return g_renderer.GetOrCreateCanvasSurface(n);
                 };
+                callbacks.mediaPlay = [](Node* n) { return g_renderer.MediaPlay(n); };
+                callbacks.mediaPause = [](Node* n) { g_renderer.MediaPause(n); };
+                callbacks.mediaSetCurrentTime = [](Node* n, double v) { g_renderer.MediaSetCurrentTime(n, v); };
+                callbacks.mediaCurrentTime = [](Node* n) { return g_renderer.MediaCurrentTime(n); };
+                callbacks.mediaDuration = [](Node* n) { return g_renderer.MediaDuration(n); };
+                callbacks.mediaSetVolume = [](Node* n, double v) { g_renderer.MediaSetVolume(n, v); };
+                callbacks.mediaVolume = [](Node* n) { return g_renderer.MediaVolume(n); };
+                callbacks.mediaSetMuted = [](Node* n, bool v) { g_renderer.MediaSetMuted(n, v); };
+                callbacks.mediaMuted = [](Node* n) { return g_renderer.MediaMuted(n); };
+                callbacks.mediaPaused = [](Node* n) { return g_renderer.MediaPaused(n); };
                 callbacks.scrollIntoView = [idx](Node* target) {
                     if (idx != g_activeTab || !target) return;
                     const LayoutBox* root = g_renderer.GetLayoutRoot();

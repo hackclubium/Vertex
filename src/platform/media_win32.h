@@ -13,6 +13,14 @@ public:
     void Play();
     void Pause();
     void Stop();
+    void SetCurrentTime(double seconds);
+    double CurrentTime() const;
+    double Duration() const;
+    void SetVolume(double volume);
+    double Volume() const;
+    void SetMuted(bool muted);
+    bool Muted() const { return m_muted; }
+    bool Paused() const;
     const std::string& Url() const { return m_url; }
     bool HasVideo() const { return m_hasVideo; }
 
@@ -21,4 +29,6 @@ private:
     Impl* m_impl = nullptr;
     std::string m_url;
     bool m_hasVideo = false;
+    bool m_muted = false;
+    double m_volume = 1.0;
 };

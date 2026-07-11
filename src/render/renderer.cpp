@@ -276,6 +276,43 @@ void Renderer::InvalidateLayout() {
     m_layoutBoxesByNode.clear();
 }
 
+static std::string MediaSourceFromNode(Node* n) {
+    if (!n) return {};
+    std::string src = n->attr("src");
+    if (!src.empty()) return src;
+    for (auto& child : n->children) {
+        if (child && child->type == NodeType::Element && child->tagName == "source") {
+            src = child->attr("src");
+            if (!src.empty()) return src;
+        }
+    }
+    return {};
+}
+
+bool Renderer::MediaPlay(Node* mediaNode) {
+    if (!mediaNode || (mediaNode->tagName != "video" && mediaNode->tagName != "audio")) return false;
+    auto& player = m_mediaPlayers[mediaNode];
+    if (!player) player = std::make_unique<Win32MediaPlayer>();
+    std::string src = MediaSourceFromNode(mediaNode);
+    if (src.empty()) return false;
+    std::string url = ResolveUrl(src, m_curBaseUrl);
+    const bool isVideo = mediaNode->tagName == "video";
+    if (player->Url() != url || player->HasVideo() != isVideo)
+        if (!player->Load(m_hwnd, url, isVideo, false)) return false;
+    player->Play();
+    return true;
+}
+
+void Renderer::MediaPause(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); if (it != m_mediaPlayers.end()) it->second->Pause(); }
+void Renderer::MediaSetCurrentTime(Node* mediaNode, double seconds) { auto it = m_mediaPlayers.find(mediaNode); if (it != m_mediaPlayers.end()) it->second->SetCurrentTime(seconds); }
+double Renderer::MediaCurrentTime(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); return it != m_mediaPlayers.end() ? it->second->CurrentTime() : 0.0; }
+double Renderer::MediaDuration(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); return it != m_mediaPlayers.end() ? it->second->Duration() : 0.0; }
+void Renderer::MediaSetVolume(Node* mediaNode, double volume) { auto it = m_mediaPlayers.find(mediaNode); if (it != m_mediaPlayers.end()) it->second->SetVolume(volume); }
+double Renderer::MediaVolume(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); return it != m_mediaPlayers.end() ? it->second->Volume() : 1.0; }
+void Renderer::MediaSetMuted(Node* mediaNode, bool muted) { auto it = m_mediaPlayers.find(mediaNode); if (it != m_mediaPlayers.end()) it->second->SetMuted(muted); }
+bool Renderer::MediaMuted(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); return it != m_mediaPlayers.end() && it->second->Muted(); }
+bool Renderer::MediaPaused(Node* mediaNode) { auto it = m_mediaPlayers.find(mediaNode); return it == m_mediaPlayers.end() || it->second->Paused(); }
+
 void Renderer::SetZoom(float z) {
     m_zoom = std::max(0.5f, std::min(3.f, z));
     // Cached text formats/measurements are size-dependent — invalidate them.

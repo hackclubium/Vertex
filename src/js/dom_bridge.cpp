@@ -1775,6 +1775,32 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         obj->setProp(name, JsValue::object(vm.gc().newNativeFunction(fn, name)));
     };
 
+    if (node->tagName == "audio" || node->tagName == "video") {
+        obj->setProp("currentTime", JsValue::number(g_domCallbacks.mediaCurrentTime ? g_domCallbacks.mediaCurrentTime(raw) : 0.0));
+        obj->setProp("duration", JsValue::number(g_domCallbacks.mediaDuration ? g_domCallbacks.mediaDuration(raw) : 0.0));
+        obj->setProp("volume", JsValue::number(g_domCallbacks.mediaVolume ? g_domCallbacks.mediaVolume(raw) : 1.0));
+        obj->setProp("muted", JsValue::boolean(g_domCallbacks.mediaMuted ? g_domCallbacks.mediaMuted(raw) : raw->attrs.count("muted") > 0));
+        obj->setProp("paused", JsValue::boolean(g_domCallbacks.mediaPaused ? g_domCallbacks.mediaPaused(raw) : true));
+        obj->setProp("ended", JsValue::boolean(false));
+        obj->setProp("readyState", JsValue::integer(0));
+        addNativeM("play", NATIVE("media_play") {
+            Node* n = unwrapNode(thisVal);
+            bool ok = g_domCallbacks.mediaPlay ? g_domCallbacks.mediaPlay(n) : false;
+            if (thisVal.isObject()) thisVal.asObject()->setProp("paused", JsValue::boolean(!ok));
+            return vm.promiseResolve(JsValue::undefined());
+        });
+        addNativeM("pause", NATIVE("media_pause") {
+            Node* n = unwrapNode(thisVal);
+            if (g_domCallbacks.mediaPause) g_domCallbacks.mediaPause(n);
+            if (thisVal.isObject()) thisVal.asObject()->setProp("paused", JsValue::boolean(true));
+            return JsValue::undefined();
+        });
+        addNativeM("load", NATIVE("media_load") {
+            markDomDirty(vm, unwrapNode(thisVal), "media");
+            return JsValue::undefined();
+        });
+    }
+
     addNativeM("getAttribute", NATIVE("getAttribute") {
         Node* n = unwrapNode(thisVal);
         if (!n) return JsValue::null();
@@ -3465,6 +3491,16 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             || key == "integrity" || key == "nonce") n->attrs[lowerCopy(key)] = val.toString();
         else if (key == "crossOrigin") n->attrs["crossorigin"] = val.toString();
         else if (key == "referrerPolicy") n->attrs["referrerpolicy"] = val.toString();
+        else if ((n->tagName == "audio" || n->tagName == "video") && key == "currentTime") {
+            if (g_domCallbacks.mediaSetCurrentTime) g_domCallbacks.mediaSetCurrentTime(n, val.toNumber());
+        }
+        else if ((n->tagName == "audio" || n->tagName == "video") && key == "volume") {
+            if (g_domCallbacks.mediaSetVolume) g_domCallbacks.mediaSetVolume(n, val.toNumber());
+        }
+        else if ((n->tagName == "audio" || n->tagName == "video") && key == "muted") {
+            if (val.toBool()) n->attrs["muted"] = ""; else n->attrs.erase("muted");
+            if (g_domCallbacks.mediaSetMuted) g_domCallbacks.mediaSetMuted(n, val.toBool());
+        }
         else if (key == "noModule") {
             if (val.toBool()) n->attrs["nomodule"] = "";
             else n->attrs.erase("nomodule");

@@ -16,6 +16,16 @@ struct DomBridgeCallbacks {
     // element's 2D context. Unset (nullptr) on platforms without a canvas
     // backend yet — canvas draw calls then safely no-op.
     std::function<ICanvasSurface*(Node*)> getCanvasSurface;
+    std::function<bool(Node*)> mediaPlay;
+    std::function<void(Node*)> mediaPause;
+    std::function<void(Node*, double)> mediaSetCurrentTime;
+    std::function<double(Node*)> mediaCurrentTime;
+    std::function<double(Node*)> mediaDuration;
+    std::function<void(Node*, double)> mediaSetVolume;
+    std::function<double(Node*)> mediaVolume;
+    std::function<void(Node*, bool)> mediaSetMuted;
+    std::function<bool(Node*)> mediaMuted;
+    std::function<bool(Node*)> mediaPaused;
 };
 
 // Wraps a Node* into a JsObject (Element/Text/Document).

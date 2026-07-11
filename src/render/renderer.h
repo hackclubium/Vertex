@@ -78,6 +78,16 @@ public:
     // off-screen D2D surface sized from the node's width/height attributes.
     // Returns nullptr if there's no live render target yet.
     ICanvasSurface* GetOrCreateCanvasSurface(Node* canvasNode);
+    bool MediaPlay(Node* mediaNode);
+    void MediaPause(Node* mediaNode);
+    void MediaSetCurrentTime(Node* mediaNode, double seconds);
+    double MediaCurrentTime(Node* mediaNode);
+    double MediaDuration(Node* mediaNode);
+    void MediaSetVolume(Node* mediaNode, double volume);
+    double MediaVolume(Node* mediaNode);
+    void MediaSetMuted(Node* mediaNode, bool muted);
+    bool MediaMuted(Node* mediaNode);
+    bool MediaPaused(Node* mediaNode);
     // Looks up an already-decoded image bitmap by URL (used by canvas
     // drawImage()); nullptr if not cached (not loaded / failed / unknown).
     ID2D1Bitmap* FindCachedImageBitmap(const std::string& url) const;
