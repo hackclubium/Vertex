@@ -2,7 +2,6 @@ use arti_client::{TorClient, TorClientConfig};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use std::ffi::{CStr, CString};
-use std::io::Write;
 use std::os::raw::{c_char, c_int, c_uchar};
 use std::ptr;
 use std::sync::Arc;
