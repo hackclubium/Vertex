@@ -11,129 +11,127 @@
   <img alt="Engine" src="https://img.shields.io/badge/engine-from%20scratch-111827?style=for-the-badge">
 </p>
 
-<p align="center">
-  <strong>A browser engine built from scratch in C++.</strong><br>
-  HTML, CSS, JS, layout, SVG, rendering, tabs, navigation, the whole deal.<br>
-  No Chromium. No WebView. No CEF. No QtWebEngine. Just us.
-</p>
+Vertex is a browser engine written from scratch in C++.
 
----
+Not Chromium. Not WebView. Not CEF. Not QtWebEngine. It has its own HTML parser, CSS engine, JS runtime, layout engine, renderer, networking, native shells, and a pile of weird browser stuff that probably should have scared us off by now.
 
-So yeah, this is a web browser where every part is written from scratch. The parser, the DOM, the CSS engine, the JavaScript runtime, the layout engine, the SVG renderer, the network stack, the window shell, everything. It's all in this repo.
-
-If you've ever wondered how browsers actually work under the hood, this is a place where you can poke around and find out. The code has a lot of comments on purpose, because reading other people's browser code without comments is torture.
+It loads real sites. It also breaks on real sites. Both are kind of the point.
 
 ## What Works
 
-It's early days, but Vertex can load real websites and do a decent amount:
-
-| Area | What's there |
+| Area | Status |
 |---|---|
-| Platforms | Windows, macOS, Linux, all sharing the same engine |
-| Pages | HTTP/HTTPS, images, CSS, JS, SVGs, `<canvas>`, and `vertex://` internal pages |
-| Onion sites | `.onion` over Tor, either through the embedded Arti bridge or a local SOCKS proxy |
-| UI | Tabs, address bar, history, bookmarks, downloads, reload, zoom, find-in-page, context menus |
-| Search | DuckDuckGo for address bar queries |
-| Updates | Checks GitHub for new releases, downloads in the background, `F12` to install |
-| Speed | Caches resources, stylesheets, selector parsing, dirty layout, hover fast paths, viewport culling |
-| Profile | Per-user settings, history, bookmarks, downloads, cookies, local storage, session restore |
-| Testing | Test suites for HTML, CSS, layout, paint, JS, network, and codecs |
+| Platforms | Windows, macOS, Linux |
+| Pages | HTTP, HTTPS, images, CSS, JS, SVG, canvas, internal `vertex://` pages |
+| Onion sites | `.onion` through embedded Arti in release builds, or local Tor SOCKS fallback |
+| UI | Tabs, address bar, history, bookmarks, downloads, reload, zoom, find, context menus |
+| Search | DuckDuckGo from the address bar |
+| Updates | Checks GitHub releases, downloads update, `F12` installs it |
+| Profile | History, bookmarks, downloads, cookies, local storage, session restore |
+| Tests | HTML, CSS, layout, paint, JS, network, codec tests |
 
-Some pages still break. Some JS features aren't there yet. Layout is a work in progress. But every broken page turns into something new getting built.
+Some stuff is real. Some stuff is a stub with enough shape to unblock websites. Some stuff is cursed but useful. Welcome to browsers.
 
-## How It's Set Up
+## Fun Internal Pages
 
-Vertex has one engine that works everywhere, with thin platform-specific shells on top:
+These work from the address bar:
 
 ```text
-          native shell
-   Windows / macOS / Linux
-              |
-              v
-        BrowserChrome
- tabs, navigation, URL state, updater
-              |
-              v
-   HTML -> DOM -> CSS cascade -> layout tree -> paint
-              |
-              v
-       JS runtime + DOM bridge
+vertex://home
+vertex://history
+vertex://bookmarks
+vertex://downloads
+vertex://settings
+vertex://site-data
+vertex://platform-features
 ```
 
-The platform layer does windows, input, and pixels. The engine handles everything else: parsing, DOM, styles, layout, scripting, rendering.
+`vertex://platform-features` is the messy debug page for platform APIs: fullscreen, pointer lock, PiP, file picker, clipboard, notifications, gamepads, permissions, sensors, wake lock, and other browser-shaped things.
 
-### What We Built
+## Onion Support
 
-- **HTML** -- tokenizer and parser with entity handling, auto-close, rawtext/RCDATA modes, and error recovery that handles real-world mess.
-- **CSS** -- cascade with combinators, attributes, pseudo-classes (`:hover`, `:has()`, `:nth-child(... of selector)`), media/supports queries, custom properties, logical properties, transforms, gradients, flex, grid, tables, floats, sticky positioning, form styling, viewport and math functions.
-- **JavaScript** -- lexer, parser, compiler, VM, DOM bindings, timers, events, promises, `fetch`, `XMLHttpRequest`, `localStorage`, `sessionStorage`, `cookie`, a hand-rolled WebSocket client (we wrote the handshake, framing, and masking ourselves, curl just handles the encrypted pipe for `wss://`), DOM selectors, geometry APIs, observer APIs, `requestAnimationFrame`, `performance.now()`, `matchMedia`, `navigator.clipboard`, `history.pushState`/`replaceState`/`go()`, `console.*`, messaging (`postMessage`, `MessageChannel`, `BroadcastChannel`), `MutationObserver`, `IntersectionObserver`, `ResizeObserver`.
-- **WebAssembly** -- MVP hand-rolled parser/interpreter for small still-page modules: `WebAssembly.Module`, `Instance`, `instantiate`, `validate`, exported functions, i32 arithmetic/comparisons, internal calls, linear memory, `i32.load`/`i32.store`, and minimal `ArrayBuffer`/`Uint8Array` byte input.
-- **Canvas 2D** -- full `<canvas>` context with `fillRect`, `strokeRect`, `clearRect`, paths, arcs, bezier/quadratic curves, `fill`, `stroke`, `save`/`restore`, transforms, `drawImage`.
-- **Layout** -- block, inline, line boxes, floats, tables, flex, grid, replaced elements, positioned boxes (relative, absolute, sticky, fixed), scrolling, overflow containers, dirty-layout invalidation, adaptive hover throttling.
-- **SVG** -- inline and external SVGs, paths, gradients, transforms, text, symbols, `<use>`, class/style rules, stroke/fill, raster fallback.
-- **Painting** -- text, boxes, links, images, controls, SVG, canvas, hover, focus, dirty regions, cached render paths, hit testing, spatial index for hover.
-- **Fonts** -- TrueType parsing, `@font-face` web font loading on all platforms.
-- **Codecs** -- hand-rolled PNG decoder (all color types, tRNS), JPEG decoder (Huffman, IDCT, progressive), WebP still-image decoder (VP8, VP8L, VP8X alpha), DEFLATE/inflate (RFC 1951), CRC-32.
+Release builds try to ship the Arti bridge next to Vertex:
 
-### Zero Third-Party Dependencies
+```text
+vertex_arti.dll
+libvertex_arti.dylib
+libvertex_arti.so
+```
 
-The only external code Vertex uses is platform-native APIs for drawing and text:
+If that file is there, Vertex can use Arti directly for `.onion` URLs. No separate `tor` terminal needed.
 
-| Dependency | What it does |
-|---|---|
-| Direct2D / DirectWrite | Windows pixels and glyphs |
-| Core Graphics / Core Text | macOS pixels and glyphs |
+If it is not there, Vertex falls back to SOCKS5:
 
-Linux doesn't use any of those. Windowing (XCB), 2D rendering, text, `<canvas>`, TrueType fonts, PNG/JPEG/WebP decoding, DEFLATE, WebSocket, TLS, and the HTTP client are all hand-rolled. No GTK, no Cairo, no Pango, no fontconfig, no stb_image, no libcurl.
+```text
+127.0.0.1:9050
+```
 
-Everything is built from scratch in this repo.
+Override it if needed:
 
-One exception worth calling out: `.onion` support can use Arti, the Tor Project's Rust Tor implementation. The browser still does its own URL parsing, HTTP, TLS plumbing, and SOCKS fallback, but Tor itself is not something we want to fake badly in browser code. If the Arti bridge is built, Vertex loads it next to the app. If not, it falls back to a local Tor/Arti SOCKS proxy.
+```sh
+VERTEX_TOR_SOCKS=127.0.0.1:9050 ./build/Vertex
+```
+
+Windows PowerShell:
+
+```powershell
+$env:VERTEX_TOR_SOCKS="127.0.0.1:9050"
+.\build\Release\Vertex.exe
+```
+
+Custom Arti bridge path:
+
+```sh
+VERTEX_ARTI_LIB=/path/to/libvertex_arti.so ./build/Vertex
+```
+
+Important bit: Vertex does not try to reimplement Tor crypto in C++. That would be a fun way to accidentally build a privacy hazard. It uses Arti for Tor, while Vertex still owns the browser/network integration around it.
 
 ## Download
 
-Grab a release: [github.com/hackclubium/Vertex/releases](https://github.com/hackclubium/Vertex/releases)
+Grab releases here:
 
-| Platform | Installer |
+```text
+https://github.com/hackclubium/Vertex/releases
+```
+
+Release assets usually include:
+
+| Platform | Main download |
 |---|---|
 | Windows | `Vertex-windows-installer.exe` |
 | macOS | `Vertex-macos-installer.dmg` |
 | Linux | `Vertex-linux-installer.tar.gz` |
 
-Each release also has portable updater binaries. Vertex checks for new releases on startup, and you can press `F12` to install one. It launches `VertexUpdater`, swaps the binary, and restarts.
-
-Releases built with `-DVERTEX_BUILD_ARTI=ON` include the Arti bridge (`vertex_arti.dll`, `libvertex_arti.dylib`, or `libvertex_arti.so`). That means `.onion` URLs can work without you starting `tor` in a terminal first. If the bridge is missing, Vertex still supports `.onion` through a SOCKS proxy at `127.0.0.1:9050`, or whatever you put in `VERTEX_TOR_SOCKS`.
-
-## Where Profile Data Lives
-
-On first launch, Vertex creates profile and cache folders:
-
-| Platform | Profile | Cache |
-|---|---|---|
-| Windows | `%LOCALAPPDATA%\Vertex\User Data\Default` | `%LOCALAPPDATA%\Vertex\Cache\Default` |
-| macOS | `~/Library/Application Support/Vertex/Default` | `~/Library/Caches/Vertex/Default` |
-| Linux | `~/.config/Vertex/Default` | `~/.cache/Vertex/Default` |
-
-Profile stuff includes `history.tsv`, `bookmarks.tsv`, `downloads.tsv`, `settings.json`, `cookies.tsv`, `local_storage/`, and `session_restore.json`. You can see all of it from inside the browser at `vertex://settings`, `vertex://site-data`, `vertex://history`, `vertex://bookmarks`, and `vertex://downloads`.
+Portable bundles are there too. The auto-updater still uses the single-binary portable assets, and separately updates the Arti bridge when the release has one.
 
 ## Building
 
-CMake and C++17. Version comes from the latest git tag.
+You need CMake and a C++17 compiler.
 
-Rust is optional. By default, the browser builds without downloading Rust crates, and `.onion` uses the SOCKS fallback. If you want the embedded Arti bridge, opt in with `-DVERTEX_BUILD_ARTI=ON`.
+Rust is optional for local builds. If you do not build the Arti bridge, `.onion` still works through `VERTEX_TOR_SOCKS`.
 
 ### Windows
 
-Needs Visual Studio Build Tools with the x64 C++ toolchain.
+Visual Studio Build Tools, x64 C++ toolchain:
 
 ```bat
-build.bat
+cmake -S . -B build -A x64
+cmake --build build --config Release
 build\Release\Vertex.exe
+```
+
+Build embedded Arti too:
+
+```bat
+cmake -S . -B build -A x64 -DVERTEX_BUILD_ARTI=ON
+cmake --build build --config Release --target vertex_arti
+cmake --build build --config Release
 ```
 
 ### macOS
 
-Needs Xcode command line tools.
+Xcode command line tools:
 
 ```sh
 cmake -B build
@@ -141,9 +139,17 @@ cmake --build build
 open build/Vertex.app
 ```
 
+With embedded Arti:
+
+```sh
+cmake -B build -DVERTEX_BUILD_ARTI=ON
+cmake --build build --target vertex_arti
+cmake --build build
+```
+
 ### Linux
 
-Only needs XCB development headers. No GTK, Cairo, Pango, or fontconfig. Vertex does its own windowing, rendering, text, fonts, and `<canvas>` on Linux.
+XCB headers only. No GTK/Cairo/Pango/fontconfig stack.
 
 ```sh
 sudo apt-get install -y build-essential cmake libxcb1-dev pkg-config
@@ -152,64 +158,46 @@ cmake --build build
 ./build/Vertex
 ```
 
-### Optional Arti bridge
-
-If you want `.onion` support without running a separate Tor process, install Rust and build the `vertex_arti` target once:
+With embedded Arti:
 
 ```sh
-rustup default stable
 cmake -B build -DVERTEX_BUILD_ARTI=ON
 cmake --build build --target vertex_arti
 cmake --build build
 ```
 
-On Windows with Visual Studio builds:
+## Keyboard Stuff
 
-```bat
-cmake -S . -B build -DVERTEX_BUILD_ARTI=ON
-cmake --build build --config Release --target vertex_arti
-cmake --build build --config Release
-```
-
-No Rust? Still fine. Run Tor or Arti yourself and Vertex will use the SOCKS proxy:
-
-```sh
-VERTEX_TOR_SOCKS=127.0.0.1:9050 ./build/Vertex
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:VERTEX_TOR_SOCKS="127.0.0.1:9050"
-.\build\Release\Vertex.exe
-```
-
-If you built the Arti library somewhere else, point Vertex at it:
-
-```sh
-VERTEX_ARTI_LIB=/path/to/libvertex_arti.so ./build/Vertex
-```
-
-## Keyboard Shortcuts
-
-| Shortcut | What it does |
+| Shortcut | Action |
 |---|---|
-| `Ctrl+L` | Focus the address bar |
+| `Ctrl+L` | Address bar |
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+R` or `F5` | Reload |
-| `Escape` | Stop loading |
-| `Ctrl+F` | Find in page |
+| `Escape` | Stop loading / dismiss stuff |
+| `Ctrl+F` | Find |
 | `Ctrl+G` / `Ctrl+Shift+G` | Next / previous match |
-| `Ctrl++` / `Ctrl+-` | Zoom in / out |
-| `Ctrl+0` | Reset zoom |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Zoom |
 | `Alt+Left` / `Alt+Right` | Back / forward |
-| `Ctrl+1`-`Ctrl+9` | Switch to tab by number |
+| `Ctrl+1`-`Ctrl+9` | Switch tabs |
 | `Ctrl+H` / `Ctrl+B` / `Ctrl+J` | History / bookmarks / downloads |
-| `F12` | Install a downloaded update |
+| `F11` | Fullscreen on supported platform shells |
+| `F12` | Install downloaded update |
+
+Linux platform feature shortcuts:
+
+```text
+Ctrl+Shift+M  open vertex://platform-features
+Ctrl+Shift+U  toggle/fill platform feature debug state
+```
+
+macOS equivalents:
+
+```text
+Cmd+Shift+M
+Cmd+Shift+U
+```
 
 ## Tests
-
-Tests are organized by what they cover:
 
 ```bat
 build\Release\vertex-tests.exe html
@@ -222,7 +210,7 @@ build\Release\vertex-tests.exe codec
 build\Release\vertex-layout-engine-tests.exe
 ```
 
-There are also some offline debugging tools:
+Useful debug tools:
 
 ```sh
 build/dump_layout page.html [viewportWidth]
@@ -231,63 +219,60 @@ build/render_probe page.html [viewportWidth]
 build/test_url
 ```
 
-- `dump_layout` prints the box tree and geometry, handy when a site is broken and you'd rather look at structured output than stare at screenshots.
-- `render_probe` runs the full layout/paint pipeline on a fixture and outputs metrics, box tree, and paint order.
-- `test_url` runs unit tests for URL helpers.
-
-## Performance Debugging
-
-Set `VERTEX_PERF=1` before launching to get per-page timing info:
+## Perf Debugging
 
 ```sh
 VERTEX_PERF=1 ./build/Vertex
 ```
 
-On Windows:
+Windows:
 
 ```bat
 set VERTEX_PERF=1
 build\Release\Vertex.exe
 ```
 
-The output includes fetch time, resource requests and cache hits, style time, layout time, paint time, JS parse/run time, and whether layout was reused.
+You get fetch/cache/style/layout/paint/JS timings in the status bar.
 
-## Fixing the Web, One Page at a Time
+## Where Data Goes
 
-This is how Vertex grows:
+| Platform | Profile | Cache |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\Vertex\User Data\Default` | `%LOCALAPPDATA%\Vertex\Cache\Default` |
+| macOS | `~/Library/Application Support/Vertex/Default` | `~/Library/Caches/Vertex/Default` |
+| Linux | `~/.config/Vertex/Default` | `~/.cache/Vertex/Default` |
 
-1. Find a page that breaks.
-2. Figure out which part is failing, HTML, CSS, JS, layout, paint, network, or platform.
-3. Write the smallest test you can that reproduces the bug.
-4. Fix it.
-5. Keep the test.
+Mostly TSV and JSON files. Easy to inspect. Easy to delete when something gets weird.
 
-Wikipedia has been the go-to test site because it hits so many things small browsers usually skip: ResourceLoader scripts, dense CSS, logical properties, SVG sprites, form controls, floats, positioned elements, selectors, events, history, scrolling, and cached resources.
-
-## Project Layout
+## Project Map
 
 ```text
 src/
-  codec/         PNG, JPEG, WebP, DEFLATE decoders, CRC-32
-  css/           stylesheet parsing, cascade, computed style
-  font/          TrueType parsing, @font-face loading
-  html/          tokenizer, parser, embedded resources
-  js/            lexer, compiler, VM, runtime, DOM bridge, Canvas 2D
-  layout/        box tree and layout engine
-  network/       fetcher, URL handling, cache, text decoding, TLS, WebSocket
-  paint/         display-list pieces
-  platform/      native shells and shared browser chrome
-  render/        painting, SVG, images, fonts
-tools/
-  dump_layout    offline layout inspection
-  dump_js        offline JS execution
-  render_probe   deterministic layout/paint diagnostics
-  test_url       URL helper unit tests
-tests/           subsystem and regression tests
+  codec/       PNG, JPEG, WebP, DEFLATE
+  css/         parser, cascade, computed style
+  font/        TrueType and web fonts
+  html/        tokenizer, parser, resources
+  js/          lexer, compiler, VM, DOM bridge
+  layout/      layout tree and geometry
+  network/     HTTP, TLS, WebSocket, cookies, Tor/Arti bridge loader
+  paint/       display-list pieces
+  platform/    Windows/macOS/Linux shells and browser chrome
+  render/      painting, SVG, images, canvas
+tests/         subsystem tests
+tools/         debug tools
+third_party/   optional Arti bridge crate
 ```
 
-## Why This Exists
+## The Vibe
 
-Browsers feel like these giant, impenetrable black boxes that nobody can really understand.
+Browsers are usually giant black boxes. Vertex is trying to be the opposite: small enough to read, weird enough to learn from, and real enough to load pages that were absolutely not designed for it.
 
-Vertex is trying to be the opposite. A browser that starts small, stays readable, and gets more capable over time by actually shipping correct behavior. Every feature is a chance to understand one more piece of how the web works.
+The loop is simple:
+
+1. Open a page.
+2. Watch it break.
+3. Figure out which browser subsystem lied.
+4. Fix the smallest thing.
+5. Keep the test.
+
+That's basically the whole project.
