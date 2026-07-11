@@ -139,6 +139,12 @@ jobs:
           mv vertex-windows-installer/Vertex-*.exe Vertex-windows-installer.exe || true
           mv vertex-macos-installer/Vertex-*.dmg Vertex-macos-installer.dmg || true
           mv vertex-linux-installer/Vertex-*.tar.gz Vertex-linux-installer.tar.gz || true
+          cp vertex-windows-portable/Vertex.exe Vertex-windows-portable.exe || true
+          cp vertex-macos-portable/Vertex Vertex-macos-portable || true
+          cp vertex-linux-portable/Vertex Vertex-linux-portable || true
+          cp vertex-windows-portable/vertex_arti.dll Vertex-windows-vertex_arti.dll || true
+          cp vertex-macos-portable/libvertex_arti.dylib Vertex-macos-libvertex_arti.dylib || true
+          cp vertex-linux-portable/libvertex_arti.so Vertex-linux-libvertex_arti.so || true
           [ -d vertex-windows-portable ] && (cd vertex-windows-portable && zip -r ../Vertex-windows-portable.zip .) || true
           [ -d vertex-macos-portable ] && (cd vertex-macos-portable && zip -r ../Vertex-macos-portable.zip .) || true
           [ -d vertex-linux-portable ] && (cd vertex-linux-portable && tar -czf ../Vertex-linux-portable.tar.gz .) || true

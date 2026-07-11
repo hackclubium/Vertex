@@ -180,16 +180,20 @@ private:
         }
 
         std::string assetName;
+        std::string bridgeAssetName;
 #ifdef _WIN32
         assetName = "Vertex-windows-portable.exe";
+        bridgeAssetName = "Vertex-windows-vertex_arti.dll";
 #elif defined(__APPLE__)
         assetName = "Vertex-macos-portable";
+        bridgeAssetName = "Vertex-macos-libvertex_arti.dylib";
 #else
         assetName = "Vertex-linux-portable";
+        bridgeAssetName = "Vertex-linux-libvertex_arti.so";
 #endif
 
-        std::string downloadUrl;
-        {
+        auto findAssetUrl = [&](const std::string& wanted) -> std::string {
+            std::string found;
             std::string needle = "\"browser_download_url\"";
             size_t pos = 0;
             while (pos < res.body.size()) {
@@ -199,15 +203,17 @@ private:
                 size_t q2 = (q1 != std::string::npos) ? res.body.find('"', q1 + 1) : std::string::npos;
                 if (q1 != std::string::npos && q2 != std::string::npos) {
                     std::string url = res.body.substr(q1 + 1, q2 - q1 - 1);
-                    if (url.find(assetName) != std::string::npos) {
-                        downloadUrl = url;
-                        break;
-                    }
+                    if (url.find(wanted) != std::string::npos) { found = url; break; }
                 }
                 pos = urlKey + needle.size();
             }
-            if (downloadUrl.empty()) { setStatus(""); return; }
-        }
+            return found;
+        };
+
+        std::string downloadUrl = findAssetUrl(assetName);
+        std::string bridgeUrl = findAssetUrl(bridgeAssetName);
+
+        if (downloadUrl.empty()) { setStatus(""); return; }
 
         setStatus("Downloading Vertex " + tag + "...");
 
@@ -222,6 +228,14 @@ private:
             std::ofstream out(updatePath, std::ios::binary);
             if (!out.is_open()) { setStatus("Failed to write update."); return; }
             out.write(dlRes.body.data(), dlRes.body.size());
+        }
+
+        if (!bridgeUrl.empty()) {
+            auto bridgeRes = FetchUrl(bridgeUrl);
+            if (bridgeRes.success && bridgeRes.body.size() > 100 * 1024) {
+                std::ofstream bridgeOut(bridgePath(exePath), std::ios::binary);
+                if (bridgeOut.is_open()) bridgeOut.write(bridgeRes.body.data(), bridgeRes.body.size());
+            }
         }
 
 #ifndef _WIN32
@@ -258,6 +272,18 @@ private:
         return dir + "VertexUpdater.exe";
 #else
         return dir + "VertexUpdater";
+#endif
+    }
+
+    static std::string bridgePath(const std::string& exePath) {
+        size_t slash = exePath.find_last_of("/\\");
+        std::string dir = slash == std::string::npos ? std::string() : exePath.substr(0, slash + 1);
+#ifdef _WIN32
+        return dir + "vertex_arti.dll";
+#elif defined(__APPLE__)
+        return dir + "libvertex_arti.dylib";
+#else
+        return dir + "libvertex_arti.so";
 #endif
     }
 
