@@ -43,7 +43,7 @@ where
 {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
-    let mut delimiter_len = 4usize;
+    let delimiter_len;
     let header_end = loop {
         let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
         if n == 0 {

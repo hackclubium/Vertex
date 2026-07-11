@@ -185,6 +185,7 @@ elseif (APPLE)
         vertex_engine
         "-framework Cocoa"
         "-framework AVFoundation"
+        "-framework CoreMedia"
         "-framework QuartzCore"
         "-framework CoreGraphics"
         "-framework CoreText"
