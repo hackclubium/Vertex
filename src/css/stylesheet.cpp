@@ -25,6 +25,31 @@ static float g_viewportH = 600.f;
 
 void SetCssViewport(float w, float h) { g_viewportW = w; g_viewportH = h; }
 
+// Parse a CSS time value ("300ms", "1.5s") into seconds.
+static float ParseCssSeconds(const std::string& raw) {
+    std::string v = raw;
+    while (!v.empty() && std::isspace((unsigned char)v.front())) v.erase(v.begin());
+    while (!v.empty() && std::isspace((unsigned char)v.back()))  v.pop_back();
+    for (char& c : v) c = (char)std::tolower((unsigned char)c);
+    float dur = 0.f;
+    try { dur = std::stof(v); } catch (...) { return 0.f; }
+    if (v.find("ms") != std::string::npos) dur /= 1000.f;
+    return dur;
+}
+
+// Maps a timing-function keyword to the enum used by ComputedStyle::animationTimingFunction.
+static int ParseCssTimingFunction(const std::string& raw) {
+    std::string v = raw;
+    while (!v.empty() && std::isspace((unsigned char)v.front())) v.erase(v.begin());
+    while (!v.empty() && std::isspace((unsigned char)v.back()))  v.pop_back();
+    for (char& c : v) c = (char)std::tolower((unsigned char)c);
+    if (v == "linear") return 1;
+    if (v == "ease-in") return 2;
+    if (v == "ease-out") return 3;
+    if (v == "ease-in-out") return 4;
+    return 0; // ease (default), and unrecognized (e.g. cubic-bezier(...), steps(...))
+}
+
 // Parse a CSS length into pixels.  Returns -1 for inherit/auto/none/unknown.
 static float ParseLength(const std::string& raw, float emBase = -1.f) {
     if (emBase < 0.f) emBase = g_emBase;
@@ -906,6 +931,59 @@ static bool ParseLinearGradient(const std::string& raw, ComputedStyle& out) {
     out.gradientStops = std::move(stops);
     out.gradientSet = true;
     return true;
+}
+
+static void ParseAnimationDeclaration(const std::string& prop, const std::string& val, ComputedStyle& out) {
+    if (prop == "animation-name") { out.animationName = sTrim(val); out.animationSet = true; return; }
+    if (prop == "animation-duration") { out.animationDuration = ParseCssSeconds(val); out.animationSet = true; return; }
+    if (prop == "animation-delay") { out.animationDelay = ParseCssSeconds(val); out.animationSet = true; return; }
+    if (prop == "animation-iteration-count") {
+        std::string v = sLower(sTrim(val));
+        out.animationIterationCount = (v == "infinite") ? -1.f : ([&]{ try { return std::stof(v); } catch (...) { return 1.f; } })();
+        out.animationSet = true;
+        return;
+    }
+    if (prop == "animation-direction") {
+        std::string v = sLower(sTrim(val));
+        out.animationDirection = (v == "reverse") ? 1 : (v == "alternate") ? 2 : (v == "alternate-reverse") ? 3 : 0;
+        out.animationSet = true;
+        return;
+    }
+    if (prop == "animation-fill-mode") {
+        std::string v = sLower(sTrim(val));
+        out.animationFillMode = (v == "forwards") ? 1 : (v == "backwards") ? 2 : (v == "both") ? 3 : 0;
+        out.animationSet = true;
+        return;
+    }
+    if (prop == "animation-timing-function") { out.animationTimingFunction = ParseCssTimingFunction(val); out.animationSet = true; return; }
+    if (prop == "animation-play-state") return;
+
+    std::istringstream ass(val); std::string tok;
+    out.animationSet = true;
+    bool sawDuration = false;
+    while (ass >> tok) {
+        std::string tl = sLower(tok);
+        if (tl == "infinite") out.animationIterationCount = -1.f;
+        else if (tl == "reverse") out.animationDirection = 1;
+        else if (tl == "alternate") out.animationDirection = 2;
+        else if (tl == "alternate-reverse") out.animationDirection = 3;
+        else if (tl == "forwards") out.animationFillMode = 1;
+        else if (tl == "backwards") out.animationFillMode = 2;
+        else if (tl == "both") out.animationFillMode = 3;
+        else if (tl == "paused" || tl == "running" || tl == "normal") {}
+        else if (tl == "ease" || tl == "linear" || tl == "ease-in" || tl == "ease-out" || tl == "ease-in-out") out.animationTimingFunction = ParseCssTimingFunction(tl);
+        else if (!tl.empty() && (std::isdigit((unsigned char)tl[0]) || tl[0] == '.')
+                 && tl.find('s') != std::string::npos
+                 && tl.find_first_not_of("0123456789.msS") == std::string::npos) {
+            float secs = ParseCssSeconds(tl);
+            if (!sawDuration) { out.animationDuration = secs; sawDuration = true; }
+            else out.animationDelay = secs;
+        } else if (!tl.empty() && std::isdigit((unsigned char)tl[0])) {
+            try { out.animationIterationCount = std::stof(tl); } catch (...) {}
+        } else {
+            out.animationName = tok;
+        }
+    }
 }
 
 static void ApplyDeclaration(const std::string& prop,
@@ -1922,7 +2000,7 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "animation-timing-function" || prop == "animation-delay"
             || prop == "animation-iteration-count" || prop == "animation-direction"
             || prop == "animation-fill-mode" || prop == "animation-play-state") {
-        // Animation properties — parsed but no visual effect yet.
+        ParseAnimationDeclaration(prop, val, out);
     } else if (prop == "filter") {
         // Parse filter functions: blur(), brightness(), contrast(), grayscale(), opacity(), saturate()
         std::string v = sLower(val);
@@ -3443,6 +3521,43 @@ Stylesheet ParseStylesheet(const std::string& rawCss) {
                     }
                     if (!family.empty() && !srcUrl.empty()) {
                         sheet.fontFaces.push_back({family, srcUrl});
+                    }
+                } else if (header.rfind("@keyframes", 0) == 0 || header.rfind("@-webkit-keyframes", 0) == 0) {
+                    // Parse @keyframes name { 0%/from/50%/to { decls } ... }
+                    size_t nameStart = header.find_first_not_of(" \t", header.find("keyframes") + 9);
+                    std::string name = nameStart == std::string::npos ? "" : sTrim(header.substr(nameStart));
+                    if (!name.empty()) {
+                        std::string body = css.substr(lbPos + 1, rbPos - lbPos - 1);
+                        std::vector<KeyframeStop> stops;
+                        size_t sp = 0;
+                        while (sp < body.size()) {
+                            while (sp < body.size() && std::isspace((unsigned char)body[sp])) sp++;
+                            if (sp >= body.size()) break;
+                            size_t slb = body.find('{', sp);
+                            if (slb == std::string::npos) break;
+                            size_t srb = FindMatchingCssBrace(body, slb);
+                            if (srb == std::string::npos) break;
+                            std::string selRaw = sLower(sTrim(body.substr(sp, slb - sp)));
+                            std::vector<std::string> selTokens;
+                            { std::stringstream ss(selRaw); std::string tok;
+                              while (std::getline(ss, tok, ',')) selTokens.push_back(sTrim(tok)); }
+                            for (const auto& sel : selTokens) {
+                                float pct = (sel == "from") ? 0.f : (sel == "to") ? 100.f
+                                          : [&]{ try { return std::stof(sel); } catch (...) { return -1.f; } }();
+                                if (pct < 0.f) continue;
+                                KeyframeStop stop; stop.percent = pct;
+                                for (const auto& decl : SplitDeclarations(body.substr(slb + 1, srb - slb - 1))) {
+                                    size_t colon = decl.find(':');
+                                    if (colon == std::string::npos) continue;
+                                    StoreDeclaration(sLower(sTrim(decl.substr(0, colon))),
+                                                      sTrim(decl.substr(colon + 1)), stop.style);
+                                }
+                                stops.push_back(std::move(stop));
+                            }
+                            sp = srb + 1;
+                        }
+                        std::sort(stops.begin(), stops.end(), [](const KeyframeStop& a, const KeyframeStop& b) { return a.percent < b.percent; });
+                        if (!stops.empty()) sheet.keyframes[name] = std::move(stops);
                     }
                 }
                 pos = rbPos + 1;

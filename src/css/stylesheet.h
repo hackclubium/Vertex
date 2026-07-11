@@ -73,9 +73,16 @@ struct FontFace {
     std::string srcUrl;
 };
 
+// One `N% { decls }` stop inside an @keyframes block.
+struct KeyframeStop {
+    float percent = 0.f;   // 0..100
+    ComputedStyle style;
+};
+
 struct Stylesheet {
     std::vector<CssRule> rules;
     std::vector<FontFace> fontFaces;
+    std::unordered_map<std::string, std::vector<KeyframeStop>> keyframes;
     std::unordered_map<std::string, std::vector<size_t>> idRuleBuckets;
     std::unordered_map<std::string, std::vector<size_t>> classRuleBuckets;
     std::unordered_map<std::string, std::vector<size_t>> tagRuleBuckets;

@@ -3,6 +3,7 @@
 #include "render/renderer.h"
 #include "layout/layout_engine.h"
 #include "render/transition.h"
+#include "render/animation.h"
 #include "render/canvas_renderer.h"
 
 #include <d2d1.h>
@@ -237,7 +238,10 @@ void Renderer::CollectAnchors(const LayoutBox& box) {
 void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float topInset) {
     // Apply CSS transition interpolation to the style before painting.
     ComputedStyle transStyle = box.style;
-    if (box.node) TransitionManager::instance().applyTransition(box.node, transStyle);
+    if (box.node) {
+        TransitionManager::instance().applyTransition(box.node, transStyle);
+        AnimationManager::instance().applyAnimation(box.node, transStyle);
+    }
     const ComputedStyle& s = transStyle;
     float sx = box.x;
     float sy = box.y - scrollY + topInset;
@@ -581,7 +585,10 @@ void Renderer::PaintLines(const LayoutBox& box, float scrollY, float topInset, b
             }
             // Text fragment.
             ComputedStyle transStyle = frag.src->style;
-            if (frag.src->node) TransitionManager::instance().applyTransition(frag.src->node, transStyle);
+            if (frag.src->node) {
+                TransitionManager::instance().applyTransition(frag.src->node, transStyle);
+                AnimationManager::instance().applyAnimation(frag.src->node, transStyle);
+            }
             const ComputedStyle& fs = transStyle;
             if (fs.visibilitySet && fs.visibilityHidden) continue;
             float sy = frag.y - (underFixed ? 0.f : scrollY) + topInset;
@@ -685,23 +692,27 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     }
 
     // CSS transform: apply a D2D matrix around this box's center.
+    // Animated transform values (if @keyframes drives this box) take priority
+    // over the authored style.
+    ComputedStyle animTransform = box.style;
+    if (box.node) AnimationManager::instance().applyAnimation(box.node, animTransform);
     D2D1_MATRIX_3X2_F oldTransform;
-    bool hasTransform = box.style.transformSet && m_rt &&
-        (box.style.transformTx != 0 || box.style.transformTy != 0
-         || box.style.transformScale != 1 || box.style.transformRotate != 0);
+    bool hasTransform = animTransform.transformSet && m_rt &&
+        (animTransform.transformTx != 0 || animTransform.transformTy != 0
+         || animTransform.transformScale != 1 || animTransform.transformRotate != 0);
     if (hasTransform) {
         m_rt->GetTransform(&oldTransform);
         float cx = box.x + box.borderBoxW() / 2;
         float cy = box.y - effScroll + topInset + box.borderBoxH() / 2;
-        float tx = box.style.transformTxPercent
-            ? box.borderBoxW() * (box.style.transformTx / 100.f)
-            : box.style.transformTx * m_zoom;
-        float ty = box.style.transformTyPercent
-            ? box.borderBoxH() * (box.style.transformTy / 100.f)
-            : box.style.transformTy * m_zoom;
+        float tx = animTransform.transformTxPercent
+            ? box.borderBoxW() * (animTransform.transformTx / 100.f)
+            : animTransform.transformTx * m_zoom;
+        float ty = animTransform.transformTyPercent
+            ? box.borderBoxH() * (animTransform.transformTy / 100.f)
+            : animTransform.transformTy * m_zoom;
         auto mat = D2D1::Matrix3x2F::Translation(-cx, -cy)
-                 * D2D1::Matrix3x2F::Scale(box.style.transformScale, box.style.transformScale)
-                 * D2D1::Matrix3x2F::Rotation(box.style.transformRotate)
+                 * D2D1::Matrix3x2F::Scale(animTransform.transformScale, animTransform.transformScale)
+                 * D2D1::Matrix3x2F::Rotation(animTransform.transformRotate)
                  * D2D1::Matrix3x2F::Translation(cx + tx, cy + ty);
         m_rt->SetTransform(mat * oldTransform);
     }

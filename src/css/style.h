@@ -97,6 +97,15 @@ struct ComputedStyle {
     float    transitionDuration = 0; // seconds
     std::string transitionProperty; // "all", "opacity", "color", etc.
     bool     transitionSet   = false;
+    // animation (@keyframes-driven; not an inherited property)
+    std::string animationName;
+    float    animationDuration = 0;      // seconds
+    float    animationDelay    = 0;      // seconds
+    float    animationIterationCount = 1; // -1 = infinite
+    int      animationDirection = 0;     // 0=normal, 1=reverse, 2=alternate, 3=alternate-reverse
+    int      animationFillMode  = 0;     // 0=none, 1=forwards, 2=backwards, 3=both
+    int      animationTimingFunction = 0; // 0=ease, 1=linear, 2=ease-in, 3=ease-out, 4=ease-in-out
+    bool     animationSet = false;
     // outline
     float    outlineWidth    = 0;
     CssColor outlineColor;
@@ -358,6 +367,16 @@ struct ComputedStyle {
         if (child.columnCountSet) { out.columnCount = child.columnCount; out.columnGap = child.columnGap; out.columnCountSet = true; }
         if (child.aspectRatioSet) { out.aspectRatio = child.aspectRatio; out.aspectRatioSet = true; }
         if (child.transitionSet) { out.transitionDuration = child.transitionDuration; out.transitionProperty = child.transitionProperty; out.transitionSet = true; }
+        if (child.animationSet) {
+            out.animationName = child.animationName;
+            out.animationDuration = child.animationDuration;
+            out.animationDelay = child.animationDelay;
+            out.animationIterationCount = child.animationIterationCount;
+            out.animationDirection = child.animationDirection;
+            out.animationFillMode = child.animationFillMode;
+            out.animationTimingFunction = child.animationTimingFunction;
+            out.animationSet = true;
+        }
         if (child.outlineSet) { out.outlineWidth = child.outlineWidth; out.outlineColor = child.outlineColor; out.outlineSet = true; }
         if (child.textShadowSet) { out.textShadowX = child.textShadowX; out.textShadowY = child.textShadowY; out.textShadowBlur = child.textShadowBlur; out.textShadowColor = child.textShadowColor; out.textShadowSet = true; }
         if (child.width        >= 0) { out.width = child.width; out.widthPercent = -1; out.widthCalcPercent = -1; out.widthCalcOffset = 0; }

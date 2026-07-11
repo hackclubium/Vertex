@@ -957,5 +957,32 @@ TestResult RunCssTests() {
             result);
     }
 
+    {
+        auto sheet = ParseStylesheet(
+            "@keyframes fade-slide {"
+            "from, 50% { opacity: 0; transform: translateX(10px); }"
+            "to { opacity: 1; transform: translateX(20px); }"
+            "}"
+            "#target { animation: fade-slide 150ms linear 75ms 2 alternate both; }");
+        auto dom = ParseHtml("<html><body><div id=\"target\"></div></body></html>");
+        auto* target = FindElementById(dom.get(), "target");
+        ComputedStyle style = target ? sheet.resolve(target) : ComputedStyle{};
+        const auto kf = sheet.keyframes.find("fade-slide");
+        std::string actual = "anim=" + style.animationName
+            + " dur=" + std::to_string((int)(style.animationDuration * 1000.f + 0.5f))
+            + " delay=" + std::to_string((int)(style.animationDelay * 1000.f + 0.5f))
+            + " iter=" + std::to_string((int)style.animationIterationCount)
+            + " dir=" + std::to_string(style.animationDirection)
+            + " fill=" + std::to_string(style.animationFillMode)
+            + " timing=" + std::to_string(style.animationTimingFunction)
+            + " stops=" + std::to_string(kf == sheet.keyframes.end() ? 0 : kf->second.size())
+            + " firstTx=" + std::to_string(kf == sheet.keyframes.end() ? -1 : (int)kf->second.front().style.transformTx)
+            + "\n";
+        ExpectEqual("css/animation/keyframes-and-shorthand",
+            actual,
+            "anim=fade-slide dur=150 delay=75 iter=2 dir=2 fill=3 timing=1 stops=3 firstTx=10\n",
+            result);
+    }
+
     return result;
 }

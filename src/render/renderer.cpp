@@ -3,6 +3,7 @@
 #include "css/stylesheet.h"
 #include "render/webfont.h"
 #include "render/transition.h"
+#include "render/animation.h"
 #include "network/url.h"
 #include "platform/chrome_theme.h"
 #include "render/svg.h"
@@ -849,6 +850,14 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                 m_layoutBaseStyles.clear();
                 m_layoutBoxesByNode.clear();
                 if (m_layoutRoot) CaptureLayoutBaseStyles(*m_layoutRoot);
+                if (m_layoutRoot && sheet) {
+                    std::function<void(const LayoutBox&)> startAnimations = [&](const LayoutBox& b) {
+                        if (b.node && b.style.animationSet)
+                            AnimationManager::instance().ensureStarted(b.node, b.style, *sheet);
+                        for (const auto& k : b.kids) startAnimations(*k);
+                    };
+                    startAnimations(*m_layoutRoot);
+                }
                 m_hoverCandidates.clear();
                 if (m_layoutRoot) BuildHoverIndex(*m_layoutRoot);
                 auto layoutEnd = std::chrono::steady_clock::now();
@@ -900,8 +909,9 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
                     m_rt->PopAxisAlignedClip();
                 }
                 docH = m_layoutRoot->contentH + 32.f;
-                // If transitions are active, schedule another repaint.
-                if (TransitionManager::instance().hasActiveTransitions() && m_hwnd)
+                // If transitions or animations are active, schedule another repaint.
+                if ((TransitionManager::instance().hasActiveTransitions()
+                     || AnimationManager::instance().hasActiveAnimations()) && m_hwnd)
                     InvalidateRect(m_hwnd, nullptr, FALSE);
             }
         } catch (const std::exception& ex) {
