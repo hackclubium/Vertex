@@ -41,14 +41,14 @@ async fn read_http_response<S>(stream: &mut S, max_bytes: usize) -> Result<(i32,
 where
     S: AsyncReadExt + Unpin,
 {
-    let mut buf = Vec::new();
+    let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 8192];
     let mut delimiter_len = 4usize;
     let header_end = loop {
         let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
         if n == 0 {
             if buf.is_empty() { return Err("empty response before headers".into()); }
-            let trimmed = buf.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(0);
+            let trimmed: u8 = buf.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(0u8);
             if trimmed == b'<' || trimmed.is_ascii_alphanumeric() {
                 return Ok((200, "text/html".into(), buf));
             }
