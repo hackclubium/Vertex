@@ -142,19 +142,52 @@ private:
 
         ComputedStyle out = a->style;
         auto lerp = [&](float x, float y) { return x + (y - x) * local; };
+        auto lerpColor = [&](CssColor x, CssColor y) {
+            x.r = lerp(x.r, y.r);
+            x.g = lerp(x.g, y.g);
+            x.b = lerp(x.b, y.b);
+            x.a = lerp(x.a, y.a);
+            return x;
+        };
         if (a->style.opacitySet && b->style.opacitySet)
             out.opacity = lerp(a->style.opacity, b->style.opacity);
-        if (a->style.bgColor.valid && b->style.bgColor.valid) {
-            out.bgColor.r = lerp(a->style.bgColor.r, b->style.bgColor.r);
-            out.bgColor.g = lerp(a->style.bgColor.g, b->style.bgColor.g);
-            out.bgColor.b = lerp(a->style.bgColor.b, b->style.bgColor.b);
-            out.bgColor.a = lerp(a->style.bgColor.a, b->style.bgColor.a);
+        if (a->style.bgColor.valid && b->style.bgColor.valid) { out.bgColor = lerpColor(a->style.bgColor, b->style.bgColor); out.bgColorSet = true; }
+        if (a->style.color.valid && b->style.color.valid) out.color = lerpColor(a->style.color, b->style.color);
+        if (a->style.borderColor.valid && b->style.borderColor.valid) out.borderColor = lerpColor(a->style.borderColor, b->style.borderColor);
+        if (a->style.borderTopColor.valid && b->style.borderTopColor.valid) out.borderTopColor = lerpColor(a->style.borderTopColor, b->style.borderTopColor);
+        if (a->style.borderRightColor.valid && b->style.borderRightColor.valid) out.borderRightColor = lerpColor(a->style.borderRightColor, b->style.borderRightColor);
+        if (a->style.borderBottomColor.valid && b->style.borderBottomColor.valid) out.borderBottomColor = lerpColor(a->style.borderBottomColor, b->style.borderBottomColor);
+        if (a->style.borderLeftColor.valid && b->style.borderLeftColor.valid) out.borderLeftColor = lerpColor(a->style.borderLeftColor, b->style.borderLeftColor);
+        if (a->style.outlineSet && b->style.outlineSet) {
+            out.outlineSet = true;
+            out.outlineWidth = lerp(a->style.outlineWidth, b->style.outlineWidth);
+            if (a->style.outlineColor.valid && b->style.outlineColor.valid) out.outlineColor = lerpColor(a->style.outlineColor, b->style.outlineColor);
         }
-        if (a->style.color.valid && b->style.color.valid) {
-            out.color.r = lerp(a->style.color.r, b->style.color.r);
-            out.color.g = lerp(a->style.color.g, b->style.color.g);
-            out.color.b = lerp(a->style.color.b, b->style.color.b);
-            out.color.a = lerp(a->style.color.a, b->style.color.a);
+        if (a->style.shadowSet && b->style.shadowSet && a->style.shadowInset == b->style.shadowInset) {
+            out.shadowSet = true;
+            out.shadowInset = a->style.shadowInset;
+            out.shadowX = lerp(a->style.shadowX, b->style.shadowX);
+            out.shadowY = lerp(a->style.shadowY, b->style.shadowY);
+            out.shadowBlur = lerp(a->style.shadowBlur, b->style.shadowBlur);
+            out.shadowSpread = lerp(a->style.shadowSpread, b->style.shadowSpread);
+            if (a->style.shadowColor.valid && b->style.shadowColor.valid) out.shadowColor = lerpColor(a->style.shadowColor, b->style.shadowColor);
+        }
+        if (a->style.textShadowSet && b->style.textShadowSet) {
+            out.textShadowSet = true;
+            out.textShadowX = lerp(a->style.textShadowX, b->style.textShadowX);
+            out.textShadowY = lerp(a->style.textShadowY, b->style.textShadowY);
+            out.textShadowBlur = lerp(a->style.textShadowBlur, b->style.textShadowBlur);
+            if (a->style.textShadowColor.valid && b->style.textShadowColor.valid) out.textShadowColor = lerpColor(a->style.textShadowColor, b->style.textShadowColor);
+        }
+        if (a->style.gradientSet && b->style.gradientSet && a->style.gradientStops.size() == b->style.gradientStops.size()) {
+            out.gradientSet = true;
+            out.gradientAngle = lerp(a->style.gradientAngle, b->style.gradientAngle);
+            out.gradientStops = a->style.gradientStops;
+            for (size_t i = 0; i < out.gradientStops.size(); ++i) {
+                out.gradientStops[i].pos = lerp(a->style.gradientStops[i].pos, b->style.gradientStops[i].pos);
+                if (a->style.gradientStops[i].color.valid && b->style.gradientStops[i].color.valid)
+                    out.gradientStops[i].color = lerpColor(a->style.gradientStops[i].color, b->style.gradientStops[i].color);
+            }
         }
         if (a->style.transformSet || b->style.transformSet) {
             out.transformSet = true;
@@ -172,8 +205,39 @@ private:
     // (used for delay/fill-mode edge cases where there's no pair to blend).
     static void applyStop(const ComputedStyle& stop, ComputedStyle& style) {
         if (stop.opacitySet) { style.opacity = stop.opacity; style.opacitySet = true; }
-        if (stop.bgColor.valid) style.bgColor = stop.bgColor;
+        if (stop.bgColor.valid) { style.bgColor = stop.bgColor; style.bgColorSet = true; }
         if (stop.color.valid) style.color = stop.color;
+        if (stop.borderColor.valid) style.borderColor = stop.borderColor;
+        if (stop.borderTopColor.valid) style.borderTopColor = stop.borderTopColor;
+        if (stop.borderRightColor.valid) style.borderRightColor = stop.borderRightColor;
+        if (stop.borderBottomColor.valid) style.borderBottomColor = stop.borderBottomColor;
+        if (stop.borderLeftColor.valid) style.borderLeftColor = stop.borderLeftColor;
+        if (stop.outlineSet) {
+            style.outlineSet = true;
+            style.outlineWidth = stop.outlineWidth;
+            style.outlineColor = stop.outlineColor;
+        }
+        if (stop.shadowSet) {
+            style.shadowSet = true;
+            style.shadowX = stop.shadowX;
+            style.shadowY = stop.shadowY;
+            style.shadowBlur = stop.shadowBlur;
+            style.shadowSpread = stop.shadowSpread;
+            style.shadowColor = stop.shadowColor;
+            style.shadowInset = stop.shadowInset;
+        }
+        if (stop.textShadowSet) {
+            style.textShadowSet = true;
+            style.textShadowX = stop.textShadowX;
+            style.textShadowY = stop.textShadowY;
+            style.textShadowBlur = stop.textShadowBlur;
+            style.textShadowColor = stop.textShadowColor;
+        }
+        if (stop.gradientSet) {
+            style.gradientSet = true;
+            style.gradientAngle = stop.gradientAngle;
+            style.gradientStops = stop.gradientStops;
+        }
         if (stop.transformSet) {
             style.transformSet = true;
             style.transformTx = stop.transformTx;
