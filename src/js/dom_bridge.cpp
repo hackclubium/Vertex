@@ -95,6 +95,7 @@ static std::vector<EventListener> g_windowEventListeners;
 static std::vector<std::unique_ptr<JsValue>> g_wrapperRoots;
 static std::vector<std::unique_ptr<JsValue>> g_observerRoots;
 static std::vector<std::unique_ptr<JsValue>> g_platformRoots;
+static JsObject* g_elementProto = nullptr;
 static std::unordered_map<Node*, std::shared_ptr<Node>> g_shadowRoots;
 // Keeps each `new WebSocket(...)` object alive independent of script-level
 // reachability — a real WebSocket keeps firing events even if the script
@@ -1666,6 +1667,7 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
 
     auto* obj = vm.gc().newObject(ObjKind::DomWrapper);
     obj->domNode = raw;
+    if (raw->type == NodeType::Element && g_elementProto) obj->proto = g_elementProto;
     g_wrapperStore[raw] = obj;
 
     // Keep the wrapper alive while it stays cached in g_wrapperStore by rooting
@@ -3785,6 +3787,28 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     g_platformRoots.clear();
     g_shadowRoots.clear();
 
+    auto* elementCtor = vm.gc().newNativeFunction(NATIVE("Element") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "Element");
+    g_elementProto = vm.gc().newObject(ObjKind::Plain);
+    addNative(vm, g_elementProto, "matches", NATIVE("Element.prototype.matches") {
+        Node* n = unwrapNode(thisVal);
+        if (!n || args.empty()) return JsValue::boolean(false);
+        return JsValue::boolean(matchesSelector(n, ARG_STR(0), n));
+    });
+    addNative(vm, g_elementProto, "closest", NATIVE("Element.prototype.closest") {
+        Node* n = unwrapNode(thisVal);
+        if (!n || args.empty()) return JsValue::null();
+        std::string sel = ARG_STR(0);
+        for (Node* cur = n; cur; cur = cur->parent) {
+            if (matchesSelector(cur, sel, n)) { auto s = getShared(cur); if (s) return wrapNode(vm, s); }
+        }
+        return JsValue::null();
+    });
+    elementCtor->setProp("prototype", JsValue::object(g_elementProto));
+    vm.setGlobal("Element", JsValue::object(elementCtor));
+    auto* htmlCtor = vm.gc().newNativeFunction(NATIVE("HTMLElement") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "HTMLElement");
+    htmlCtor->setProp("prototype", JsValue::object(g_elementProto));
+    vm.setGlobal("HTMLElement", JsValue::object(htmlCtor));
+
     JsValue docVal = wrapNode(vm, docNode);
     vm.setGlobal("document", docVal);
 
@@ -4093,11 +4117,6 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.setGlobal("top", JsValue::object(vm.globals()));
     vm.setGlobal("parent", JsValue::object(vm.globals()));
 
-    auto* elementCtor = vm.gc().newNativeFunction(NATIVE("Element") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "Element");
-    vm.setGlobal("Element", JsValue::object(elementCtor));
-    vm.setGlobal("HTMLElement", JsValue::object(vm.gc().newNativeFunction(NATIVE("HTMLElement") {
-        return JsValue::object(vm.gc().newObject(ObjKind::Plain));
-    }, "HTMLElement")));
     vm.setGlobal("Image", JsValue::object(vm.gc().newNativeFunction(NATIVE("Image") {
         auto img = Node::makeElement("img");
         if (args.size() > 0 && !ARG(0).isUndefined()) img->attrs["width"] = ARG(0).toString();

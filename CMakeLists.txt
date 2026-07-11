@@ -278,11 +278,15 @@ add_executable(test_url tools/test_url.cpp)
 target_include_directories(test_url PRIVATE src)
 target_link_libraries(test_url PRIVATE vertex_engine)
 
+add_executable(site_probe tools/site_probe.cpp)
+target_include_directories(site_probe PRIVATE src)
+target_link_libraries(site_probe PRIVATE vertex_engine)
+
 if (MSVC)
     target_link_options(dump_js PRIVATE /DYNAMICBASE:NO /MAP)
 endif()
 
-set_target_properties(Vertex VertexUpdater vertex-tests vertex-layout-engine-tests dump_layout render_probe dump_js PROPERTIES
+set_target_properties(Vertex VertexUpdater vertex-tests vertex-layout-engine-tests dump_layout render_probe dump_js site_probe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
 )
 
