@@ -43,18 +43,27 @@ where
 {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
+    let mut delimiter_len = 4usize;
     let header_end = loop {
         let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
         if n == 0 {
-            return Err(if buf.is_empty() {
-                "empty response before headers".into()
-            } else {
-                format!("missing response headers; first bytes: {}", String::from_utf8_lossy(&buf[..buf.len().min(120)]))
-            });
+            if buf.is_empty() { return Err("empty response before headers".into()); }
+            let trimmed = buf.iter().copied().find(|b| !b.is_ascii_whitespace()).unwrap_or(0);
+            if trimmed == b'<' || trimmed.is_ascii_alphanumeric() {
+                return Ok((200, "text/html".into(), buf));
+            }
+            return Err(format!("missing response headers; first bytes: {}", String::from_utf8_lossy(&buf[..buf.len().min(120)])));
         }
         buf.extend_from_slice(&chunk[..n]);
         if buf.len() > max_bytes + 256 * 1024 { return Err("response exceeds size limit".into()); }
-        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break pos; }
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            delimiter_len = 4;
+            break pos;
+        }
+        if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+            delimiter_len = 2;
+            break pos;
+        }
         if buf.len() > 256 * 1024 { return Err("response headers exceed size limit".into()); }
     };
     let header = String::from_utf8_lossy(&buf[..header_end]);
@@ -72,7 +81,7 @@ where
             if name.eq_ignore_ascii_case("content-length") { content_length = value.trim().parse::<usize>().ok(); }
         }
     }
-    let mut body = buf[(header_end + 4)..].to_vec();
+    let mut body = buf[(header_end + delimiter_len)..].to_vec();
     if let Some(want) = content_length {
         let want = want.min(max_bytes);
         while body.len() < want {
