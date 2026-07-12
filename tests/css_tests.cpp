@@ -415,6 +415,19 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><i id=\"icon\"></i></body></html>");
+        auto sheet = ParseStylesheet(
+            "#icon { background-image: linear-gradient(transparent, transparent), url(sprite.svg); }"
+            "#icon { background-repeat: no-repeat; background-position: 0 -304px; width: 176px; height: 32px; }");
+        auto* node = FindElementById(dom.get(), "icon");
+        auto cs = sheet.resolve(node);
+        ExpectEqual("css/background/layered-gradient-keeps-sprite-url",
+            cs.backgroundImage + "\n",
+            "sprite.svg\n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"logo\"></div></body></html>");
         auto sheet = ParseStylesheet("#logo { transform: translate(-50%, -25%) scale(1.2); }");
         auto* node = FindElementById(dom.get(), "logo");

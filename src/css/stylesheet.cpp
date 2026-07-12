@@ -190,6 +190,22 @@ static std::string stripQuotes(std::string s) {
     return s;
 }
 
+static std::string FirstCssUrl(const std::string& value) {
+    std::string low = sLower(value);
+    size_t us = low.find("url(");
+    if (us == std::string::npos) return {};
+    size_t i = us + 4;
+    char quote = 0;
+    while (i < value.size() && std::isspace((unsigned char)value[i])) ++i;
+    if (i < value.size() && (value[i] == '"' || value[i] == '\'')) quote = value[i++];
+    size_t end = i;
+    while (end < value.size()) {
+        if ((quote && value[end] == quote) || (!quote && value[end] == ')')) break;
+        ++end;
+    }
+    return stripQuotes(sTrim(value.substr(i, end - i)));
+}
+
 static bool ParseCalcPercentOffset(const std::string& raw, float& percent, float& offset) {
     std::string s = sTrim(raw);
     std::string low = sLower(s);
@@ -1058,18 +1074,12 @@ static void ApplyDeclaration(const std::string& prop,
         // Parse into locals first; if the value is invalid (e.g. two colors
         // like "red pink") drop the whole declaration per CSS error handling.
         std::string low = sLower(val);
-        if (low.find("linear-gradient(") != std::string::npos) {
-            ParseLinearGradient(val, out);
-            return;
-        }
         std::string bgImg;
+        const bool hasGradient = low.find("linear-gradient(") != std::string::npos;
+        if (hasGradient) ParseLinearGradient(val, out);
         bool noRepeat = (low.find("no-repeat") != std::string::npos);
         bool fixed = (low.find("fixed") != std::string::npos);
-        if (low.find("url(") != std::string::npos) {
-            size_t us = low.find("url("), ue = val.find(')', us + 4);
-            if (ue != std::string::npos)
-                bgImg = stripQuotes(sTrim(val.substr(us + 4, ue - us - 4)));
-        }
+        bgImg = FirstCssUrl(val);
         CssColor bg; int colorCount = 0; bool invalid = false;
         int repeat = -1;                       // -1 = unspecified
         std::vector<std::string> posToks;      // background-position candidates
@@ -1091,7 +1101,7 @@ static void ApplyDeclaration(const std::string& prop,
                 std::string tok = val.substr(i, j - i);
                 std::string tl = sLower(tok);
                 i = j;
-                if (tl.rfind("url(", 0) == 0) continue;   // image handled above
+                if (tl.rfind("url(", 0) == 0 || tl.rfind("linear-gradient(", 0) == 0) continue;   // image handled above
                 if (tl == "no-repeat") { repeat = 3; continue; }
                 if (tl == "repeat")    { repeat = 0; continue; }
                 if (tl == "repeat-x")  { repeat = 1; continue; }
@@ -1135,14 +1145,9 @@ static void ApplyDeclaration(const std::string& prop,
         std::string low = sLower(val);
         out.backgroundImage.clear();
         out.backgroundImageSet = true;
+        out.backgroundImage = FirstCssUrl(val);
         if (low.find("linear-gradient(") != std::string::npos) {
             ParseLinearGradient(val, out);
-        } else if (low.find("url(") != std::string::npos) {
-            size_t us = low.find("url("), ue = val.find(')', us + 4);
-            if (ue != std::string::npos) {
-                std::string url = sTrim(val.substr(us + 4, ue - us - 4));
-                out.backgroundImage = stripQuotes(url);
-            }
         }
     } else if (prop == "background-repeat") {
         std::string v = sLower(sTrim(val));
