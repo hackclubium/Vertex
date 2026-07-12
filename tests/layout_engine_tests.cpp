@@ -626,6 +626,40 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    {
+        auto sdom = ParseHtml(
+            "<html><body><div id=\"abs\"></div><div id=\"fixed\"></div></body></html>");
+        auto ssheet = ParseStylesheet(
+            "body { margin:0; }"
+            "#abs { position:absolute; top:700px; left:0; width:10px; height:50px; }"
+            "#fixed { position:fixed; top:1200px; left:0; width:10px; height:50px; }");
+        LayoutInput sin; sin.document = sdom.get(); sin.sheet = &ssheet;
+        sin.measure = &measure; sin.viewportW = 320.f; sin.viewportH = 240.f;
+        auto sl = LayoutDocument(sin);
+        const int h = sl ? static_cast<int>(sl->contentH + 0.5f) : -1;
+        ExpectEqual("layout-engine/absolute-descendants-extend-scroll-height",
+            std::to_string(h) + "\n",
+            "750\n",
+            result);
+    }
+
+    {
+        auto vdom = ParseHtml(
+            "<html><body><button id=\"btn\"><svg id=\"icon\" viewBox=\"0 0 12 10\"><path></path></svg></button></body></html>");
+        auto vsheet = ParseStylesheet("body { margin:0; } #icon { display:inline-block; }");
+        LayoutInput vin; vin.document = vdom.get(); vin.sheet = &vsheet;
+        vin.measure = &measure; vin.viewportW = 320.f; vin.viewportH = 240.f;
+        auto vl = LayoutDocument(vin);
+        auto* icon = FindEngineBoxById(vl.get(), "icon");
+        const bool ok = icon && icon->kind == BoxKind::Replaced
+            && (int)(icon->contentW + 0.5f) == 12
+            && (int)(icon->contentH + 0.5f) == 10;
+        ExpectEqual("layout-engine/svg-is-replaced-content",
+            ok ? "replaced\n" : "container\n",
+            "replaced\n",
+            result);
+    }
+
     // A transformed ancestor establishes the containing block for absolutely
     // positioned descendants even when the ancestor itself is not positioned.
     {
