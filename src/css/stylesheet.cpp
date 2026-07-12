@@ -472,6 +472,21 @@ static bool ApplyLogicalDeclaration(const std::string& prop,
     if (prop == "border-block-start-width") { ApplyDeclaration("border-top-width", val, out); return true; }
     if (prop == "border-block-end-width") { ApplyDeclaration("border-bottom-width", val, out); return true; }
 
+    if (prop == "border-inline") {
+        ApplyDeclaration("border-left", val, out);
+        ApplyDeclaration("border-right", val, out);
+        return true;
+    }
+    if (prop == "border-block") {
+        ApplyDeclaration("border-top", val, out);
+        ApplyDeclaration("border-bottom", val, out);
+        return true;
+    }
+    if (prop == "border-inline-start") { ApplyDeclaration("border-left", val, out); return true; }
+    if (prop == "border-inline-end") { ApplyDeclaration("border-right", val, out); return true; }
+    if (prop == "border-block-start") { ApplyDeclaration("border-top", val, out); return true; }
+    if (prop == "border-block-end") { ApplyDeclaration("border-bottom", val, out); return true; }
+
     if (prop == "border-inline-color") {
         auto vals = SplitCssWhitespace(val);
         if (!vals.empty()) {

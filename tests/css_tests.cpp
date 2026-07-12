@@ -842,6 +842,18 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><div id=\"box\"></div></body></html>");
+        auto* box = FindElementById(dom.get(), "box");
+        auto sheet = ParseStylesheet(
+            "#box { border-inline: 2px solid red; border-block-start: 3px solid blue; }");
+        std::string actual = box ? SerializeComputedStyle(sheet.resolve(box)) : "missing\n";
+        ExpectEqual("css/cascade/logical-border-shorthands",
+            actual,
+            "borderTopWidth=3 borderRightWidth=2 borderLeftWidth=2 borderTopColor=0,0,1,1 borderRightColor=1,0,0,1 borderLeftColor=1,0,0,1 \n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><div id=\"control\"></div></body></html>");
         auto* root = FindFirstElement(dom.get(), "html");
         auto* control = FindElementById(dom.get(), "control");
