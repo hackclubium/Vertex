@@ -2066,6 +2066,18 @@ static void ApplyDeclaration(const std::string& prop,
                 try { out.filterSaturate = std::stof(v.substr(satPos + 9, endPos - satPos - 9)); } catch (...) {}
             }
         }
+        size_t opacityPos = v.find("opacity(");
+        if (opacityPos != std::string::npos) {
+            size_t endPos = v.find(")", opacityPos);
+            if (endPos != std::string::npos) {
+                std::string raw = sTrim(v.substr(opacityPos + 8, endPos - opacityPos - 8));
+                try {
+                    if (!raw.empty() && raw.back() == '%') out.filterOpacity = std::stof(raw.substr(0, raw.size() - 1)) / 100.f;
+                    else out.filterOpacity = std::stof(raw);
+                    out.filterOpacity = std::clamp(out.filterOpacity, 0.f, 1.f);
+                } catch (...) {}
+            }
+        }
     } else if (prop == "backdrop-filter") {
         // Simplified: only parse blur for now
         std::string v = sLower(val);

@@ -10,6 +10,7 @@
 #include "network/resource_cache.h"
 #include "network/text_decode.h"
 #include "network/url.h"
+#include "platform/browser_core.h"
 
 #include <algorithm>
 #include <cctype>
@@ -189,7 +190,8 @@ int main(int argc, char** argv) {
     Log("dom nodes=%zu html_bytes=%zu\n", domNodeCount, html.size());
     Log("title=%s\n", Truncate(PageTitle(dom.get()), 120).c_str());
 
-    // — Load external scripts —
+    // — Load external styles/scripts —
+    LoadExternalStylesheets(dom, finalUrl);
     LoadExternalScriptSources(dom, finalUrl);
     auto scripts = Scripts(dom.get());
 

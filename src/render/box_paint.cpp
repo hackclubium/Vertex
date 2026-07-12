@@ -725,8 +725,11 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         if (natural < minY) effScroll = box.y + topInset - minY;
     }
 
+    float authoredOpacity = box.style.opacitySet ? box.style.opacity : 1.f;
+    if (box.style.filterSet) authoredOpacity *= box.style.filterOpacity;
+    authoredOpacity = std::clamp(authoredOpacity, 0.f, 1.f);
     bool hidden = (box.style.visibilitySet && box.style.visibilityHidden)
-                || (box.style.opacitySet && box.style.opacity < 0.01f);
+                || authoredOpacity < 0.01f;
 
     if (CanCullOffscreenPaintSubtree(box, scrollY, topInset, m_paintDirtyTop, m_paintDirtyBottom))
         return;
@@ -767,6 +770,26 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
                  * D2D1::Matrix3x2F::Rotation(animTransform.transformRotate)
                  * D2D1::Matrix3x2F::Translation(cx + tx, cy + ty);
         m_rt->SetTransform(mat * oldTransform);
+    }
+
+    struct LayerScope {
+        ID2D1RenderTarget* rt = nullptr;
+        ID2D1Layer* layer = nullptr;
+        bool pushed = false;
+        ~LayerScope() {
+            if (pushed && rt) rt->PopLayer();
+            if (layer) layer->Release();
+        }
+    } opacityLayer;
+    float subtreeOpacity = authoredOpacity;
+    if (!hidden && m_rt && subtreeOpacity < 0.999f && subtreeOpacity > 0.001f) {
+        if (SUCCEEDED(m_rt->CreateLayer(nullptr, &opacityLayer.layer)) && opacityLayer.layer) {
+            opacityLayer.rt = m_rt;
+            m_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), subtreeOpacity),
+                opacityLayer.layer);
+            opacityLayer.pushed = true;
+        }
     }
 
     // 1. This box's own background / borders / replaced content / marker.

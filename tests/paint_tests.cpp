@@ -38,6 +38,22 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool opacityPaint =
+            painter.find("PushLayer(D2D1::LayerParameters") != std::string::npos
+            && painter.find("subtreeOpacity") != std::string::npos
+            && painter.find("box.style.filterSet") != std::string::npos
+            && sharedPainter.find("authoredOpacity") != std::string::npos
+            && sharedPainter.find("box.style.filterSet") != std::string::npos;
+        ExpectEqual("paint/subtree-opacity-uses-layer",
+            opacityPaint ? "layered\n" : "opaque\n",
+            "layered\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string linuxMain = ReadTextFile(root / "src/platform/main_linux.cpp");
         std::string winRenderer = ReadTextFile(root / "src/render/renderer.cpp");
         const bool sharedPolicy =

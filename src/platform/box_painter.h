@@ -452,8 +452,11 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     struct G { int& d; G(int& x):d(x){++d;} ~G(){--d;} } g(depth);
     if (box.style.isDisplayNone()) return;
 
+    float authoredOpacity = box.style.opacitySet ? box.style.opacity : 1.f;
+    if (box.style.filterSet) authoredOpacity *= box.style.filterOpacity;
+    authoredOpacity = std::clamp(authoredOpacity, 0.f, 1.f);
     bool hidden = (box.style.visibilitySet && box.style.visibilityHidden)
-               || (box.style.opacitySet && box.style.opacity < 0.01f);
+               || authoredOpacity < 0.01f;
 
     if (CanCullOffscreenPaintSubtree(box, ps.scrollY, ps.topInset, (float)ps.r->Height()))
         return;
