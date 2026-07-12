@@ -546,6 +546,30 @@ static bool ApplyLogicalDeclaration(const std::string& prop,
     return false;
 }
 
+static float ParseClipLength(const std::string& token, float fallback) {
+    std::string t = sLower(sTrim(token));
+    if (t == "auto") return fallback;
+    float f = ParseLength(t);
+    return f > -1e5f ? f : fallback;
+}
+
+static bool ParseClipRect(const std::string& raw, ComputedStyle& out) {
+    std::string v = sLower(sTrim(raw));
+    size_t open = v.find("rect(");
+    size_t close = v.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || close <= open + 5) return false;
+    std::string inner = raw.substr(open + 5, close - open - 5);
+    std::replace(inner.begin(), inner.end(), ',', ' ');
+    auto vals = SplitCssWhitespace(inner);
+    if (vals.size() < 4) return false;
+    out.clipTop = ParseClipLength(vals[0], 0.f);
+    out.clipRight = ParseClipLength(vals[1], 1e6f);
+    out.clipBottom = ParseClipLength(vals[2], 1e6f);
+    out.clipLeft = ParseClipLength(vals[3], 0.f);
+    out.clipRectSet = true;
+    return true;
+}
+
 static bool IsHexDigit(char c) {
     return std::isxdigit((unsigned char)c) != 0;
 }
@@ -1021,6 +1045,7 @@ static void ApplyDeclaration(const std::string& prop,
                              const std::string& val,
                              ComputedStyle& out) {
     if (ApplyLogicalDeclaration(prop, val, out)) return;
+    if (prop == "clip") { ParseClipRect(val, out); return; }
     if (prop == "border-collapse") {
         std::string v = sLower(sTrim(val));
         out.borderCollapse = (v == "collapse");
@@ -3767,6 +3792,7 @@ std::string SerializeComputedStyle(const ComputedStyle& style) {
     if (style.positionMode == 4) out << "position=sticky ";
     if (style.zIndexSet) out << "zIndex=" << style.zIndex << " ";
     if (style.overflowHidden)    out << "overflow=hidden ";
+    if (style.clipRectSet) out << "clip=" << style.clipTop << "," << style.clipRight << "," << style.clipBottom << "," << style.clipLeft << " ";
     if (style.borderCollapseSet) out << "borderCollapse=" << BoolText(style.borderCollapse) << " ";
     if (style.captionSideSet) out << "captionSide=" << (style.captionSide == 1 ? "bottom" : "top") << " ";
     if (style.directionSet) out << "direction=" << (style.direction == 1 ? "rtl" : "ltr") << " ";

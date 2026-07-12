@@ -809,6 +809,19 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         }
     }
 
+    bool cssClipped = false;
+    if (!hidden && m_rt && box.style.clipRectSet) {
+        float clipX = box.x + box.style.clipLeft;
+        float clipY = box.y - effScroll + topInset + box.style.clipTop;
+        float clipR = box.x + box.style.clipRight;
+        float clipB = box.y - effScroll + topInset + box.style.clipBottom;
+        if (clipR <= clipX || clipB <= clipY) hidden = true;
+        else {
+            m_rt->PushAxisAlignedClip(D2D1::RectF(clipX, clipY, clipR, clipB), D2D1_ANTIALIAS_MODE_ALIASED);
+            cssClipped = true;
+        }
+    }
+
     // 1. This box's own background / borders / replaced content / marker.
     if (!hidden && box.kind != BoxKind::Text && box.kind != BoxKind::Inline
         && box.kind != BoxKind::Break)
@@ -864,6 +877,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
                 m_rt->PopAxisAlignedClip();
                 scrollY = scrollYBefore;
             }
+            if (cssClipped) m_rt->PopAxisAlignedClip();
             return;
         }
         if (box.establishesInline) {
@@ -875,6 +889,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
             m_rt->PopAxisAlignedClip();
             scrollY = scrollYBefore;
         }
+        if (cssClipped) m_rt->PopAxisAlignedClip();
         if (hasTransform) m_rt->SetTransform(oldTransform);
         return;
     }
@@ -917,5 +932,6 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         m_rt->PopAxisAlignedClip();
         scrollY = scrollYBefore;
     }
+    if (cssClipped) m_rt->PopAxisAlignedClip();
     if (hasTransform) m_rt->SetTransform(oldTransform);
 }

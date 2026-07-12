@@ -163,6 +163,11 @@ struct ComputedStyle {
     bool     visibilityHidden = false;
     float    opacity          = 1.f;
     bool     opacitySet       = false;
+    float    clipTop          = 0.f;
+    float    clipRight        = 0.f;
+    float    clipBottom       = 0.f;
+    float    clipLeft         = 0.f;
+    bool     clipRectSet      = false;
     // object-fit for replaced elements: 0=fill,1=contain,2=cover,3=none,4=scale-down
     int      objectFit        = 0;
     // Intrinsic-sizing keyword for width/height: 0=none,1=min-content,2=max-content,3=fit-content
@@ -406,6 +411,11 @@ struct ComputedStyle {
         if (child.leftSet)   { out.left   = child.left;   out.leftSet   = true; out.leftPercent   = child.leftPercent; }
         if (child.visibilitySet) { out.visibilityHidden = child.visibilityHidden; out.visibilitySet = true; }
         if (child.opacitySet) { out.opacity = child.opacity; out.opacitySet = true; }
+        if (child.clipRectSet) {
+            out.clipTop = child.clipTop; out.clipRight = child.clipRight;
+            out.clipBottom = child.clipBottom; out.clipLeft = child.clipLeft;
+            out.clipRectSet = true;
+        }
         if (child.objectFit != 0) out.objectFit = child.objectFit;
         if (child.widthKeyword != 0) out.widthKeyword = child.widthKeyword;
         if (child.heightKeyword != 0) out.heightKeyword = child.heightKeyword;

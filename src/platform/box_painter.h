@@ -492,6 +492,17 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         const_cast<LayoutBox&>(box).x += tx;
     }
 
+    bool cssClipped = false;
+    if (!hidden && box.style.clipRectSet) {
+        float effScroll = box.style.positionMode == 3 ? 0.f : ps.scrollY;
+        float clipX = box.x + box.style.clipLeft;
+        float clipY = box.y - effScroll + ps.topInset + box.style.clipTop;
+        float clipW = box.style.clipRight - box.style.clipLeft;
+        float clipH = box.style.clipBottom - box.style.clipTop;
+        if (clipW <= 0.f || clipH <= 0.f) hidden = true;
+        else { ps.r->PushClip(clipX, clipY, clipW, clipH); cssClipped = true; }
+    }
+
     // Decorations
     if (!hidden && box.kind != BoxKind::Text && box.kind != BoxKind::Inline && box.kind != BoxKind::Break)
         PaintBoxDecorations(ps, box);
@@ -550,6 +561,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
                 ps.r->PopClip();
                 ps.scrollY = savedScrollForOverflow;
             }
+            if (cssClipped) ps.r->PopClip();
             return;
         }
         // A PushClip above must always be matched by PopClip before this
@@ -568,12 +580,14 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
             }
         } catch (...) {
             if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
+            if (cssClipped) ps.r->PopClip();
             throw;
         }
         if (clipped) {
             ps.r->PopClip();
             ps.scrollY = savedScrollForOverflow;
         }
+        if (cssClipped) ps.r->PopClip();
         if (box.style.transformSet) {
             const_cast<LayoutBox&>(box).x -= tx;
             ps.scrollY = savedScrollY;
@@ -616,6 +630,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         for (auto* k : posZ)   PaintBoxTree(ps, *k);
     } catch (...) {
         if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
+        if (cssClipped) ps.r->PopClip();
         throw;
     }
 
@@ -623,6 +638,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         ps.r->PopClip();
         ps.scrollY = savedScrollForOverflow;
     }
+    if (cssClipped) ps.r->PopClip();
 
     // Restore transform offsets.
     if (box.style.transformSet) {

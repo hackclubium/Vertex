@@ -815,6 +815,18 @@ TestResult RunPaintTests() {
 
     {
         const std::string svg =
+            "<svg width=\"176\" height=\"811\" viewBox=\"0 0 176 811\" xmlns=\"http://www.w3.org/2000/svg\">"
+            "<rect x=\"0\" y=\"304\" width=\"176\" height=\"32\" fill=\"black\"/>"
+            "</svg>";
+        auto bmp = svg::renderSvgBytes(svg, 1024);
+        ExpectEqual("paint/svg-sprite-root-size-preserved",
+            (bmp.width == 176 && bmp.height == 811) ? "sprite\n" : "scaled\n",
+            "sprite\n",
+            result);
+    }
+
+    {
+        const std::string svg =
             "<svg width=\"10\" height=\"10\" viewBox=\"0 0 10 10\">"
             "<defs><linearGradient id=\"g\" gradientUnits=\"userSpaceOnUse\" "
             "x1=\"0\" y1=\"0\" x2=\"10\" y2=\"0\" gradientTransform=\"rotate(90 5 5)\">"

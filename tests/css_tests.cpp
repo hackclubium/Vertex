@@ -983,6 +983,16 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><label id=\"sr\"></label></body></html>");
+        auto sheet = ParseStylesheet("#sr { position:absolute; clip:rect(1px, 1px, 1px, 1px); }");
+        auto* node = FindElementById(dom.get(), "sr");
+        ExpectEqual("css/cascade/clip-rect",
+            node ? SerializeComputedStyle(sheet.resolve(node)) : "missing\n",
+            "position=absolute clip=1,1,1,1 \n",
+            result);
+    }
+
+    {
         auto sheet = ParseStylesheet(
             "@keyframes fade-slide {"
             "from, 50% { opacity: 0; transform: translateX(10px); }"
