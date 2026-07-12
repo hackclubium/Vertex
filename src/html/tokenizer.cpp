@@ -228,7 +228,14 @@ std::map<std::string, std::string> HtmlTokenizer::consumeAttrs() {
 }
 
 void HtmlTokenizer::skipUntil(const std::string& stop) {
-    while (m_pos < m_src->size() && !startsWith(stop))
+    auto ciStarts = [this](const std::string& s) -> bool {
+        if (m_pos + s.size() > m_src->size()) return false;
+        for (size_t i = 0; i < s.size(); ++i)
+            if (std::tolower((unsigned char)(*m_src)[m_pos + i]) != std::tolower((unsigned char)s[i]))
+                return false;
+        return true;
+    };
+    while (m_pos < m_src->size() && !ciStarts(stop))
         m_pos++;
 }
 
@@ -237,7 +244,7 @@ void HtmlTokenizer::tokenize(const std::string& html, Callback cb) {
     m_pos = 0;
 
     // Tags whose content is raw text until the matching end tag.
-    static const std::set<std::string> rawTags = { "script", "style", "noscript" };
+    static const std::set<std::string> rawTags = { "script", "style", "noscript", "title" };
 
     while (m_pos < m_src->size()) {
         if ((*m_src)[m_pos] != '<') {

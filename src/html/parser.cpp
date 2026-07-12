@@ -391,8 +391,9 @@ std::shared_ptr<Node> ParseHtml(const std::string& html) {
                     auto node = Node::makeElement(tag);
                     node->attrs = t.attrs;
                     head->appendChild(node);
-                    break;
+                    stack.push_back(node);
                 }
+                break;
             }
 
             // Everything else needs <body>.

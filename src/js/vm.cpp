@@ -80,8 +80,10 @@ JsValue VM::getProp(JsValue obj, const std::string& key) {
         return v;
     }
     if (obj.isString()) {
+        JsString* strObj = obj.asString();
+        if (!strObj) return JsValue::undefined();
         // String properties
-        if (key == "length") return JsValue::integer((int32_t)obj.asString()->value.size());
+        if (key == "length") return JsValue::integer((int32_t)strObj->value.size());
         // Check String.prototype
         JsValue strProto = m_globals->getProp("String");
         if (strProto.isObject()) {
@@ -96,7 +98,7 @@ JsValue VM::getProp(JsValue obj, const std::string& key) {
         for (char c : key) if (c < '0' || c > '9') { allDigit = false; break; }
         if (allDigit) {
             uint32_t idx = (uint32_t)std::stoul(key);
-            const auto& s = obj.asString()->value;
+            const auto& s = strObj->value;
             if (idx < s.size()) return str(std::string(1, s[idx]));
         }
         return JsValue::undefined();
@@ -112,18 +114,25 @@ JsValue VM::getProp(JsValue obj, const std::string& key) {
 }
 
 JsValue VM::getProp(JsValue obj, JsValue key) {
-    if (key.isString()) return getProp(obj, key.asString()->value);
+    if (key.isString()) {
+        JsString* s = key.asString();
+        if (!s) return JsValue::undefined();
+        return getProp(obj, s->value);
+    }
     if (key.isInt32()) {
         if (obj.isObject()) {
             auto* o = obj.asObject();
+            if (!o) return JsValue::undefined();
             if (o->kind == ObjKind::Array) return o->arrayGet((uint32_t)key.asInt32());
             return o->getProp(std::to_string(key.asInt32()));
         }
         if (obj.isString()) {
-            uint32_t idx = (uint32_t)key.asInt32();
-            const auto& s = obj.asString()->value;
-            if (idx < s.size()) return str(std::string(1, s[idx]));
-            return JsValue::undefined();
+            JsString* strObj = obj.asString();
+            if (strObj) {
+                uint32_t idx = (uint32_t)key.asInt32();
+                const auto& s = strObj->value;
+                if (idx < s.size()) return str(std::string(1, s[idx]));
+            }
         }
     }
     return getProp(obj, key.toString());
@@ -144,10 +153,14 @@ void VM::setProp(JsValue obj, const std::string& key, JsValue val) {
 }
 
 void VM::setProp(JsValue obj, JsValue key, JsValue val) {
-    if (key.isString()) setProp(obj, key.asString()->value, val);
-    else if (key.isInt32()) {
+    if (key.isString()) {
+        JsString* s = key.asString();
+        if (!s) return;
+        setProp(obj, s->value, val);
+    } else if (key.isInt32()) {
         if (obj.isObject()) {
             auto* o = obj.asObject();
+            if (!o) return;
             if (o->kind == ObjKind::Array) o->arraySet((uint32_t)key.asInt32(), val);
             else o->setProp(std::to_string(key.asInt32()), val);
         }
@@ -538,8 +551,8 @@ JsValue VM::runFrame(CallFrame& frame) {
 
     while (frame.pc < (int)code.size()) {
         // Runaway-script guard: check the wall-clock deadline periodically
-        // (cheap: only every 65536 instructions).
-        if ((++m_instrCount & 0xFFFF) == 0 && m_deadlineMs && NowMs() > m_deadlineMs)
+        // (check every 4096 instructions instead of 65536 for faster timeout response)
+        if ((++m_instrCount & 0xFFF) == 0 && m_deadlineMs && NowMs() > m_deadlineMs)
             throw std::runtime_error("Script execution exceeded time limit");
         const Instruction& ins = code[frame.pc++];
         int ln = fn->lines.empty() ? 0 : fn->lines[frame.pc-1];

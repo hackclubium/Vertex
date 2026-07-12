@@ -205,12 +205,19 @@ void JsObject::gcMark(GC& gc) {
 
 // ── GC ────────────────────────────────────────────────────────────────────────
 GC::~GC() {
+    // Delete all GC cells first
     GcCell* c = m_head;
     while (c) {
         GcCell* next = c->gcNext;
         delete c;
         c = next;
     }
+    // HACK: Move m_strings to prevent its destructor from running
+    // The map contains dangling pointers after freeing cells, causing crashes
+    // This leaks memory but prevents the crash for short-lived processes
+    auto* leaked = new std::unordered_map<std::string, JsString*>();
+    *leaked = std::move(m_strings);
+    // leaked map will never be deleted - intentional leak to avoid crash
 }
 
 JsString* GC::internString(const std::string& s) {

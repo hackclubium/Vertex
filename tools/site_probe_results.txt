@@ -1,0 +1,186 @@
+=== SITE_PROBE TOP 20 RESULTS === 
+Timestamp: Sat 07/11/2026 18:55:15.90 
+ 
+=== [1/20] google.com === 
+url=https://google.com
+fetch success=1 status=200 bytes=85412 type=text/html final=https://www.google.com/ error=
+title=
+scripts=10 max=32
+script[0] bytes=5092 file=inline:0
+script[1] bytes=42314 file=inline:1
+script[2] bytes=1821 file=inline:2
+script[3] bytes=253 file=inline:3
+script[4] bytes=236 file=inline:4
+script[5] bytes=486 file=inline:5
+script[6] bytes=1775 file=inline:6
+script[7] bytes=6150 file=inline:7
+script[8] bytes=1867 file=inline:8
+script[9] bytes=4034 file=inline:9
+layout=ok docH=473
+summary attempted=10 failed=6 stats_attempted=10 runtime_failures=6 parse_failures=0 skipped=0 parse_ms=21.71 run_ms=32.84
+EXIT_CODE=3 
+ 
+=== [2/20] youtube.com === 
+url=https://youtube.com
+fetch success=1 status=200 bytes=779662 type=text/html final=https://www.youtube.com/ error=
+title=
+scripts=43 max=32
+script[0] bytes=760 file=inline:0
+script[1] bytes=400 file=inline:1
+script[2] bytes=3427 file=inline:2
+script[3] bytes=268 file=inline:3
+script[4] bytes=108 file=inline:4
+script[5] bytes=2084 file=inline:5
+script[6] bytes=81 file=inline:6
+script[7] bytes=50864 file=https://www.youtube.com/s/desktop/513a5249/jsbin/web-animations-next-lite.min.vflset/web-animations-next-lite.min.js
+script[8] bytes=113370 file=https://www.youtube.com/s/desktop/513a5249/jsbin/webcomponents-all-noPatch.vflset/webcomponents-all-noPatch.js
+script[9] bytes=9611 file=https://www.youtube.com/s/desktop/513a5249/jsbin/fetch-polyfill.vflset/fetch-polyfill.js
+script[10] bytes=5559 file=https://www.youtube.com/s/desktop/513a5249/jsbin/intersection-observer.min.vflset/intersection-observer.min.js
+script[11] bytes=56 file=inline:11
+script[12] bytes=622362 file=inline:12
+script[13] bytes=56 file=inline:13
+script[14] bytes=145 file=inline:14
+script[15] bytes=8757 file=https://www.youtube.com/s/desktop/513a5249/jsbin/scheduler.vflset/scheduler.js
+script[16] bytes=5794 file=https://www.youtube.com/s/desktop/513a5249/jsbin/www-i18n-constants-en_US.vflset/www-i18n-constants.js
+script[17] bytes=38138 file=https://www.youtube.com/s/desktop/513a5249/jsbin/spf.vflset/spf.js
+script[18] bytes=95 file=inline:18
+script[19] bytes=14141 file=https://www.youtube.com/s/desktop/513a5249/jsbin/network.vflset/network.js
+script[20] bytes=55 file=inline:20
+script[21] bytes=132 file=inline:21
+script[22] bytes=54 file=inline:22
+script[23] bytes=63 file=inline:23
+script[24] bytes=54 file=inline:24
+script[25] bytes=55 file=inline:25
+script[26] bytes=57 file=inline:26
+script[27] bytes=60 file=inline:27
+script[28] bytes=57 file=inline:28
+script[29] bytes=60 file=inline:29
+script[30] bytes=60 file=inline:30
+script[31] bytes=56 file=inline:31
+layout=ok docH=0
+summary attempted=32 failed=10 stats_attempted=32 runtime_failures=10 parse_failures=0 skipped=0 parse_ms=156.43 run_ms=70.10
+EXIT_CODE=3 
+ 
+=== [3/20] facebook.com === 
+url=https://facebook.com
+fetch success=1 status=200 bytes=420551 type=text/html final=https://www.facebook.com/ error=
+title=
+scripts=49 max=32
+script[0] bytes=400 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCnZhciBkYXRhRWxlbWVudD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgiZW52anNvbiIpO2lmKGRhdGFFbGVtZW50IT1udWxsKXt2YXIgY29weVZhcmlhYmxlcz1mdW5jdGlvbihlKXtmb3IodmFyIG4gaW4gdmFyaWFibGVzKWVbbl09dmFyaWFibGVzW25dfSx2YXJpYWJsZXM9SlNPTi5wYXJzZShkYXRhRWxlbWVudC50ZXh0Q29udGVudCk7d2luZG93LnJlcXVpcmVMYXp5P3dpbmRvdy5yZXF1aXJlTGF6eShbIkVudiJdLGNvcHlWYXJpYWJsZXMpOih3aW5kb3cuRW52PXdpbmRvdy5FbnZ8fHt9LGNvcHlWYXJpYWJsZXMod2luZG93LkVudikpfQovLyMgc291cmNlVVJMPWh0dHBzOi8vc3RhdGljLnh4LmZiY2RuLm5ldC9yc3JjLnBocC92NC95Qi9yL2RIYnF0ZHJGdnVuLmpzCg==
+script[1] bytes=251 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCl9fYW5ub3RhdG9yPWZ1bmN0aW9uKGUpe3JldHVybiBlfSxfX2Rfc3R1Yj1bXSxfX2Q9ZnVuY3Rpb24oZSx0LG4scil7X19kX3N0dWIucHVzaChbZSx0LG4scl0pfSxfX3JsX3N0dWI9W10scmVxdWlyZUxhenk9ZnVuY3Rpb24oKXtfX3JsX3N0dWIucHVzaChhcmd1bWVudHMpfTsKLy8jIHNvdXJjZVVSTD1odHRwczovL3N0YXRpYy54eC5mYmNkbi5uZXQvcnNyYy5waHAvdjQveW8vci84d0RrMEpyZURNSi5qcwo=
+script[2] bytes=410 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCl9idGxkcj17fSxfbm93SW5sPWZ1bmN0aW9uKCl7dmFyIGU9d2luZG93LnBlcmZvcm1hbmNlO3JldHVybiBlJiZlLm5vdyYmZS50aW1pbmcmJmUudGltaW5nLm5hdmlnYXRpb25TdGFydD9lLm5vdygpK2UudGltaW5nLm5hdmlnYXRpb25TdGFydDpuZXcgRGF0ZSgpLmdldFRpbWUoKX0sX3FwbElubD0oZnVuY3Rpb24oKXt2YXIgZT17Y2xpZW50Ont9fTtyZXR1cm57YWRkUG9pbnQ6ZnVuY3Rpb24odCl7ZS5jbGllbnRbdF09X25vd0lubCgpfSxnZXRQb2ludHM6ZnVuY3Rpb24oKXtyZXR1cm4gZX19fSkoKSxfcXBsSW5sLmFkZFBvaW50KCJodG1sRmx1c2giKTsKLy8jIHNvdXJjZVVSTD1odHRwczovL3N0YXRpYy54eC5mYmNkbi5uZXQvcnNyYy5waHAvdjQveUsvci9uT2FwY1BzUndwWi5qcwo=
+script[3] bytes=939 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCnZhciBkYXRhRWxlbWVudD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgiX19lcW1jIik7aWYoZGF0YUVsZW1lbnQhPW51bGwpe3ZhciBwYXJhbXM9SlNPTi5wYXJzZShkYXRhRWxlbWVudC50ZXh0Q29udGVudCksdXJpPXBhcmFtcy51LGV2ZW50X2lkPXBhcmFtcy5lLHNjcmlwdF9wYXRoPXBhcmFtcy5zLHdlaWdodD1wYXJhbXMudyxmYl9kdHNnPXBhcmFtcy5mLGxzZD1wYXJhbXMubDtpZihuYXZpZ2F0b3Iuc2VuZEJlYWNvbil7dmFyIG1hcms9ZnVuY3Rpb24oZSx1KXt2YXIgYz1wJiZwLm5vdz9NYXRoLmZsb29yKHAubm93KCkpOk1hdGgubWF4KERhdGUubm93KCktc3RhcnQsMCksZD0iZXZlbnRfaWQ9IitldmVudF9pZCsoZT09bnVsbD8iIjoiJm1hcmtlcl9pZD0iK2UpKyImbWFya2VyX3BhZ2VfdGltZT0iK2MrIiZzY3JpcHRfcGF0aD0iK2VuY29kZVVSSUNvbXBvbmVudChzY3JpcHRfcGF0aCkrIiZ3ZWlnaHQ9Iit3ZWlnaHQrKHU/IiZjbGllbnRfc3RhcnQ9MSI6IiIpKyhmYl9kdHNnPyImZmJfZHRzZz0iK2VuY29kZVVSSUNvbXBvbmVudChmYl9kdHNnKToiIikrKGxzZD8iJmxzZD0iK2VuY29kZVVSSUNvbXBvbmVudChsc2QpOiIiKSxtPW5ldyBCbG9iKFtkXSx7dHlwZToiYXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkIn0pO25hdmlnYXRvci5zZW5kQmVhY29uKHVyaSxtKX0sc3RhcnQ9RGF0ZS5ub3coKSxwPXdpbmRvdy5wZXJmb3JtYW5jZTttYXJrKHdlaWdodD4wPyJDbGllbnRTY3JpcHRTdGFydCI6bnVsbCwhMCksd2VpZ2h0PjAmJndpbmRvdy5hZGRFdmVudExpc3RlbmVyKCJiZWZvcmV1bmxvYWQiLGZ1bmN0aW9uKCl7bWFyaygiQ2xpZW50VW5sb2FkIiwhMSl9KX19Ci8vIyBzb3VyY2VVUkw9aHR0cHM6Ly9zdGF0aWMueHguZmJjZG4ubmV0L3JzcmMucGhwL3Y0L3liL3IvcFY5OVVxNDdOdW8uanMK
+script[4] bytes=181 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCndpbmRvdy5vcGVuRGF0YWJhc2UmJih3aW5kb3cub3BlbkRhdGFiYXNlPWZ1bmN0aW9uKCl7dmFyIGU9bmV3IEVycm9yO3Rocm93IGUuc3RhY2ssZX0pOwovLyMgc291cmNlVVJMPWh0dHBzOi8vc3RhdGljLnh4LmZiY2RuLm5ldC9yc3JjLnBocC92NC95Ni9yL2w2aG9JU2VNMnc5LmpzCg==
+script[5] bytes=1201 file=data:application/x-javascript; charset=utf-8;base64,Oy8qRkJfUEtHX0RFTElNKi8KCihmdW5jdGlvbigpe2Z1bmN0aW9uIGUoZSl7cmV0dXJuIGUucGFyZW50RWxlbWVudCE9PWRvY3VtZW50LmJvZHkmJmUucGFyZW50RWxlbWVudCE9PWRvY3VtZW50LmhlYWR9ZnVuY3Rpb24gdChlKXt2YXIgdDtyZXR1cm4gZS5ub2RlTmFtZT09PSJTQ1JJUFQifHxlLm5vZGVOYW1lPT09IkxJTksiJiYoKHQ9bihlKSk9PW51bGw/dm9pZCAwOnQuYXN5bmNDc3MpfWZ1bmN0aW9uIG4oZSl7cmV0dXJuIGUuZGF0YXNldCBpbnN0YW5jZW9mIHdpbmRvdy5ET01TdHJpbmdNYXA/ZS5kYXRhc2V0Om51bGx9ZnVuY3Rpb24gcihyKXt2YXIgbzt0cnl7aWYoci5ub2RlVHlwZSE9PU5vZGUuRUxFTUVOVF9OT0RFKXJldHVybn1jYXRjaChlKXtyZXR1cm59aWYoIShlKHIpfHwhdChyKSkpe3ZhciBhPShvPW4ocikpPT1udWxsP3ZvaWQgEXIT_CODE=-1073741819 
+ 
+=== [4/20] twitter.com === 
+url=https://twitter.com
+fetch success=1 status=200 bytes=265806 type=text/html final=https://x.com/ error=
+title=
+scripts=11 max=32
+script[0] bytes=580 file=inline:0
+script[1] bytes=172772 file=inline:1
+script[2] bytes=54816 file=inline:2
+script[3] bytes=77 file=inline:3
+script[4] bytes=134 file=inline:4
+script[5] bytes=5089 file=https://x.com/cdn-cgi/challenge-platform/scripts/jsd/api.js?onload=jsdOnload
+script[6] bytes=667847 file=https://abs.twimg.com/responsive-web/client-web/i18n/en.8f58303a.js
+script[7] bytes=1014363 file=https://abs.twimg.com/responsive-web/client-web/main.4b8dc5fa.js
+script[8] bytes=1368 file=inline:8
+layout=ok docH=269
+summary attempted=9 failed=4 stats_attempted=9 runtime_failures=4 parse_failures=0 skipped=0 parse_ms=272.64 run_ms=1168.03
+EXIT_CODE=3 
+ 
+=== [5/20] instagram.com === 
+EXIT_CODE=-1073741819 
+ 
+=== [6/20] baidu.com === 
+EXIT_CODE=-2147483645 
+ 
+=== [7/20] wikipedia.org === 
+url=https://wikipedia.org
+fetch success=1 status=200 bytes=120361 type=text/html final=https://www.wikipedia.org/ error=
+title=
+scripts=4 max=32
+script[0] bytes=123 file=inline:0
+script[1] bytes=1552 file=inline:1
+script[2] bytes=24131 file=https://www.wikipedia.org/portal/wikipedia.org/assets/js/index-34f340e24a.js
+script[3] bytes=580 file=https://www.wikipedia.org/portal/wikipedia.org/assets/js/gt-ie9-507b16b6be.js
+layout=ok docH=2304
+summary attempted=4 failed=2 stats_attempted=4 runtime_failures=2 parse_failures=0 skipped=0 parse_ms=1.26 run_ms=0.77
+EXIT_CODE=3 
+ 
+=== [8/20] yahoo.com === 
+EXIT_CODE=3 
+ 
+=== [9/20] yandex.com === 
+EXIT_CODE=3 
+ 
+=== [10/20] whatsapp.com === 
+EXIT_CODE=-1073741819 
+ 
+=== [11/20] xvideos.com === 
+EXIT_CODE=3 
+ 
+=== [12/20] amazon.com === 
+url=https://amazon.com
+fetch success=1 status=202 bytes=0 type=text/html final=https://www.amazon.com/ error=
+title=
+scripts=0 max=32
+layout=ok docH=0
+summary attempted=0 failed=0 stats_attempted=0 runtime_failures=0 parse_failures=0 skipped=0 parse_ms=0.00 run_ms=0.00
+ 
+=== [13/20] pornhub.com === 
+EXIT_CODE=-1073741819 
+ 
+=== [14/20] live.com === 
+url=https://live.com
+fetch success=1 status=200 bytes=14059 type=text/html final=https://outlook.live.com/mail/ error=
+title=
+scripts=4 max=32
+script[0] bytes=418 file=inline:0
+script[1] bytes=1388 file=inline:1
+script[2] bytes=204481 file=https://res.public.onecdn.static.microsoft/owamail/hashed-v1/scripts/owa.mail.runtime.eb3ad8ab.js
+script[3] bytes=398757 file=https://res.public.onecdn.static.microsoft/owamail/hashed-v1/scripts/owa.mailindex.87a8e2c4.js
+layout=ok docH=16
+summary attempted=4 failed=2 stats_attempted=4 runtime_failures=2 parse_failures=0 skipped=0 parse_ms=202.86 run_ms=9.24
+EXIT_CODE=3 
+ 
+=== [15/20] tiktok.com === 
+EXIT_CODE=-1073741819 
+ 
+=== [16/20] reddit.com === 
+url=https://reddit.com
+fetch success=1 status=200 bytes=8424 type=text/html final=https://www.reddit.com/ error=
+title=
+scripts=1 max=32
+script[0] bytes=413 file=inline:0
+layout=ok docH=616
+summary attempted=1 failed=1 stats_attempted=1 runtime_failures=1 parse_failures=0 skipped=0 parse_ms=0.00 run_ms=0.00
+EXIT_CODE=3 
+ 
+=== [17/20] docomo.ne.jp === 
+url=https://docomo.ne.jp
+fetch success=0 status=404 bytes=0 type=text/plain final=https://docomo.ne.jp error=HTTP 404
+EXIT_CODE=1 
+ 
+=== [18/20] linkedin.com === 
+url=https://linkedin.com
+fetch success=1 status=200 bytes=145137 type=text/html final=https://www.linkedin.com/ error=
+title=
+scripts=6 max=32
+script[0] bytes=442 file=inline:0
+script[1] bytes=634019 file=https://static.licdn.com/aero-v1/sc/h/5nqyeanbh1glamxx7yixqn8ft
+script[2] bytes=323006 file=https://static.licdn.com/aero-v1/sc/h/dtrv9swzghlxpyzfyk2gsgbur
+layout=ok docH=6258
+summary attempted=3 failed=2 stats_attempted=3 runtime_failures=2 parse_failures=0 skipped=0 parse_ms=0.76 run_ms=0.90
+EXIT_CODE=3 
+ 
+=== [19/20] office.com === 
+EXIT_CODE=-1073741819 
+ 
+=== [20/20] netflix.com === 
+url=https://netflix.com
+fetch success=0 status=0 bytes=0 type= final= error=Failed to read response headers
+EXIT_CODE=1 
+ 

@@ -95,15 +95,15 @@ Token Lexer::readNumber() {
         return makeToken(TT::Number, m_src.substr(start, m_pos - start));
     }
     // Decimal
-    while (m_pos < m_src.size() && (std::isdigit(m_src[m_pos]) || m_src[m_pos] == '_')) m_pos++;
+    while (m_pos < m_src.size() && (std::isdigit((unsigned char)m_src[m_pos]) || m_src[m_pos] == '_')) m_pos++;
     if (m_pos < m_src.size() && m_src[m_pos] == '.') {
         m_pos++;
-        while (m_pos < m_src.size() && std::isdigit(m_src[m_pos])) m_pos++;
+        while (m_pos < m_src.size() && std::isdigit((unsigned char)m_src[m_pos])) m_pos++;
     }
     if (m_pos < m_src.size() && (m_src[m_pos] == 'e' || m_src[m_pos] == 'E')) {
         m_pos++;
         if (m_pos < m_src.size() && (m_src[m_pos] == '+' || m_src[m_pos] == '-')) m_pos++;
-        while (m_pos < m_src.size() && std::isdigit(m_src[m_pos])) m_pos++;
+        while (m_pos < m_src.size() && std::isdigit((unsigned char)m_src[m_pos])) m_pos++;
     }
     std::string raw = m_src.substr(start, m_pos - start);
     // Remove numeric separators
@@ -226,7 +226,7 @@ Token Lexer::readIdOrKeyword() {
     size_t start = m_pos;
     while (m_pos < m_src.size()) {
         char c = m_src[m_pos];
-        if (std::isalnum(c) || c == '_' || c == '$' || (unsigned char)c > 127) m_pos++;
+        if (std::isalnum((unsigned char)c) || c == '_' || c == '$' || (unsigned char)c > 127) m_pos++;
         else break;
     }
     std::string id = m_src.substr(start, m_pos - start);
@@ -248,7 +248,7 @@ Token Lexer::readRegex() {
         if (c == '\n') break; // unterminated
     }
     // Flags
-    while (m_pos < m_src.size() && std::isalpha(m_src[m_pos])) m_pos++;
+    while (m_pos < m_src.size() && std::isalpha((unsigned char)m_src[m_pos])) m_pos++;
     return makeToken(TT::Regex, m_src.substr(start, m_pos - start));
 }
 
@@ -373,9 +373,9 @@ std::vector<Token> Lexer::tokenize() {
 
         default:
             m_pos--; // put back
-            if (std::isdigit(c) || (c == '.' && std::isdigit(peek(1)))) {
+            if (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)peek(1)))) {
                 tok = readNumber();
-            } else if (std::isalpha(c) || c == '_' || c == '$' || (unsigned char)c > 127) {
+            } else if (std::isalpha((unsigned char)c) || c == '_' || c == '$' || (unsigned char)c > 127) {
                 tok = readIdOrKeyword();
             } else {
                 tok = makeToken(TT::Error, std::string(1, c));

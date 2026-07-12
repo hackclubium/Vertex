@@ -162,7 +162,11 @@ if (WIN32)
     target_link_libraries(Vertex PRIVATE
         vertex_engine d2d1 dwrite comctl32 ole32 strmiids
     )
-    if (MSVC)
+add_executable(check_title tools/check_title.cpp)
+target_include_directories(check_title PRIVATE src)
+target_link_libraries(check_title PRIVATE vertex_engine)
+
+if (MSVC)
         target_link_options(Vertex PRIVATE /STACK:67108864)
     endif()
 elseif (APPLE)
@@ -281,6 +285,10 @@ target_link_libraries(test_url PRIVATE vertex_engine)
 add_executable(site_probe tools/site_probe.cpp)
 target_include_directories(site_probe PRIVATE src)
 target_link_libraries(site_probe PRIVATE vertex_engine)
+
+add_executable(debug_title tools/debug_title.cpp)
+target_include_directories(debug_title PRIVATE src)
+target_link_libraries(debug_title PRIVATE vertex_engine)
 
 if (MSVC)
     target_link_options(dump_js PRIVATE /DYNAMICBASE:NO /MAP)

@@ -18,6 +18,47 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+
+static LONG WINAPI SehHandler(EXCEPTION_POINTERS* p) {
+    DWORD code = p->ExceptionRecord->ExceptionCode;
+    void* addr = p->ExceptionRecord->ExceptionAddress;
+    std::fprintf(stderr, "CRASH: exception=0x%08lX addr=%p\n", code, addr);
+
+    HANDLE hProcess = GetCurrentProcess();
+    SymInitialize(hProcess, nullptr, TRUE);
+    SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+
+    void* stack[64];
+    USHORT frames = CaptureStackBackTrace(0, 64, stack, nullptr);
+    for (USHORT i = 0; i < frames; ++i) {
+        DWORD64 addr64 = (DWORD64)stack[i];
+        char buf[sizeof(SYMBOL_INFO) + 256];
+        SYMBOL_INFO* sym = (SYMBOL_INFO*)buf;
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        IMAGEHLP_LINE64 line = { sizeof(IMAGEHLP_LINE64) };
+        DWORD lineDisp = 0;
+        if (SymFromAddr(hProcess, addr64, &disp, sym))
+            std::fprintf(stderr, "  [%u] %s+0x%llX", i, sym->Name, disp);
+        else
+            std::fprintf(stderr, "  [%u] 0x%llX", i, addr64);
+        if (SymGetLineFromAddr64(hProcess, addr64, &lineDisp, &line))
+            std::fprintf(stderr, " (%s:%lu)", line.FileName, line.LineNumber);
+        std::fprintf(stderr, "\n");
+    }
+    SymCleanup(hProcess);
+
+    std::fflush(stderr);
+    std::fflush(stdout);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 struct ProbeMeasure : ITextMeasure {
     float MeasureText(const std::wstring& s, const FontKey& f) override { return (float)s.size() * f.size * 0.5f; }
     float SpaceWidth(const FontKey& f) override { return f.size * 0.3f; }
@@ -43,7 +84,7 @@ static std::string PageTitle(const Node* root) {
     while (!stack.empty()) {
         const Node* n = stack.back();
         stack.pop_back();
-        if (n && n->type == NodeType::Element && n->tagName == "title") return TextContent(n);
+        if (n && n->type == NodeType::Element && Lower(n->tagName) == "title") return TextContent(n);
         if (n) for (const auto& c : n->children) stack.push_back(c.get());
     }
     return {};
@@ -89,30 +130,82 @@ static std::string NormalizeUrl(std::string url) {
     return "https://" + url;
 }
 
+static void Log(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(stdout, fmt, ap);
+    std::fflush(stdout);
+    va_end(ap);
+}
+
+static std::string Truncate(const std::string& s, size_t limit) {
+    if (s.size() <= limit) return s;
+    return s.substr(0, limit) + "...[" + std::to_string(s.size()) + "]";
+}
+
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(SehHandler);
+#endif
+
     if (argc < 2) {
-        std::fprintf(stderr, "usage: site_probe URL [max_scripts]\n");
+        std::fprintf(stderr, "usage: site_probe URL [max_scripts] [--verbose]\n");
         return 2;
     }
     const std::string url = NormalizeUrl(argv[1]);
-    const int maxScripts = argc > 2 ? std::max(0, std::atoi(argv[2])) : 64;
+    int maxScripts = 64;
+    bool verbose = false;
+    for (int i = 2; i < argc; ++i) {
+        std::string arg(argv[i]);
+        if (arg == "--verbose" || arg == "-v") verbose = true;
+        else maxScripts = std::max(0, std::atoi(argv[i]));
+    }
 
-    std::printf("url=%s\n", url.c_str());
+    Log("=== %s ===\n", url.c_str());
+
+    // — Fetch —
     FetchResult docRes = FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
-    std::printf("fetch success=%d status=%d bytes=%zu type=%s final=%s error=%s\n",
-        docRes.success ? 1 : 0, docRes.status, docRes.body.size(), docRes.contentType.c_str(),
-        docRes.finalUrl.c_str(), docRes.error.c_str());
-    if (!docRes.success) return 1;
+    Log("fetch ok=%d status=%d bytes=%zu type=%s final=%s\n",
+        docRes.success ? 1 : 0, docRes.status, docRes.body.size(),
+        docRes.contentType.c_str(), docRes.finalUrl.c_str());
+    if (!docRes.success) {
+        Log("FAIL fetch error=%s\n", docRes.error.c_str());
+        return 1;
+    }
 
     const std::string finalUrl = docRes.finalUrl.empty() ? url : docRes.finalUrl;
+
+    // — Parse HTML —
     std::string html = DecodeTextToUtf8(docRes.body, docRes.contentType);
     auto dom = ParseHtml(html);
-    std::printf("title=%s\n", PageTitle(dom.get()).c_str());
 
+    // Count DOM nodes for quick health check
+    size_t domNodeCount = 0;
+    {
+        std::vector<const Node*> s{dom.get()};
+        while (!s.empty()) { auto* n = s.back(); s.pop_back(); ++domNodeCount; if (n) for (auto& c : n->children) s.push_back(c.get()); }
+    }
+    Log("dom nodes=%zu html_bytes=%zu\n", domNodeCount, html.size());
+    Log("title=%s\n", Truncate(PageTitle(dom.get()), 120).c_str());
+
+    // — Load external scripts —
     LoadExternalScriptSources(dom, finalUrl);
     auto scripts = Scripts(dom.get());
-    std::printf("scripts=%zu max=%d\n", scripts.size(), maxScripts);
 
+    // Count inline vs external
+    size_t inlineScripts = 0;
+    size_t externalScripts = 0;
+    size_t totalScriptBytes = 0;
+    for (Node* s : scripts) {
+        std::string src = TextContent(s);
+        totalScriptBytes += src.size();
+        if (s->attr("__vertex_script_filename").empty()) ++inlineScripts;
+        else ++externalScripts;
+    }
+    Log("scripts total=%zu inline=%zu external=%zu script_bytes=%zu max=%d\n",
+        scripts.size(), inlineScripts, externalScripts, totalScriptBytes, maxScripts);
+
+    // — Run JS —
     JsEngine js;
     JsScriptBudget budget;
     budget.maxScriptBytes = 256 * 1024;
@@ -121,27 +214,41 @@ int main(int argc, char** argv) {
 
     int attempted = 0;
     int failed = 0;
+    int skipped = 0;
     for (Node* script : scripts) {
         if (attempted >= maxScripts) break;
         std::string source = TextContent(script);
         if (source.empty()) continue;
+
         std::string filename = script->attr("__vertex_script_filename");
         if (filename.empty()) filename = "inline:" + std::to_string(attempted);
-        std::printf("script[%d] bytes=%zu file=%s\n", attempted, source.size(), filename.c_str());
+
+        if (source.size() > budget.maxScriptBytes) {
+            if (verbose) Log("  [%d] SKIP %zu bytes %s\n", attempted, source.size(), filename.c_str());
+            ++skipped;
+            ++attempted;
+            continue;
+        }
+
+        if (verbose) Log("  [%d] %zu bytes %s\n", attempted, source.size(), Truncate(filename, 100).c_str());
+
         bool ok = false;
         try {
             ok = js.runScript(source, filename);
         } catch (const std::exception& e) {
-            std::printf("script[%d] native_exception=%s\n", attempted, e.what());
+            Log("  [%d] C++ exception: %s\n", attempted, e.what());
         } catch (...) {
-            std::printf("script[%d] native_exception=unknown\n", attempted);
+            Log("  [%d] C++ exception: unknown\n", attempted);
         }
         if (!ok) ++failed;
         ++attempted;
     }
-    try { js.runMacrotasks(32); } catch (...) { std::printf("macrotasks_exception=1\n"); }
+    try { js.runMacrotasks(32); } catch (...) { Log("macrotasks crashed\n"); }
 
+    // — Layout —
     Stylesheet sheet = CollectCss(dom.get());
+    Log("css rules=%zu\n", sheet.rules.size());
+
     ProbeMeasure measure;
     LayoutInput in;
     in.document = dom.get();
@@ -152,11 +259,22 @@ int main(int argc, char** argv) {
     in.zoom = 1.f;
     in.baseUrl = finalUrl;
     auto layout = LayoutDocument(in);
-    std::printf("layout=%s docH=%.0f\n", layout ? "ok" : "null", layout ? layout->contentH : 0.f);
 
+    if (layout) {
+        Log("layout ok docW=%.0f docH=%.0f\n", layout->contentW, layout->contentH);
+    } else {
+        Log("layout FAIL (null)\n");
+    }
+
+    // — Summary —
     JsScriptStats stats = js.scriptStats();
-    std::printf("summary attempted=%d failed=%d stats_attempted=%zu runtime_failures=%zu parse_failures=%zu skipped=%zu parse_ms=%.2f run_ms=%.2f\n",
-        attempted, failed, stats.scriptsAttempted, stats.runtimeFailures, stats.parseFailures,
-        stats.scriptsSkippedByBudget, stats.parseMs, stats.compileRunMs);
+    Log("RESULT url=%s fetch=%d dom=%zu scripts=%d/%zu ok=%d fail=%d skip=%d parse=%d runtime=%d "
+        "parse_ms=%.0f run_ms=%.0f layout=%d\n",
+        url.c_str(), docRes.success ? 1 : 0, domNodeCount,
+        attempted, scripts.size(), attempted - failed - skipped, failed, skipped,
+        (int)stats.parseFailures, (int)stats.runtimeFailures,
+        stats.parseMs, stats.compileRunMs,
+        layout ? 1 : 0);
+
     return failed == 0 ? 0 : 3;
 }

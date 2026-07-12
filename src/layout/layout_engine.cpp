@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <set>
@@ -28,8 +29,21 @@ namespace {
 // Recursion-depth guard: real-world pages can nest deeply or (with broken
 // markup) pathologically. Bail out gracefully instead of overflowing the stack.
 thread_local int g_depth = 0;
-constexpr int kMaxDepth = 400;
+constexpr int kMaxDepth = 512;
 struct DepthScope { DepthScope() { ++g_depth; } ~DepthScope() { --g_depth; } };
+
+// Timeout guard: prevent expensive layout calculations from hanging
+thread_local long long g_layoutDeadlineMs = 0;
+constexpr long long kLayoutBudgetMs = 100; // 100ms max for layout - aggressive timeout
+
+static long long LayoutNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static bool LayoutTimedOut() {
+    return g_layoutDeadlineMs && LayoutNowMs() > g_layoutDeadlineMs;
+}
 
 constexpr float kNormalLH = 1.2f;   // line-height: normal factor
 // A single text node should never be able to allocate unbounded layout,
@@ -532,6 +546,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
                                     const ComputedStyle* precomputedStyle) {
     if (!node || node->type != NodeType::Element) return nullptr;
     DepthScope _d; if (g_depth > kMaxDepth) return nullptr;
+    if (LayoutTimedOut()) return nullptr; // Timeout check
     const std::string& tag = node->tagName;
     if (IsSkippedTag(tag)) return nullptr;
     if (HasAttr(node, "hidden")) return nullptr;
@@ -816,6 +831,7 @@ struct Engine {
     // absolutely positioned with auto width).
     float maxContent(LayoutBox& box) {
         DepthScope _d; if (g_depth > kMaxDepth) return 0;
+        if (LayoutTimedOut()) return 0; // Timeout check
         const ComputedStyle& s = box.style;
         if (s.width >= 0) return px(s.width);
         if (s.widthCalcPercent >= 0) return 0;  // % component handled by caller
@@ -930,6 +946,7 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
                        std::vector<LayoutBox*>& positionedOut, FloatCtx* parentFloats,
                        bool shrinkToFit) {
     DepthScope _d; if (g_depth > kMaxDepth) { box.contentW = std::max(0.f, cbW); return; }
+    if (LayoutTimedOut()) { box.contentW = std::max(0.f, cbW); return; } // Timeout check
     const ComputedStyle& s = box.style;
     resolveEdges(box);
 
@@ -1110,9 +1127,10 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
 
 // Lay out the in-flow block-level children of `box`, stacking vertically with
 // margin collapsing and float handling. Sets box.contentH.
-void Engine::layoutBlockChildren(LayoutBox& box, std::vector<LayoutBox*>& positionedOut,
-                                 FloatCtx* inherited) {
+void Engine::layoutBlockChildren(LayoutBox& box, std::vector<LayoutBox*>&
+                                 positionedOut, FloatCtx* inherited) {
     DepthScope _d; if (g_depth > kMaxDepth) return;
+    if (LayoutTimedOut()) return; // Timeout check
     FloatCtx fctx;
     fctx.cbLeft  = box.contentX();
     fctx.cbRight = box.contentX() + box.contentW;
@@ -1161,6 +1179,7 @@ void Engine::layoutBlockChildren(LayoutBox& box, std::vector<LayoutBox*>& positi
     }
 
     for (auto& kptr : box.kids) {
+        if (LayoutTimedOut()) return; // Timeout check in loop
         LayoutBox* k = kptr.get();
 
         // Out-of-flow: defer to positioned pass.
@@ -1180,6 +1199,7 @@ void Engine::layoutBlockChildren(LayoutBox& box, std::vector<LayoutBox*>& positi
             float availL = fctx.leftEdge(fy, k->marginBoxH());
             float availR = fctx.rightEdge(fy, k->marginBoxH());
             while ((availR - availL) < fw && fctx.nextBreakBelow(fy) > fy) {
+                if (LayoutTimedOut()) break; // Timeout check in float positioning loop
                 fy = fctx.nextBreakBelow(fy);
                 availL = fctx.leftEdge(fy, k->marginBoxH());
                 availR = fctx.rightEdge(fy, k->marginBoxH());
@@ -2240,6 +2260,7 @@ void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
 std::unique_ptr<LayoutBox> LayoutDocument(const LayoutInput& in) {
     if (!in.document) return nullptr;
     g_depth = 0; // Reset thread_local depth counter for this layout pass
+    g_layoutDeadlineMs = LayoutNowMs() + kLayoutBudgetMs; // Set 5-second timeout for layout
 
     float cssW = in.viewportW / std::max(0.01f, in.zoom);
     float cssH = in.viewportH / std::max(0.01f, in.zoom);
