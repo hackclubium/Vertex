@@ -707,6 +707,20 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    {
+        auto sdom = ParseHtml(
+            "<html><body><select id=\"lang\"><option>Afrikaans</option><option selected>English</option><option>Winaray</option></select></body></html>");
+        LayoutInput sin; sin.document = sdom.get(); sin.sheet = nullptr;
+        sin.measure = &measure; sin.viewportW = 800.f; sin.viewportH = 400.f;
+        auto sl = LayoutDocument(sin);
+        auto* lang = FindEngineBoxById(sl.get(), "lang");
+        bool ok = lang && lang->contentW < 100.f;
+        ExpectEqual("layout-engine/select-intrinsic-uses-selected-option",
+            ok ? "selected\n" : "all-options\n",
+            "selected\n",
+            result);
+    }
+
     // Wikipedia's search form includes hidden inputs before/after the visible
     // search controls; they must not create anonymous white input boxes that
     // push the real input/button/select into each other.

@@ -82,6 +82,23 @@ std::string TextContent(const Node* n) {
     return out;
 }
 
+std::string SelectedOptionText(const Node* select) {
+    if (!select) return {};
+    const Node* first = nullptr;
+    std::function<const Node*(const Node*)> walk = [&](const Node* n) -> const Node* {
+        if (!n) return nullptr;
+        if (n->type == NodeType::Element && n->tagName == "option") {
+            if (!first) first = n;
+            if (n->attrs.find("selected") != n->attrs.end()) return n;
+        }
+        for (const auto& child : n->children)
+            if (auto* found = walk(child.get())) return found;
+        return nullptr;
+    };
+    const Node* selected = walk(select);
+    return TextContent(selected ? selected : first);
+}
+
 bool HasElementChild(const Node* n) {
     if (!n) return false;
     for (const auto& child : n->children)
@@ -643,7 +660,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
                     FontKey fk;
                     fk.size = std::max(1.f, s.fontSize > 0 ? s.fontSize : 14.f);
                     fk.family = s.fontFamily;
-                    textW = bc.measure->MeasureText(ToWide(TextContent(node)), fk);
+                    textW = bc.measure->MeasureText(ToWide(SelectedOptionText(node)), fk);
                 }
                 box->intrinsicW = std::max(56.f, textW + 28.f);
                 box->intrinsicH = 32.f;

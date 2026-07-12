@@ -31,6 +31,23 @@ static std::wstring NodeTextContentWide(const Node* n) {
     return out;
 }
 
+static std::wstring SelectedOptionTextWide(const Node* select) {
+    if (!select) return {};
+    const Node* first = nullptr;
+    std::function<const Node*(const Node*)> walk = [&](const Node* n) -> const Node* {
+        if (!n) return nullptr;
+        if (n->type == NodeType::Element && n->tagName == "option") {
+            if (!first) first = n;
+            if (n->attrs.find("selected") != n->attrs.end()) return n;
+        }
+        for (const auto& child : n->children)
+            if (auto* found = walk(child.get())) return found;
+        return nullptr;
+    };
+    const Node* selected = walk(select);
+    return NodeTextContentWide(selected ? selected : first);
+}
+
 static bool FormControlHasSpriteDescendant(const Node* n) {
     if (!n) return false;
     if (n->type == NodeType::Element) {
@@ -491,7 +508,7 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
 
             std::wstring label;
             if ((tag == "button" && !FormControlHasSpriteDescendant(box.node)) || tag == "select")
-                label = NodeTextContentWide(box.node);
+                label = tag == "select" ? SelectedOptionTextWide(box.node) : NodeTextContentWide(box.node);
             if (label.empty() && tag == "input") {
                 std::string ph = box.node->attr("placeholder");
                 for (unsigned char c : ph) label += (wchar_t)c;
