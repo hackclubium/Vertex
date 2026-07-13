@@ -61,6 +61,7 @@ struct CssRule {
     std::string id;        // "" = any
     std::vector<CssSelectorPart> selector;
     ComputedStyle style;
+    ComputedStyle importantStyle;
     std::vector<CssMediaCondition> media;
 
     int specificity() const;

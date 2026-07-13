@@ -112,6 +112,15 @@ bool HasAttr(const Node* n, const std::string& name) {
     return n && n->attrs.find(name) != n->attrs.end();
 }
 
+bool HasClass(const Node* n, const char* cls) {
+    if (!n) return false;
+    std::istringstream ss(n->attr("class"));
+    std::string token;
+    while (ss >> token)
+        if (token == cls) return true;
+    return false;
+}
+
 std::string LowerAscii(std::string value) {
     for (char& c : value)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -554,6 +563,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     const std::string& tag = node->tagName;
     if (IsSkippedTag(tag)) return nullptr;
     if (HasAttr(node, "hidden")) return nullptr;
+    if (HasClass(node, "oo-ui-element-hidden")) return nullptr;
     if (tag == "dialog" && !HasAttr(node, "open")) return nullptr;
     if (tag == "input" && LowerAscii(node->attr("type")) == "hidden") return nullptr;
 
@@ -1894,6 +1904,7 @@ struct InlineItem {
     std::wstring text;
     float        width = 0;
     LayoutBox*   box = nullptr;     // style source (text) or atomic box
+    std::vector<LayoutBox*> owners;  // inline ancestors owning this fragment
     FontKey      font;
     float        ascent = 0, lineH = 0;
     int          vAlign = 0;        // effective vertical-align from inline ancestors
@@ -1903,7 +1914,8 @@ struct InlineItem {
 // vertical-align of the enclosing inline box down to its text/atomic descendants,
 // since vertical-align applies to the inline element, not the text node it wraps.
 static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& items,
-                          int parentVAlign = 0, float parentW = 1e6f, float parentH = -1.f) {
+                          int parentVAlign = 0, float parentW = 1e6f, float parentH = -1.f,
+                          std::vector<LayoutBox*> owners = {}) {
     DepthScope _d; if (g_depth > kMaxDepth) return;
     if (box->isOutOfFlow()) return;
     int va = box->style.verticalAlignSet ? box->style.verticalAlign : parentVAlign;
@@ -1916,6 +1928,7 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
         while (i < t.size()) {
             if (IsSpace(t[i])) {
                 InlineItem it; it.type = InlineItem::Space; it.box = box; it.font = f;
+                it.owners = owners;
                 it.width = E.in.measure ? E.in.measure->SpaceWidth(f) : f.size * 0.3f;
                 it.ascent = asc; it.lineH = lh; it.vAlign = va;
                 items.push_back(it);
@@ -1926,6 +1939,7 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
             while (j < t.size() && !IsSpace(t[j])) j++;
             std::wstring word = t.substr(i, j - i);
             InlineItem it; it.type = InlineItem::Word; it.text = word; it.box = box; it.font = f;
+            it.owners = owners;
             it.width = E.in.measure ? E.in.measure->MeasureText(word, f) : (float)word.size() * f.size * 0.5f;
             // letter-spacing: add extra width per character
             if (box->style.letterSpacingSet && box->style.letterSpacing != 0) {
@@ -1940,6 +1954,7 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
     }
     if (box->kind == BoxKind::Break) {
         InlineItem it; it.type = InlineItem::Break; it.box = box;
+        it.owners = owners;
         items.push_back(it);
         return;
     }
@@ -1955,6 +1970,7 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
         std::vector<LayoutBox*> pos;
         E.layoutBox(*box, 0, cbW, cbH, pos, nullptr);
         InlineItem it; it.type = InlineItem::Atomic; it.box = box;
+        it.owners = owners;
         it.width = box->marginBoxW();
         FontKey f = E.fontFor(box->style);
         it.font = f; it.lineH = box->marginBoxH();
@@ -1969,12 +1985,15 @@ static void CollectInline(Engine& E, LayoutBox* box, std::vector<InlineItem>& it
         return;
     }
     // Inline box (span/a/em…): recurse into children, carrying its vertical-align.
-    for (auto& k : box->kids) CollectInline(E, k.get(), items, va, parentW, parentH);
+    if (box->kind == BoxKind::Inline) owners.push_back(box);
+    for (auto& k : box->kids) CollectInline(E, k.get(), items, va, parentW, parentH, owners);
 }
 
 float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
     DepthScope _d; if (g_depth > kMaxDepth) return 0;
     std::vector<InlineItem> items;
+    struct InlineBounds { float minX = 0, minY = 0, maxX = 0, maxY = 0; bool set = false; };
+    std::unordered_map<LayoutBox*, InlineBounds> inlineBounds;
     float inlineCbH = usedHeight(box.style, box.contentH >= 0 ? box.contentH : -1.f);
     if (inlineCbH >= 0 && box.style.boxSizing == 1) {
         const float vbp = box.borderTop + box.padTop + box.borderBottom + box.padBottom;
@@ -2123,6 +2142,17 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
                 float ny = frag.y + it.box->marginTop;
                 TranslateSubtree(*it.box, nx - it.box->x, ny - it.box->y);
             }
+            for (LayoutBox* owner : it.owners) {
+                if (!owner) continue;
+                auto& b = inlineBounds[owner];
+                if (!b.set) {
+                    b.minX = frag.x; b.minY = frag.y; b.maxX = frag.x + frag.w; b.maxY = frag.y + frag.h;
+                    b.set = true;
+                } else {
+                    b.minX = std::min(b.minX, frag.x); b.minY = std::min(b.minY, frag.y);
+                    b.maxX = std::max(b.maxX, frag.x + frag.w); b.maxY = std::max(b.maxY, frag.y + frag.h);
+                }
+            }
             line.frags.push_back(frag);
             fx += it.width;
         }
@@ -2132,6 +2162,13 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
         firstLine = false;
         y += lineH;
         if (lineStart == i && !brk) { i++; }  // safety: avoid infinite loop
+    }
+    for (auto& [inlineBox, b] : inlineBounds) {
+        if (!b.set) continue;
+        inlineBox->x = b.minX;
+        inlineBox->y = b.minY;
+        inlineBox->contentW = std::max(0.f, b.maxX - b.minX);
+        inlineBox->contentH = std::max(0.f, b.maxY - b.minY);
     }
     return y - top;
 }

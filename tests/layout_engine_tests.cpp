@@ -201,6 +201,44 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><div><a id=\"outer\"><span id=\"wrap\"><img src=\"x.png\" width=\"20\" height=\"10\"></span></a></div></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* outer = FindEngineBoxById(layout2.get(), "outer");
+        auto* wrap = FindEngineBoxById(layout2.get(), "wrap");
+        ExpectEqual("layout-engine/inline-wrapper-covers-replaced-child",
+            std::to_string(outer ? (int)(outer->contentW + 0.5f) : -1) + ":"
+                + std::to_string(outer ? (int)(outer->contentH + 0.5f) : -1) + ":"
+                + std::to_string(wrap ? (int)(wrap->contentW + 0.5f) : -1) + ":"
+                + std::to_string(wrap ? (int)(wrap->contentH + 0.5f) : -1) + "\n",
+            "20:10:20:10\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><div id=\"shown\">a</div><div id=\"hidden\" class=\"oo-ui-element-hidden\">b</div></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        ExpectEqual("layout-engine/oo-ui-hidden-class-does-not-layout",
+            std::string(FindEngineBoxById(layout2.get(), "shown") ? "shown" : "missing") + ":"
+                + (FindEngineBoxById(layout2.get(), "hidden") ? "hidden" : "gone") + "\n",
+            "shown:gone\n",
+            result);
+    }
+
+    {
         const std::string home = HomePageHtml();
         const size_t styleStart = home.find("<style>");
         const size_t styleEnd = home.find("</style>");

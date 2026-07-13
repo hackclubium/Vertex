@@ -2294,6 +2294,16 @@ static void StoreDeclaration(const std::string& property, const std::string& val
     }
 }
 
+static bool IsImportantDeclaration(std::string& value) {
+    std::string cleanValue = sTrim(value);
+    std::string lowerValue = sLower(cleanValue);
+    const size_t important = lowerValue.rfind("!important");
+    if (important == std::string::npos) return false;
+    if (!sTrim(cleanValue.substr(important + 10)).empty()) return false;
+    value = sTrim(cleanValue.substr(0, important));
+    return true;
+}
+
 static bool ResolveVarValue(std::string& value,
                             const std::map<std::string, std::string>& properties) {
     for (int depth = 0; depth < 8; ++depth) {
@@ -2991,6 +3001,7 @@ ComputedStyle Stylesheet::resolve(const Node* node) const {
 
     ComputedStyle out;
     for (auto* r : matched) out = out.inherit(r->style);
+    for (auto* r : matched) out = out.inherit(r->importantStyle);
 
     // Inline style wins over everything
     auto inl = node->attr("style");
@@ -3769,15 +3780,18 @@ Stylesheet ParseStylesheet(const std::string& rawCss) {
         const bool rootSelector = (selectorBlock == "html" || selectorBlock == ":root");
         const auto declarations = SplitDeclarations(declBlock);
         ComputedStyle declStyle;
+        ComputedStyle importantStyle;
         g_emBase = inheritedEmBase;
         for (const auto& decl : declarations) {
             size_t colon = decl.find(':');
             if (colon == std::string::npos) continue;
             const std::string property = sLower(sTrim(decl.substr(0, colon)));
+            std::string value = sTrim(decl.substr(colon+1));
+            ComputedStyle& targetStyle = IsImportantDeclaration(value) ? importantStyle : declStyle;
             if (property == "font" || property == "font-size"
                 || property == "font-family" || property == "font-weight"
                 || property == "font-style") {
-                StoreDeclaration(property, sTrim(decl.substr(colon+1)), declStyle);
+                StoreDeclaration(property, value, targetStyle);
             }
         }
         const float elementEmBase = declStyle.fontSize > 0 ? declStyle.fontSize : inheritedEmBase;
@@ -3791,7 +3805,9 @@ Stylesheet ParseStylesheet(const std::string& rawCss) {
             if (property == "font" || property == "font-size"
                 || property == "font-family" || property == "font-weight"
                 || property == "font-style") continue;
-            StoreDeclaration(property, sTrim(decl.substr(colon+1)), declStyle);
+            std::string value = sTrim(decl.substr(colon+1));
+            ComputedStyle& targetStyle = IsImportantDeclaration(value) ? importantStyle : declStyle;
+            StoreDeclaration(property, value, targetStyle);
         }
 
         // Each top-level comma-separated selector becomes its own rule. Commas
@@ -3802,6 +3818,7 @@ Stylesheet ParseStylesheet(const std::string& rawCss) {
 
             CssRule rule = parseSelector(selPart);
             rule.style = declStyle;
+            rule.importantStyle = importantStyle;
             sheet.rules.push_back(rule);
         }
 

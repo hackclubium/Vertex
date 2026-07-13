@@ -114,6 +114,17 @@ TestResult RunCssTests() {
     }
 
     {
+        auto dom = ParseHtml("<html><body><div class=\"hidden panel\"></div></body></html>");
+        auto sheet = ParseStylesheet(".hidden { display:none !important; } .panel { display:block; }");
+        auto* node = FindElementByClass(dom.get(), "hidden");
+        ComputedStyle style = node ? sheet.resolve(node) : ComputedStyle{};
+        ExpectEqual("css/cascade/important-beats-later-normal-display",
+            std::to_string(style.display) + "\n",
+            "3\n",
+            result);
+    }
+
+    {
         auto dom = ParseHtml("<html><body><p id=\"target\"></p></body></html>");
         auto* node = FindElementById(dom.get(), "target");
         auto sheet = ParseStylesheet(
