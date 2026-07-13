@@ -1462,7 +1462,7 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
     }
     if (items.empty()) { box.contentH = 0; return; }
 
-    // Resolve column widths. Track tokens: "Npx", "N%", "Nfr", "auto".
+    // Resolve column widths. Track tokens: "Npx", "Nrem", "N%", "Nfr", "minmax(...)", "auto".
     size_t cols = tracks.empty() ? items.size() : tracks.size();
     std::vector<float> colW(cols, 0.f);
     float fixedSum = 0.f, frSum = 0.f;
@@ -1476,22 +1476,33 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
             colW[i] = 0.f;
             continue;
         }
-        size_t frPos = t.find("fr");
+        std::string track = t;
+        if (track.rfind("minmax(", 0) == 0 && track.back() == ')') {
+            size_t comma = track.find(',');
+            if (comma != std::string::npos) track = track.substr(comma + 1, track.size() - comma - 2);
+            while (!track.empty() && std::isspace((unsigned char)track.front())) track.erase(track.begin());
+            while (!track.empty() && std::isspace((unsigned char)track.back())) track.pop_back();
+        }
+        size_t frPos = track.find("fr");
         if (frPos != std::string::npos) {
             float f = 1.f;
-            try { f = std::stof(t.substr(0, frPos)); } catch (...) {}
+            try { f = std::stof(track.substr(0, frPos)); } catch (...) {}
             if (f < 0) f = 0;
             frVals[i] = f; frSum += f;
-        } else if (!t.empty() && t.back() == '%') {
+        } else if (!track.empty() && track.back() == '%') {
             float pct = 0;
-            try { pct = std::stof(t.substr(0, t.size() - 1)); } catch (...) {}
+            try { pct = std::stof(track.substr(0, track.size() - 1)); } catch (...) {}
             colW[i] = avail * (pct / 100.f);
             fixedSum += colW[i];
         } else {
-            // Try to parse as a pixel value (e.g. "200px" or bare "200").
+            // Try to parse as a length value (e.g. "12.25rem", "200px" or bare "200").
             float v = -1;
-            try { v = std::stof(t); } catch (...) {}
-            if (v >= 0) { colW[i] = px(v); fixedSum += colW[i]; }
+            try { v = std::stof(track); } catch (...) {}
+            if (v >= 0) {
+                float unit = 1.f;
+                if (track.find("rem") != std::string::npos || track.find("em") != std::string::npos) unit = 16.f;
+                colW[i] = px(v * unit); fixedSum += colW[i];
+            }
             else { frVals[i] = 1.f; frSum += 1.f; }
         }
     }
@@ -2233,6 +2244,13 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
         float w = usedWidth(s, cbW);
         if (borderBox && w >= 0)
             w = std::max(0.f, w - bpX);
+        if (s.widthKeyword != 0) {
+            float mc = maxContent(*b);
+            if (s.widthKeyword == 3)
+                w = std::min(mc, std::max(0.f, cbW - b->marginLeft - b->marginRight - bpX));
+            else
+                w = mc;
+        }
         if (w < 0) {
             if (s.leftSet && s.rightSet) {
                 float l = s.leftPercent ? cbW*(s.left/100.f) : px(s.left);

@@ -183,6 +183,24 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><div id=\"grid\"><div id=\"side\"></div><div id=\"main\"></div></div></body></html>");
+        auto sheet2 = ParseStylesheet("#grid { display:grid; width:400px; grid-template-columns:12.25rem minmax(0,1fr); } #side { height:10px; } #main { height:10px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 500.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* side = FindEngineBoxById(layout2.get(), "side");
+        auto* main = FindEngineBoxById(layout2.get(), "main");
+        ExpectEqual("layout-engine/grid-rem-track-and-minmax-fr",
+            std::to_string(side ? (int)(side->contentW + 0.5f) : -1) + ":" + std::to_string(main ? (int)(main->contentW + 0.5f) : -1) + "\n",
+            "196:204\n",
+            result);
+    }
+
+    {
         auto dom2 = ParseHtml("<html><body><main><section id=\"a\">a</section><meta property=\"mw:PageProp/toc\"/><section id=\"b\">b</section><link rel=\"mw:PageProp/Category\"/><section id=\"c\">c</section></main></body></html>");
         Stylesheet sheet2;
         LayoutInput input2;
@@ -622,6 +640,37 @@ TestResult RunLayoutEngineTests() {
         ExpectEqual("layout-engine/width-max-content-shrinks-to-content",
             std::string(ok ? "shrunk" : "filled") + "\n",
             "shrunk\n",
+            result);
+    }
+
+    // max-width:min(A * B, C) must not parse as A px and clamp below min-width.
+    {
+        auto mdom = ParseHtml(
+            "<html><body><div id=\"toc\">Contents</div></body></html>");
+        auto msheet = ParseStylesheet("#toc { width:max-content; min-width:200px; max-width:min(0.85 * 59.25rem,75vw); }");
+        LayoutInput min; min.document = mdom.get(); min.sheet = &msheet;
+        min.measure = &measure; min.viewportW = 1366.f; min.viewportH = 768.f;
+        auto ml = LayoutDocument(min);
+        auto* toc = FindEngineBoxById(ml.get(), "toc");
+        int w = toc ? (int)(toc->contentW + .5f) : -1;
+        ExpectEqual("layout-engine/min-function-product-preserves-min-width",
+            "w=" + std::to_string(w) + "\n",
+            "w=200\n",
+            result);
+    }
+
+    {
+        auto mdom = ParseHtml(
+            "<html><body><div id=\"host\"><div id=\"menu\"><div><span>Navigation</span></div></div></div></body></html>");
+        auto msheet = ParseStylesheet("#host { position:relative; width:400px; } #menu { position:absolute; width:max-content; max-width:200px; padding:16px; } #menu span { display:inline; }");
+        LayoutInput min; min.document = mdom.get(); min.sheet = &msheet;
+        min.measure = &measure; min.viewportW = 500.f; min.viewportH = 480.f;
+        auto ml = LayoutDocument(min);
+        auto* menu = FindEngineBoxById(ml.get(), "menu");
+        bool ok = menu && menu->contentW > 60.f && menu->borderBoxW() > 90.f;
+        ExpectEqual("layout-engine/positioned-width-max-content-keeps-menu-width",
+            std::string(ok ? "wide" : "collapsed") + "\n",
+            "wide\n",
             result);
     }
 

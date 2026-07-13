@@ -17,6 +17,7 @@ static const Node* g_hoverNodeCss = nullptr;
 static const Node* g_focusNodeCss = nullptr;
 void SetCssHoverNode(const Node* node) { g_hoverNodeCss = node; }
 void SetCssFocusNode(const Node* node) { g_focusNodeCss = node; }
+static float ParseLengthProduct(const std::string& raw, float emBase);
 
 // Viewport dimensions for vw/vh/vmin/vmax units. Set by the layout engine
 // before style resolution so CSS lengths resolve against the real window.
@@ -75,7 +76,7 @@ static float ParseLength(const std::string& raw, float emBase = -1.f) {
             int depth = 0; size_t start = 0; bool ok = true;
             for (size_t j = 0; j <= inner.size(); ++j) {
                 if (j == inner.size() || (inner[j] == ',' && depth == 0)) {
-                    float v = ParseLength(inner.substr(start, j - start), emBase);
+                    float v = ParseLengthProduct(inner.substr(start, j - start), emBase);
                     if (v <= -1e5f) { ok = false; break; }
                     args.push_back(v); start = j + 1;
                 } else if (inner[j] == '(') depth++;
@@ -156,6 +157,24 @@ static float ParseLength(const std::string& raw, float emBase = -1.f) {
     if (unit == "vmin") return num * (std::min(g_viewportW, g_viewportH) / 100.f);
     if (unit == "vmax") return num * (std::max(g_viewportW, g_viewportH) / 100.f);
     return num;  // unrecognized unit, treat as px
+}
+
+static float ParseLengthProduct(const std::string& raw, float emBase) {
+    std::string s = raw;
+    while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin());
+    while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
+    int depth = 0;
+    for (size_t i = 1; i < s.size(); ++i) {
+        if (s[i] == '(') ++depth;
+        else if (s[i] == ')' && depth > 0) --depth;
+        else if (depth == 0 && (s[i] == '*' || s[i] == '/')) {
+            float a = ParseLengthProduct(s.substr(0, i), emBase);
+            float b = ParseLengthProduct(s.substr(i + 1), emBase);
+            if (a <= -1e5f || b <= -1e5f || (s[i] == '/' && b == 0)) return -1;
+            return s[i] == '*' ? a * b : a / b;
+        }
+    }
+    return ParseLength(s, emBase);
 }
 
 static float ParsePercentage(const std::string& raw) {
