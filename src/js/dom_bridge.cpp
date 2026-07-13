@@ -3870,7 +3870,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
         docVal.asObject()->setProp("title",           vm.str(""));
         docVal.asObject()->setProp("URL",             vm.str(pageUrl));
         docVal.asObject()->setProp("baseURI",         vm.str(pageUrl));
-        docVal.asObject()->setProp("readyState",      vm.str("complete"));
+        docVal.asObject()->setProp("readyState",      vm.str("loading"));
         docVal.asObject()->setProp("domain",          vm.str(parseDomUrl(pageUrl).hostname));
         docVal.asObject()->setProp("cookie",          vm.str(CookieJar::instance().documentCookies(pageUrl)));
         docVal.asObject()->setProp("referrer",        vm.str(""));

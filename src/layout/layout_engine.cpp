@@ -8,6 +8,7 @@
 #include <functional>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Vertex layout engine
@@ -743,6 +744,7 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
 struct Engine {
     const LayoutInput& in;
     float Z;  // zoom
+    std::unordered_map<const LayoutBox*, float> maxContentCache;
 
     explicit Engine(const LayoutInput& i) : in(i), Z(i.zoom) {}
 
@@ -838,20 +840,26 @@ struct Engine {
         if (s.width >= 0) return px(s.width);
         if (s.widthCalcPercent >= 0) return 0;  // % component handled by caller
         if (s.widthPercent >= 0) return 0;  // % handled by caller
+        auto cached = maxContentCache.find(&box);
+        if (cached != maxContentCache.end()) return cached->second;
 
         if (box.kind == BoxKind::Text) {
             FontKey f = fontFor(box.style);
-            return in.measure ? in.measure->MeasureText(box.text, f) : (float)box.text.size() * f.size * 0.5f;
+            float result = in.measure ? in.measure->MeasureText(box.text, f) : (float)box.text.size() * f.size * 0.5f;
+            maxContentCache[&box] = result;
+            return result;
         }
         if (box.kind == BoxKind::Replaced) {
-            if (box.intrinsicW > 0) return px(box.intrinsicW);
-            return 0;
+            float result = box.intrinsicW > 0 ? px(box.intrinsicW) : 0;
+            maxContentCache[&box] = result;
+            return result;
         }
         if (box.establishesInline || box.kind == BoxKind::Inline
          || box.kind == BoxKind::InlineBlock) {
             // Inline content sits on one line: sum child outer widths.
             float sum = 0;
             for (auto& k : box.kids) sum += maxContent(*k) + hExtra(k->style);
+            maxContentCache[&box] = sum;
             return sum;
         }
         // Block container: widest child.
@@ -860,6 +868,7 @@ struct Engine {
             if (k->isOutOfFlow()) continue;
             w = std::max(w, maxContent(*k) + hExtra(k->style));
         }
+        maxContentCache[&box] = w;
         return w;
     }
 
@@ -1952,7 +1961,6 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
         if (lineRight <= lineLeft && fctx) {
             float nb = fctx->nextBreakBelow(y);
             if (nb > y) { y = nb; continue; }
-            if (nb == y) { y += 1.0f; continue; } // Avoid infinite loop if nextBreakBelow stuck
             lineLeft = cLeft; lineRight = cRight;
         }
         float avail = lineRight - lineLeft;

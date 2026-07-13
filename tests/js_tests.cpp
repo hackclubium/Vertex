@@ -2097,6 +2097,46 @@ TestResult RunJsTests() {
         "string: ok:x\n",
         result);
 
+    ExpectJsResult(
+        "compiler/comma-sequence-preserves-member-assign",
+        "var mw = {};\n"
+        "mw.RegExp = { escape: function(s) { return 'ok:' + s; } }, (function(){})();\n"
+        "__result = mw.RegExp.escape('x');\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "string/replace-regexp-string",
+        "__result = 'a'.replace(/([a])/g, 'z');\n",
+        "string: z\n",
+        result);
+    ExpectJsResult(
+        "regexp/literal-marker-debug",
+        "__result = typeof /[a]/g + ':' + (/[a]/g);\n",
+        "string: string:__regex__/[a]/g\n",
+        result);
+    ExpectJsResult(
+        "string/replace-regexp-callback",
+        "function r(s) { return 'x'; }\n"
+        "__result = 'a'.replace(/[a]/g, r);\n",
+        "string: x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/wikipedia-object-comma-chain",
+        "let mw = {};\n"
+        "mw.html = (() => { function t(e) { return 'x'; } return { escape: function(e) { return e.replace(/[a]/g, t); } }; })(), mw.RegExp = { escape: function(e) { return e.replace(/([a])/g, 'z'); } };\n"
+        "__result = mw.html.escape(mw.RegExp.escape('a'));\n",
+        "string: z\n",
+        result);
+
+    {
+        JsEngine engine;
+        bool first = engine.runScript("function doWhenReady(fn) { fn(); }\n", "first");
+        bool second = engine.runScript("doWhenReady(function() { document; });\n", "second");
+        ExpectEqual("js/engine/top-level-function-visible-across-scripts", (first && second) ? "ok\n" : "script failed\n", "ok\n", result);
+    }
+
     ExpectEqual(
         "js/engine/dom-registration-does-not-recurse",
         RunEngineDomRegistrationSnapshot(),

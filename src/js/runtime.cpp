@@ -26,6 +26,37 @@ static JsValue addNative(VM& vm, JsObject* obj, const std::string& name, NativeF
     return JsValue::object(fnObj);
 }
 
+static std::string expandReplacement(const std::string& repl, const std::smatch& m) {
+    std::string out;
+    for (size_t i = 0; i < repl.size(); ++i) {
+        if (repl[i] == '$' && i + 1 < repl.size()) {
+            char n = repl[i + 1];
+            if (n >= '0' && n <= '9') {
+                size_t idx = (size_t)(n - '0');
+                if (idx < m.size() && m[idx].matched) out += m[idx].str();
+                ++i;
+                continue;
+            }
+            if (n == '&') { out += m.str(0); ++i; continue; }
+            if (n == '$') { out += '$'; ++i; continue; }
+        }
+        out += repl[i];
+    }
+    return out;
+}
+
+static bool parseRegexMarker(const JsValue& v, std::string& pattern, std::string& flags) {
+    if (!v.isString()) return false;
+    std::string raw = v.toString();
+    if (raw.rfind("__regex__", 0) != 0) return false;
+    std::string body = raw.substr(9);
+    size_t lastSlash = body.rfind('/');
+    size_t start = !body.empty() && body[0] == '/' ? 1 : 0;
+    pattern = lastSlash == std::string::npos ? body.substr(start) : body.substr(start, lastSlash - start);
+    flags = lastSlash == std::string::npos ? "" : body.substr(lastSlash + 1);
+    return true;
+}
+
 static std::unordered_map<std::string, std::string> g_symbolRegistry;
 
 static JsValue arrayIteratorObject(VM& vm, JsValue target, const std::string& kind) {
@@ -801,7 +832,42 @@ static void registerString(VM& vm) {
         return JsValue::object(result);
     });
     addNative(vm, proto, "replace", NATIVE("replace") {
-        std::string s = getStr(thisVal), from = ARG_STR(0), to;
+        std::string s = getStr(thisVal), to;
+        std::string markerPattern, markerFlags;
+        if ((ARG(0).isObject() && ARG(0).asObject()->kind == ObjKind::RegExp) || parseRegexMarker(ARG(0), markerPattern, markerFlags)) {
+            auto* re = ARG(0).isObject() ? ARG(0).asObject() : nullptr;
+            std::string pattern = re ? re->getProp("source").toString() : markerPattern;
+            std::string flags = re ? re->getProp("flags").toString() : markerFlags;
+            try {
+                auto rxFlags = std::regex_constants::ECMAScript;
+                if (flags.find('i') != std::string::npos) rxFlags |= std::regex_constants::icase;
+                std::regex rx(pattern, rxFlags);
+                std::smatch m;
+                if (!std::regex_search(s, m, rx)) return vm.str(s);
+                bool global = flags.find('g') != std::string::npos;
+                std::string out;
+                std::string rest = s;
+                size_t base = 0;
+                do {
+                    if (ARG(1).isCallable()) {
+                        std::vector<JsValue> cbArgs;
+                        for (size_t i = 0; i < m.size(); ++i) cbArgs.push_back(m[i].matched ? vm.str(m[i].str()) : JsValue::undefined());
+                        cbArgs.push_back(JsValue::integer((int32_t)(base + (size_t)m.position(0))));
+                        cbArgs.push_back(thisVal);
+                        to = vm.call(ARG(1), JsValue::undefined(), cbArgs).toString();
+                    } else {
+                        to = expandReplacement(ARG_STR(1), m);
+                    }
+                    out += rest.substr(0, (size_t)m.position(0)) + to;
+                    size_t consumed = (size_t)m.position(0) + (size_t)m.length(0);
+                    base += consumed;
+                    rest = rest.substr(consumed);
+                } while (global && !rest.empty() && std::regex_search(rest, m, rx));
+                out += rest;
+                return vm.str(out);
+            } catch (...) { return vm.str(s); }
+        }
+        std::string from = ARG_STR(0);
         if (ARG(1).isCallable()) {
             auto pos = s.find(from);
             if (pos != std::string::npos) {

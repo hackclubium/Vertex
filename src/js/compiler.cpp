@@ -271,6 +271,11 @@ void Compiler::compileFuncDecl(const FuncDecl& s) {
     int r = declareLocal(s.name, false);
     uint8_t fnReg = compileFuncExpr(s.fn, r);
     if (fnReg != (uint8_t)r) { emit(OP_MOVE, (uint8_t)r, fnReg); freeReg(fnReg); }
+    if (!m_enclosing && m_fn && m_fn->name == "<global>") {
+        uint16_t idx = m_fn->addConstString(s.name);
+        Instruction ins; ins.op = OP_SET_GLOBAL; ins.a = (uint8_t)r; ins.setbc(idx);
+        m_fn->code.push_back(ins); m_fn->lines.push_back(0);
+    }
 }
 
 void Compiler::compileIf(const IfStmt& s) {
@@ -530,8 +535,6 @@ uint8_t Compiler::compileLiteral(const LiteralExpr& e) {
         }
     } else if (e.isStr) {
         if (e.strVal.substr(0, 9) == "__regex__") {
-            // Regex literal: call new RegExp(src)
-            // For now store as string; VM will handle
             uint16_t k = m_fn->addConstString(e.strVal);
             Instruction ins; ins.op=OP_LOAD_CONST; ins.a=dst; ins.setbc(k);
             m_fn->code.push_back(ins); m_fn->lines.push_back(0);

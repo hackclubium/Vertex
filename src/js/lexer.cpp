@@ -331,7 +331,7 @@ std::vector<Token> Lexer::tokenize() {
             else              tok = match('=') ? makeToken(TT::StarEq)     : makeToken(TT::Star);
             break;
         case '/':
-            if (canStartExpr(last)) { m_pos--; tok = readRegex(); break; }
+            if (canStartExpr(last)) { tok = readRegex(); break; }
             tok = match('=') ? makeToken(TT::SlashEq) : makeToken(TT::Slash);
             break;
         case '%': tok = match('=') ? makeToken(TT::PercentEq) : makeToken(TT::Percent); break;
