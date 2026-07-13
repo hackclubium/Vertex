@@ -3,6 +3,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 // ── BytecodeFunction helpers ──────────────────────────────────────────────────
 
@@ -487,7 +488,7 @@ uint8_t Compiler::compileExpr(const Expr& e, int hint) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T,LiteralExpr>)  return compileLiteral(v);
         else if constexpr (std::is_same_v<T,IdentExpr>)    return compileIdent(v, hint);
-        else if constexpr (std::is_same_v<T,ThisExpr>)     { uint8_t r=allocReg(); emit(OP_GET_GLOBAL,r,(uint8_t)m_fn->addConstString("__this__")); return r; }
+        else if constexpr (std::is_same_v<T,ThisExpr>)     { uint8_t r=allocReg(); emit(OP_GET_THIS,r); return r; }
         else if constexpr (std::is_same_v<T,SuperExpr>)    { uint8_t r=allocReg(); emit(OP_GET_GLOBAL,r,(uint8_t)m_fn->addConstString("__super__")); return r; }
         else if constexpr (std::is_same_v<T,BinaryExpr>)   return compileBinary(v, hint);
         else if constexpr (std::is_same_v<T,LogicalExpr>)  return compileLogical(v, hint);
@@ -760,6 +761,7 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
     std::vector<uint8_t> argRegs;
     argRegs.reserve(argc);
     for (size_t i = 0; i < argc; ++i) argRegs.push_back((uint8_t)(fnReg + 1 + i));
+    std::optional<uint16_t> calleeNameIdx;
 
     if (e.callee->is<MemberExpr>()) {
         auto& m = e.callee->as<MemberExpr>();
@@ -771,6 +773,7 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
         } else {
             auto& lit = m.prop->as<LiteralExpr>();
             emitGetStaticProp(fnReg, obj, lit.strVal, m.prop->line);
+            calleeNameIdx = m_fn->addConstString(lit.strVal);
         }
         freeReg(obj);
     } else if (e.callee->is<SuperExpr>()) {
@@ -799,7 +802,8 @@ uint8_t Compiler::compileCall(const CallExpr& e, int hint) {
         emit(OP_NEW, dst, fnReg, (uint8_t)argc);
     } else {
         emit(OP_CALL, dst, thisReg, fnReg);
-        emit(OP_NOP, (uint8_t)argc); // argc follows call
+        int meta = emit(OP_NOP, (uint8_t)argc); // argc follows call
+        if (calleeNameIdx) m_fn->code[meta].setbc((uint16_t)(*calleeNameIdx + 1));
     }
 
     // Free the fnReg+args run in reverse allocation order so registers at

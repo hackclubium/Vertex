@@ -31,6 +31,7 @@ enum Opcode : uint8_t {
     OP_GET_PROP_S,   // a=dst, b=obj, bc=name_const_idx  (static string key)
     OP_SET_PROP_S,   // a=obj, bc=name_const_idx, then next instr a=val
     OP_DEL_PROP,     // a=dst, b=obj, c=key_reg
+    OP_GET_THIS,     // a=dst
     OP_GET_THIS_PROP,// a=dst, bc=name_const_idx  (shortcut for this.prop)
     OP_SET_THIS_PROP,// bc=name_const_idx, a=val
     // Array/Object

@@ -435,6 +435,12 @@ JsValue VM::callFunction(JsObject* fn, JsValue thisVal, std::vector<JsValue>& ar
         return fn->nativeFn(*this, thisVal, args);
     }
     if (fn->kind == ObjKind::Function && fn->bcFn) {
+        if (fn->isArrow) {
+            JsValue lexicalThis = fn->getProp("__lexicalThis__");
+            if (!lexicalThis.isUndefined()) thisVal = lexicalThis;
+        } else if (thisVal.isNullOrUndefined()) {
+            thisVal = JsValue::object(m_globals);
+        }
         if (fn->isGenerator) {
             auto* gen = m_gc.newObject(ObjKind::Iterator);
             auto done = std::make_shared<bool>(false);
@@ -646,6 +652,9 @@ JsValue VM::runFrame(CallFrame& frame) {
             REG(ins.a) = JsValue::boolean(true);
             break;
         }
+        case OP_GET_THIS:
+            REG(ins.a) = frame.thisVal;
+            break;
         case OP_DELETE: {
             JsValue obj = REG(ins.b), key = REG(ins.c);
             if (obj.isObject()) obj.asObject()->deleteProp(key.toString());
@@ -812,6 +821,7 @@ JsValue VM::runFrame(CallFrame& frame) {
             fnObj->setProp("prototype", JsValue::object(proto));
             fnObj->setProp("name", str(innerFn->name));
             fnObj->setProp("length", JsValue::integer(innerFn->paramCount));
+            if (innerFn->isArrow) fnObj->setProp("__lexicalThis__", frame.thisVal);
             REG(ins.a) = JsValue::object(fnObj);
             break;
         }
@@ -821,15 +831,27 @@ JsValue VM::runFrame(CallFrame& frame) {
             JsValue fnV   = REG(ins.c);
             // Next instruction carries argc
             int argc = 0;
+            uint16_t calleeNameIdx = 0;
             if (frame.pc < (int)code.size()) {
                 const Instruction& next = code[frame.pc++];
                 argc = next.a;
+                calleeNameIdx = next.bc();
             }
             // Args are in registers fn_reg+1 .. fn_reg+argc
             int fnReg = ins.c;
             std::vector<JsValue> args;
             for (int i = 1; i <= argc; i++) args.push_back(REG(fnReg + i));
-            if (!fnV.isCallable()) throwTypeError("not a function: " + fnV.toString());
+            if (!fnV.isCallable()) {
+                if (calleeNameIdx > 0) {
+                    uint16_t idx = (uint16_t)(calleeNameIdx - 1);
+                    std::string name = idx < fn->constStrings.size() ? fn->constStrings[idx] : "<unknown>";
+                    std::string recv = thisV.toString();
+                    int callPc = frame.pc - 2;
+                    uint32_t line = callPc >= 0 && (size_t)callPc < fn->lines.size() ? fn->lines[(size_t)callPc] : 0;
+                    throwTypeError("not a function: " + name + " is " + fnV.toString() + " on " + recv + " in " + fn->name + " line " + std::to_string(line));
+                }
+                throwTypeError("not a function: " + fnV.toString());
+            }
             REG(ins.a) = callFunction(fnV.asObject(), thisV, args, false);
             break;
         }
@@ -950,6 +972,7 @@ JsValue VM::runFrame(CallFrame& frame) {
 }
 
 JsValue VM::execute(BytecodeFunction* fn, JsValue thisVal) {
+    if (thisVal.isUndefined()) thisVal = JsValue::object(m_globals);
     // Start the runaway-script deadline at the outermost execution only. The
     // deadline is global so native code (GC allocation, DOM/string churn) can
     // also bail out — not just the bytecode loop.

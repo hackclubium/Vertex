@@ -1560,6 +1560,24 @@ static void registerGlobals(VM& vm) {
         }
         return vm.str(result);
     }, "decodeURIComponent")));
+    vm.setGlobal("escape", JsValue::object(vm.gc().newNativeFunction(NATIVE("escape") {
+        std::string s = ARG_STR(0), result;
+        for (unsigned char c : s) {
+            if (isalnum(c) || c=='*'||c=='+'||c=='-'||c=='.'||c=='/'||c=='@'||c=='_') result += c;
+            else { char buf[4]; snprintf(buf, sizeof(buf), "%%%02X", c); result += buf; }
+        }
+        return vm.str(result);
+    }, "escape")));
+    vm.setGlobal("unescape", JsValue::object(vm.gc().newNativeFunction(NATIVE("unescape") {
+        std::string s = ARG_STR(0), result;
+        for (size_t i = 0; i < s.size(); i++) {
+            if (s[i]=='%' && i+2<s.size()) {
+                char hex[3] = {s[i+1],s[i+2],0};
+                result += (char)strtol(hex,nullptr,16); i+=2;
+            } else result += s[i];
+        }
+        return vm.str(result);
+    }, "unescape")));
     vm.setGlobal("encodeURI", vm.getGlobal("encodeURIComponent"));
     vm.setGlobal("decodeURI", vm.getGlobal("decodeURIComponent"));
     vm.setGlobal("__dynamicImport", JsValue::object(vm.gc().newNativeFunction(NATIVE("dynamic_import") {
@@ -1974,6 +1992,34 @@ static std::string isoFromMs(double msValue) {
     return buf;
 }
 
+static std::tm utcTmFromMs(double msValue) {
+    int64_t totalMs = (int64_t)std::llround(msValue);
+    time_t seconds = (time_t)(totalMs / 1000);
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &seconds);
+#else
+    gmtime_r(&seconds, &tm);
+#endif
+    return tm;
+}
+
+static double msFromUtcTm(std::tm tm, int millis) {
+#if defined(_WIN32)
+    __time64_t seconds = _mkgmtime64(&tm);
+#else
+    time_t seconds = timegm(&tm);
+#endif
+    return (double)seconds * 1000.0 + (double)millis;
+}
+
+static std::string utcStringFromMs(double msValue) {
+    std::tm tm = utcTmFromMs(msValue);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm);
+    return buf;
+}
+
 static double dateArgToMs(const std::vector<JsValue>& args) {
     if (args.empty() || args[0].isUndefined()) return currentTimeMs();
     if (args[0].isString()) {
@@ -1990,9 +2036,40 @@ static void registerDate(VM& vm) {
         double ms = dateArgToMs(args);
         d->setProp("__time__", JsValue::number(ms));
         addNative(vm, d, "getTime",         NATIVE("getTime")     { return thisVal.isObject()?thisVal.asObject()->getProp("__time__"):JsValue::number(0); });
+        addNative(vm, d, "setTime",         NATIVE("setTime") {
+            double t = ARG(0).toNumber();
+            if (thisVal.isObject()) thisVal.asObject()->setProp("__time__", JsValue::number(t));
+            return JsValue::number(t);
+        });
+        addNative(vm, d, "getFullYear",     NATIVE("getFullYear") {
+            double t = thisVal.isObject() ? thisVal.asObject()->getProp("__time__").toNumber() : 0;
+            return JsValue::integer(utcTmFromMs(t).tm_year + 1900);
+        });
+        addNative(vm, d, "getMonth",        NATIVE("getMonth") {
+            double t = thisVal.isObject() ? thisVal.asObject()->getProp("__time__").toNumber() : 0;
+            return JsValue::integer(utcTmFromMs(t).tm_mon);
+        });
+        addNative(vm, d, "setFullYear",     NATIVE("setFullYear") {
+            if (!thisVal.isObject()) return JsValue::number(std::nan(""));
+            double cur = thisVal.asObject()->getProp("__time__").toNumber();
+            int64_t totalMs = (int64_t)std::llround(cur);
+            int millis = (int)(totalMs % 1000);
+            if (millis < 0) millis += 1000;
+            std::tm tm = utcTmFromMs(cur);
+            tm.tm_year = (int)ARG(0).toNumber() - 1900;
+            if (args.size() > 1) tm.tm_mon = (int)ARG(1).toNumber();
+            if (args.size() > 2) tm.tm_mday = (int)ARG(2).toNumber();
+            double t = msFromUtcTm(tm, millis);
+            thisVal.asObject()->setProp("__time__", JsValue::number(t));
+            return JsValue::number(t);
+        });
         addNative(vm, d, "toISOString",     NATIVE("toISOString") {
             double t = thisVal.isObject() ? thisVal.asObject()->getProp("__time__").toNumber() : 0;
             return vm.str(isoFromMs(t));
+        });
+        addNative(vm, d, "toUTCString",     NATIVE("toUTCString") {
+            double t = thisVal.isObject() ? thisVal.asObject()->getProp("__time__").toNumber() : 0;
+            return vm.str(utcStringFromMs(t));
         });
         addNative(vm, d, "toLocaleDateString", NATIVE("toLocaleDateString") {
             double t = thisVal.isObject() ? thisVal.asObject()->getProp("__time__").toNumber() : 0;

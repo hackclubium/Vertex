@@ -65,6 +65,15 @@ static std::string RunEngineDomRegistrationSnapshot() {
     return ok ? "registered\n" : "script failed\n";
 }
 
+static std::string RunEngineDomKeepsBuiltinsSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript("document.documentElement.setAttribute('data-result', typeof escape + ':' + escape('a b'));\n", "dom-builtins");
+    if (!ok) return "script failed\n";
+    return dom->children[0]->attr("data-result") + "\n";
+}
+
 static std::string RunEngineDeepDomRegistrationSnapshot() {
     std::string html = "<html><body>";
     for (int i = 0; i < 1600; ++i) {
@@ -2023,10 +2032,81 @@ TestResult RunJsTests() {
         "string: false:true:string:mediawiki:portal:topic:Symbol(topic)\n",
         result);
 
+    ExpectJsResult(
+        "date/web-compat-methods",
+        "var d = new Date('2024-01-02T03:04:05.006Z');\n"
+        "var before = d.getFullYear() + ':' + d.getMonth();\n"
+        "d.setFullYear(2026);\n"
+        "var after = d.getFullYear() + ':' + d.getMonth();\n"
+        "d.setTime(0);\n"
+        "__result = before + '|' + after + '|' + d.toUTCString();\n",
+        "string: 2024:0|2026:0|Thu, 01 Jan 1970 00:00:00 GMT\n",
+        result);
+
+    ExpectJsResult(
+        "globals/legacy-escape-unescape",
+        "__result = escape('a b+') + '|' + unescape('a%20b%2B');\n",
+        "string: a%20b+|a b+\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/this-survives-nested-call",
+        "var obj = { escape: function(s) { return 'ok:' + s; }, element: function(s) { return this.escape(String(s)); } };\n"
+        "__result = obj.element('x');\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/this-nested-member-receiver",
+        "var mw = {};\n"
+        "mw.html = { escape: function(s) { return 'ok:' + s; }, element: function(s) { return this.escape(String(s)); } };\n"
+        "__result = mw.html.element('x');\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/this-from-arrow-returned-object",
+        "var mw = {};\n"
+        "mw.html = (() => { return { escape: function(s) { return 'ok:' + s; }, element: function(s) { return this.escape(String(s)); } }; })();\n"
+        "__result = mw.html.element('x');\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/top-level-this-is-global-for-arrow",
+        "this.escape = function(s) { return 'ok:' + s; };\n"
+        "var f = () => this.escape('x');\n"
+        "__result = f();\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/deep-member-call-receiver",
+        "var mw = {}; mw.RegExp = { escape: function(s) { return 'ok:' + s; } };\n"
+        "function f() { return mw.RegExp.escape('x'); }\n"
+        "__result = f();\n",
+        "string: ok:x\n",
+        result);
+
+    ExpectJsResult(
+        "compiler/sloppy-unbound-this-is-global",
+        "this.escape = function(s) { return 'ok:' + s; };\n"
+        "function f() { return this.escape('x'); }\n"
+        "var g = f;\n"
+        "__result = g();\n",
+        "string: ok:x\n",
+        result);
+
     ExpectEqual(
         "js/engine/dom-registration-does-not-recurse",
         RunEngineDomRegistrationSnapshot(),
         "registered\n",
+        result);
+
+    ExpectEqual(
+        "js/engine/dom-registration-keeps-builtins",
+        RunEngineDomKeepsBuiltinsSnapshot(),
+        "function:a%20b\n",
         result);
 
     ExpectEqual(
