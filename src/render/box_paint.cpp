@@ -389,7 +389,7 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
 
     // Replaced image content — including <canvas>, whose "bitmap" is its
     // live off-screen D2D canvas surface rather than a decoded network image.
-    if (box.kind == BoxKind::Replaced && !box.replacedUrl.empty()) {
+    if ((box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) && !box.replacedUrl.empty()) {
         ID2D1Bitmap* bmp = nullptr;
         if (box.replacedUrl == "__canvas__") {
             auto csIt = m_canvasSurfaces.find(box.node);
@@ -432,7 +432,7 @@ void Renderer::PaintBoxDecorations(const LayoutBox& box, float scrollY, float to
         }
     }
 
-    if (box.kind == BoxKind::Replaced && box.node
+    if ((box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) && box.node
         && (box.node->tagName == "video" || box.node->tagName == "audio")) {
         const bool isVideo = box.node->tagName == "video";
         float cx = box.contentX();

@@ -239,6 +239,63 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><img id=\"logo\" src=\"logo.svg\" style=\"display:block;width:8.75em;height:1.375em\"></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* logo = FindEngineBoxById(layout2.get(), "logo");
+        ExpectEqual("layout-engine/block-replaced-uses-css-size",
+            std::to_string(logo ? (int)(logo->contentW + 0.5f) : -1) + ":"
+                + std::to_string(logo ? (int)(logo->contentH + 0.5f) : -1) + "\n",
+            "140:22\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><span id=\"wrap\" style=\"float:left\"><img id=\"logo\" src=\"logo.svg\" style=\"display:block;width:8.75em;height:1.375em\"></span></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* wrap = FindEngineBoxById(layout2.get(), "wrap");
+        auto* logo = FindEngineBoxById(layout2.get(), "logo");
+        ExpectEqual("layout-engine/floated-inline-wraps-block-replaced-size",
+            std::to_string(wrap ? (int)(wrap->contentW + 0.5f) : -1) + ":"
+                + std::to_string(wrap ? (int)(wrap->contentH + 0.5f) : -1) + ":"
+                + std::to_string(logo ? (int)(logo->contentW + 0.5f) : -1) + ":"
+                + std::to_string(logo ? (int)(logo->contentH + 0.5f) : -1) + "\n",
+            "140:22:140:22\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><a id=\"flex\"><span id=\"wrap\" style=\"float:left\"><img id=\"logo\" src=\"logo.svg\" style=\"display:block;width:8.75em;height:1.375em\"></span></a></body></html>");
+        auto sheet2 = ParseStylesheet("#flex { display:flex; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* logo = FindEngineBoxById(layout2.get(), "logo");
+        ExpectEqual("layout-engine/flex-items-ignore-float-for-logo-image",
+            std::to_string(logo ? (int)(logo->contentW + 0.5f) : -1) + ":"
+                + std::to_string(logo ? (int)(logo->contentH + 0.5f) : -1) + "\n",
+            "140:22\n",
+            result);
+    }
+
+    {
         const std::string home = HomePageHtml();
         const size_t styleStart = home.find("<style>");
         const size_t styleEnd = home.find("</style>");

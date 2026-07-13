@@ -253,7 +253,7 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
     }
 
     // Replaced image or inline SVG
-    if (box.kind == BoxKind::Replaced && !box.replacedUrl.empty()) {
+    if ((box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) && !box.replacedUrl.empty()) {
         float cx = box.contentX();
         float cy = box.contentY() - ps.scrollY + ps.topInset;
         if (box.replacedUrl == "__svg__" && box.node) {
@@ -284,7 +284,7 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
         }
     }
 
-    if (box.kind == BoxKind::Replaced && box.node
+    if ((box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) && box.node
         && (box.node->tagName == "video" || box.node->tagName == "audio")) {
         float cx = box.contentX();
         float cy = box.contentY() - ps.scrollY + ps.topInset;
@@ -330,7 +330,7 @@ inline void PaintBoxDecorations(PaintState& ps, const LayoutBox& box) {
     }
 
     // Form controls: draw the control chrome + typed text.
-    if (box.kind == BoxKind::Replaced && box.node && ps.form) {
+    if ((box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) && box.node && ps.form) {
         const std::string& tag = box.node->tagName;
         if (tag == "input" || tag == "textarea" || tag == "button" || tag == "select") {
             float cx = box.contentX();

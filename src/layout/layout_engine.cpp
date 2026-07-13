@@ -860,7 +860,7 @@ struct Engine {
             maxContentCache[&box] = result;
             return result;
         }
-        if (box.kind == BoxKind::Replaced) {
+        if (box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) {
             float result = box.intrinsicW > 0 ? px(box.intrinsicW) : 0;
             maxContentCache[&box] = result;
             return result;
@@ -1031,7 +1031,7 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
     box.x = cbX + box.marginLeft;  // border-box left
 
     // Replaced: resolve height from intrinsic / CSS, no children.
-    if (box.kind == BoxKind::Replaced) {
+    if (box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) {
         float h = bbHeight(usedHeight(s, cbH));
         if (box.intrinsicW > 0 && box.contentW <= 0) box.contentW = px(box.intrinsicW);
         if (h < 0) {
@@ -1279,7 +1279,7 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
     std::vector<LayoutBox*> items;
     for (auto& child : box.kids) {
         if (child->isOutOfFlow()) positionedOut.push_back(child.get());
-        else if (!child->isFloat()) items.push_back(child.get());
+        else items.push_back(child.get());
     }
     if (items.empty()) { box.contentH = 0; return; }
 
@@ -2263,7 +2263,7 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
         }
 
         b->x = 0; b->y = 0;  // children laid out relative to origin; translated below
-        if (b->kind == BoxKind::Replaced) {
+        if (b->kind == BoxKind::Replaced || (!b->replacedUrl.empty() && b->kids.empty())) {
             // A positioned image: resolve height from CSS or the intrinsic
             // aspect ratio (the normal-flow replaced path in layoutBox is never
             // reached for out-of-flow boxes, so do it here too).
