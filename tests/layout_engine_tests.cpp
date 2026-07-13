@@ -79,6 +79,24 @@ TestResult RunLayoutEngineTests() {
         result);
 
     {
+        auto dom2 = ParseHtml("<html><body><div id=\"clip\"><div id=\"far\">x</div></div></body></html>");
+        auto sheet2 = ParseStylesheet(
+            "#clip { width:100px; height:20px; overflow:hidden; }"
+            "#far { position:relative; top:10000px; height:20px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        ExpectEqual("layout-engine/overflow-hidden-clips-scroll-height",
+            std::to_string((int)(layout2 ? layout2->contentH + 0.5f : -1)) + "\n",
+            "36\n",
+            result);
+    }
+
+    {
         const std::string home = HomePageHtml();
         const size_t styleStart = home.find("<style>");
         const size_t styleEnd = home.find("</style>");

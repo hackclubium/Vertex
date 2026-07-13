@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -2259,15 +2260,17 @@ void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
     }
 }
 
-float ScrollableBottom(const LayoutBox& box, bool includeSelf) {
+float ScrollableBottom(const LayoutBox& box, bool includeSelf, float clipBottom = std::numeric_limits<float>::infinity()) {
     if (box.style.positionMode == 3) return 0.f;
     float bottom = includeSelf ? box.y + box.borderBoxH() + box.marginBottom : box.contentY();
+    if (box.style.overflowHidden)
+        clipBottom = std::min(clipBottom, box.y + box.borderBoxH());
     for (const auto& child : box.kids)
-        bottom = std::max(bottom, ScrollableBottom(*child, true));
+        bottom = std::max(bottom, ScrollableBottom(*child, true, clipBottom));
     for (const auto& line : box.lines)
         for (const auto& frag : line.frags)
             bottom = std::max(bottom, frag.y + frag.h);
-    return bottom;
+    return std::min(bottom, clipBottom);
 }
 
 } // namespace
