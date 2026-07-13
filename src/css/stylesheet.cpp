@@ -880,17 +880,91 @@ static std::vector<std::string> SplitGridTracks(const std::string& value) {
     std::vector<std::string> tracks;
     std::string token;
     int parens = 0;
+    int brackets = 0;
     for (char c : value) {
         if (c == '(') ++parens;
         else if (c == ')' && parens > 0) --parens;
-        if (std::isspace((unsigned char)c) && parens == 0) {
-            if (!token.empty()) { tracks.push_back(token); token.clear(); }
+        else if (c == '[' && parens == 0) ++brackets;
+        else if (c == ']' && brackets > 0) --brackets;
+        if (std::isspace((unsigned char)c) && parens == 0 && brackets == 0) {
+            if (!token.empty()) {
+                std::string trimmed = sTrim(token);
+                if (!(trimmed.size() >= 2 && trimmed.front() == '[' && trimmed.back() == ']'))
+                    tracks.push_back(trimmed);
+                token.clear();
+            }
         } else {
             token += c;
         }
     }
-    if (!token.empty()) tracks.push_back(token);
+    if (!token.empty()) {
+        std::string trimmed = sTrim(token);
+        if (!(trimmed.size() >= 2 && trimmed.front() == '[' && trimmed.back() == ']'))
+            tracks.push_back(trimmed);
+    }
     return tracks;
+}
+
+static void SplitGridTracksAndLines(const std::string& value,
+                                    std::vector<std::string>& tracks,
+                                    std::vector<std::vector<std::string>>& lines) {
+    tracks.clear();
+    lines.clear();
+    lines.push_back({});
+    std::string token;
+    int parens = 0;
+    int brackets = 0;
+    auto flush = [&]() {
+        std::string trimmed = sTrim(token);
+        token.clear();
+        if (trimmed.empty()) return;
+        if (trimmed.size() >= 2 && trimmed.front() == '[' && trimmed.back() == ']') {
+            std::istringstream ss(trimmed.substr(1, trimmed.size() - 2));
+            std::string name;
+            while (ss >> name) lines.back().push_back(name);
+        } else {
+            tracks.push_back(trimmed);
+            lines.push_back({});
+        }
+    };
+    for (char c : value) {
+        if (c == '(') ++parens;
+        else if (c == ')' && parens > 0) --parens;
+        else if (c == '[' && parens == 0) ++brackets;
+        else if (c == ']' && brackets > 0) --brackets;
+        if (std::isspace((unsigned char)c) && parens == 0 && brackets == 0) flush();
+        else token += c;
+    }
+    flush();
+}
+
+static bool ParseGridLineToken(const std::string& raw, int& outLine, std::string& outName) {
+    std::string v = sTrim(raw);
+    if (v.empty() || v == "auto") return false;
+    try { outLine = std::stoi(v); return true; } catch (...) {}
+    if (v.rfind("span", 0) == 0) return false;
+    outName = v;
+    return true;
+}
+
+static std::vector<std::vector<std::string>> ParseGridTemplateAreas(const std::string& raw) {
+    std::vector<std::vector<std::string>> rows;
+    char quote = 0;
+    std::string row;
+    for (char c : raw) {
+        if (!quote && (c == '\'' || c == '"')) { quote = c; row.clear(); continue; }
+        if (quote && c == quote) {
+            std::istringstream ss(row);
+            std::vector<std::string> names;
+            std::string name;
+            while (ss >> name) names.push_back(name);
+            if (!names.empty()) rows.push_back(std::move(names));
+            quote = 0;
+            continue;
+        }
+        if (quote) row += c;
+    }
+    return rows;
 }
 
 // Parse "linear-gradient(...)" into angle + color stops. Returns true if valid.
@@ -1046,6 +1120,28 @@ static void ApplyDeclaration(const std::string& prop,
                              ComputedStyle& out) {
     if (ApplyLogicalDeclaration(prop, val, out)) return;
     if (prop == "clip") { ParseClipRect(val, out); return; }
+    if (prop == "grid-area") {
+        std::string v = sTrim(val);
+        if (v.find('/') == std::string::npos && v != "auto" && !v.empty()) out.gridAreaName = v;
+        return;
+    }
+    if (prop == "grid-template-areas") {
+        auto areas = ParseGridTemplateAreas(val);
+        if (!areas.empty()) { out.gridTemplateAreas = std::move(areas); out.gridTemplateAreasSet = true; }
+        return;
+    }
+    if (prop == "grid-template") {
+        auto areas = ParseGridTemplateAreas(val);
+        if (!areas.empty()) { out.gridTemplateAreas = std::move(areas); out.gridTemplateAreasSet = true; }
+        size_t slash = val.find('/');
+        if (slash != std::string::npos) {
+            std::vector<std::string> tracks;
+            std::vector<std::vector<std::string>> lines;
+            SplitGridTracksAndLines(sTrim(val.substr(slash + 1)), tracks, lines);
+            if (!tracks.empty()) { out.gridTemplateColumns = std::move(tracks); out.gridTemplateColumnLineNames = std::move(lines); out.gridTemplateColumnsSet = true; }
+        }
+        return;
+    }
     if (prop == "border-collapse") {
         std::string v = sLower(sTrim(val));
         out.borderCollapse = (v == "collapse");
@@ -1465,8 +1561,10 @@ static void ApplyDeclaration(const std::string& prop,
         float parsed = ParseLength(sTrim(val));
         if (parsed >= 0) out.gridColumnGap = parsed;
     } else if (prop == "grid-template-columns") {
-        auto tracks = SplitGridTracks(sTrim(val));
-        if (!tracks.empty()) { out.gridTemplateColumns = std::move(tracks); out.gridTemplateColumnsSet = true; }
+        std::vector<std::string> tracks;
+        std::vector<std::vector<std::string>> lines;
+        SplitGridTracksAndLines(sTrim(val), tracks, lines);
+        if (!tracks.empty()) { out.gridTemplateColumns = std::move(tracks); out.gridTemplateColumnLineNames = std::move(lines); out.gridTemplateColumnsSet = true; }
     } else if (prop == "grid-template-rows") {
         auto tracks = SplitGridTracks(sTrim(val));
         if (!tracks.empty()) { out.gridTemplateRows = std::move(tracks); out.gridTemplateRowsSet = true; }
@@ -1474,9 +1572,12 @@ static void ApplyDeclaration(const std::string& prop,
         // grid-column: start / end or just start
         std::string v = sTrim(val); size_t slash = v.find('/');
         if (slash != std::string::npos) {
-            try { out.gridColumnStart = std::stoi(sTrim(v.substr(0, slash))); } catch (...) {}
-            try { out.gridColumnEnd = std::stoi(sTrim(v.substr(slash + 1))); } catch (...) {}
-        } else { try { out.gridColumnStart = std::stoi(v); } catch (...) {} }
+            ParseGridLineToken(v.substr(0, slash), out.gridColumnStart, out.gridColumnStartName);
+            ParseGridLineToken(v.substr(slash + 1), out.gridColumnEnd, out.gridColumnEndName);
+        } else {
+            ParseGridLineToken(v, out.gridColumnStart, out.gridColumnStartName);
+            if (!out.gridColumnStartName.empty()) out.gridColumnEndName = out.gridColumnStartName;
+        }
     } else if (prop == "grid-row") {
         std::string v = sTrim(val); size_t slash = v.find('/');
         if (slash != std::string::npos) {
@@ -1484,9 +1585,9 @@ static void ApplyDeclaration(const std::string& prop,
             try { out.gridRowEnd = std::stoi(sTrim(v.substr(slash + 1))); } catch (...) {}
         } else { try { out.gridRowStart = std::stoi(v); } catch (...) {} }
     } else if (prop == "grid-column-start") {
-        try { out.gridColumnStart = std::stoi(sTrim(val)); } catch (...) {}
+        ParseGridLineToken(val, out.gridColumnStart, out.gridColumnStartName);
     } else if (prop == "grid-column-end") {
-        try { out.gridColumnEnd = std::stoi(sTrim(val)); } catch (...) {}
+        ParseGridLineToken(val, out.gridColumnEnd, out.gridColumnEndName);
     } else if (prop == "grid-row-start") {
         try { out.gridRowStart = std::stoi(sTrim(val)); } catch (...) {}
     } else if (prop == "grid-row-end") {
@@ -2156,7 +2257,7 @@ static void ApplyDeclaration(const std::string& prop,
             || prop == "text-size-adjust" || prop == "tab-size"
             || prop == "columns"
             || prop == "place-items" || prop == "place-content"
-            || prop == "grid-area" || prop == "grid-auto-rows"
+            || prop == "grid-auto-rows"
             || prop == "grid-auto-columns"
             || prop == "counter-reset" || prop == "counter-increment"
             || prop == "quotes" || prop == "hyphens") {

@@ -97,6 +97,110 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><main style=\"height:900px\">x</main></body></html>");
+        auto sheet2 = ParseStylesheet("html, body { overflow:hidden; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        ExpectEqual("layout-engine/root-overflow-hidden-keeps-document-height",
+            std::to_string((int)(layout2 ? layout2->contentH + 0.5f : -1)) + "\n",
+            "916\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><div id=\"grid\"><div id=\"a\">a</div><div id=\"b\">b</div></div></body></html>");
+        auto sheet2 = ParseStylesheet("#grid { display:grid; grid-template-columns:[full-start] 100px [content-start] 1fr [content-end] 50px [full-end]; } #a { height:10px; } #b { grid-column:content; height:10px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 350.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* a = FindEngineBoxById(layout2.get(), "a");
+        auto* b = FindEngineBoxById(layout2.get(), "b");
+        ExpectEqual("layout-engine/grid-line-names-do-not-create-tracks",
+            std::to_string(a ? (int)(a->contentW + 0.5f) : -1) + ":" + std::to_string(b ? (int)(b->contentW + 0.5f) : -1) + "\n",
+            "100:184\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><div id=\"grid\"><div id=\"side\">s</div><div id=\"main\">m</div></div></body></html>");
+        auto sheet2 = ParseStylesheet("#grid { display:grid; grid-template-columns:100px 1fr; grid-template-areas:'side main'; } #side { grid-area:side; height:10px; } #main { grid-area:main; height:10px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 350.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* side = FindEngineBoxById(layout2.get(), "side");
+        auto* main = FindEngineBoxById(layout2.get(), "main");
+        ExpectEqual("layout-engine/grid-template-areas-place-items",
+            std::to_string(side ? (int)(side->x + 0.5f) : -1) + ":" + std::to_string(main ? (int)(main->x + 0.5f) : -1) + ":" + std::to_string(main ? (int)(main->contentW + 0.5f) : -1) + "\n",
+            "8:108:234\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><div id=\"grid\"><div id=\"main\">m</div><div id=\"side\">s</div></div></body></html>");
+        auto sheet2 = ParseStylesheet("#grid { display:grid; grid-template-columns:minmax(0,1fr) min-content; grid-template-areas:'main side'; } #main { grid-area:main; height:10px; } #side { grid-area:side; height:10px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 350.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* main = FindEngineBoxById(layout2.get(), "main");
+        ExpectEqual("layout-engine/grid-min-content-does-not-steal-fr-space",
+            std::to_string(main ? (int)(main->contentW + 0.5f) : -1) + "\n",
+            "334\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><div id=\"grid\"><div id=\"main\">m</div><div id=\"side\">s</div></div></body></html>");
+        auto sheet2 = ParseStylesheet("#grid { display:grid; grid-template:'main side' / minmax(0,1fr) min-content; } #main { grid-area:main; height:10px; } #side { grid-area:side; height:10px; }");
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 350.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* main = FindEngineBoxById(layout2.get(), "main");
+        ExpectEqual("layout-engine/grid-template-shorthand-areas-and-columns",
+            std::to_string(main ? (int)(main->contentW + 0.5f) : -1) + "\n",
+            "334\n",
+            result);
+    }
+
+    {
+        auto dom2 = ParseHtml("<html><body><main><section id=\"a\">a</section><meta property=\"mw:PageProp/toc\"/><section id=\"b\">b</section><link rel=\"mw:PageProp/Category\"/><section id=\"c\">c</section></main></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        ExpectEqual("layout-engine/void-head-tags-do-not-swallow-sections",
+            std::string(FindEngineBoxById(layout2.get(), "a") ? "a" : "-")
+                + (FindEngineBoxById(layout2.get(), "b") ? "b" : "-")
+                + (FindEngineBoxById(layout2.get(), "c") ? "c" : "-") + "\n",
+            "abc\n",
+            result);
+    }
+
+    {
         const std::string home = HomePageHtml();
         const size_t styleStart = home.find("<style>");
         const size_t styleEnd = home.find("</style>");

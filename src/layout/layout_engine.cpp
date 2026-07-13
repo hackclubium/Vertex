@@ -1462,6 +1462,10 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
             frVals[i] = 1.f; frSum += 1.f; continue;
         }
         const std::string& t = tracks[i];
+        if (t == "min-content" || t == "max-content" || t.rfind("fit-content(", 0) == 0) {
+            colW[i] = 0.f;
+            continue;
+        }
         size_t frPos = t.find("fr");
         if (frPos != std::string::npos) {
             float f = 1.f;
@@ -1499,6 +1503,38 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
 
     // Build a grid: assign items to (row, col) cells.
     // Items with explicit grid-column/grid-row go first; auto items fill gaps.
+    auto resolveLineName = [&](const std::string& name, bool endLine) -> int {
+        if (name.empty()) return 0;
+        const std::string wanted = name + (endLine ? "-end" : "-start");
+        const auto& lines = box.style.gridTemplateColumnLineNames;
+        for (size_t i = 0; i < lines.size(); ++i)
+            for (const auto& candidate : lines[i])
+                if (candidate == wanted || candidate == name) return (int)i + 1;
+        return 0;
+    };
+    struct AreaPlacement { int row = 0, col = 0, rowEnd = 0, colEnd = 0; };
+    auto resolveArea = [&](const std::string& name) -> AreaPlacement {
+        AreaPlacement out;
+        if (name.empty()) return out;
+        const auto& areas = box.style.gridTemplateAreas;
+        for (size_t r = 0; r < areas.size(); ++r) {
+            for (size_t c = 0; c < areas[r].size(); ++c) {
+                if (areas[r][c] != name) continue;
+                if (out.row == 0) {
+                    out.row = (int)r + 1;
+                    out.col = (int)c + 1;
+                    out.rowEnd = out.row + 1;
+                    out.colEnd = out.col + 1;
+                } else {
+                    out.row = std::min(out.row, (int)r + 1);
+                    out.col = std::min(out.col, (int)c + 1);
+                    out.rowEnd = std::max(out.rowEnd, (int)r + 2);
+                    out.colEnd = std::max(out.colEnd, (int)c + 2);
+                }
+            }
+        }
+        return out;
+    };
     size_t maxRow = 0;
     struct Cell { int row; int col; int rowSpan; int colSpan; LayoutBox* item; };
     std::vector<Cell> placed;
@@ -1506,6 +1542,13 @@ void Engine::layoutGrid(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
     for (auto* item : items) {
         int cs = item->style.gridColumnStart, ce = item->style.gridColumnEnd;
         int rs = item->style.gridRowStart, re = item->style.gridRowEnd;
+        if (!item->style.gridAreaName.empty()) {
+            AreaPlacement area = resolveArea(item->style.gridAreaName);
+            if (area.col) { cs = area.col; ce = area.colEnd; }
+            if (area.row) { rs = area.row; re = area.rowEnd; }
+        }
+        if (cs <= 0) cs = resolveLineName(item->style.gridColumnStartName, false);
+        if (ce <= 0) ce = resolveLineName(item->style.gridColumnEndName, true);
         if (cs > 0 || rs > 0) {
             int c = cs > 0 ? cs - 1 : 0;  // 1-based to 0-based
             int r = rs > 0 ? rs - 1 : 0;
@@ -2263,7 +2306,8 @@ void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
 float ScrollableBottom(const LayoutBox& box, bool includeSelf, float clipBottom = std::numeric_limits<float>::infinity()) {
     if (box.style.positionMode == 3) return 0.f;
     float bottom = includeSelf ? box.y + box.borderBoxH() + box.marginBottom : box.contentY();
-    if (box.style.overflowHidden)
+    const std::string tag = box.node ? box.node->tagName : "";
+    if (box.style.overflowHidden && tag != "html" && tag != "body")
         clipBottom = std::min(clipBottom, box.y + box.borderBoxH());
     for (const auto& child : box.kids)
         bottom = std::max(bottom, ScrollableBottom(*child, true, clipBottom));

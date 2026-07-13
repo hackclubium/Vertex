@@ -391,7 +391,8 @@ std::shared_ptr<Node> ParseHtml(const std::string& html) {
                     auto node = Node::makeElement(tag);
                     node->attrs = t.attrs;
                     head->appendChild(node);
-                    stack.push_back(node);
+                    if (!kVoidTags.count(tag) && !t.selfClosing)
+                        stack.push_back(node);
                 }
                 break;
             }

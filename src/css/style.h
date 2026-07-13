@@ -239,11 +239,16 @@ struct ComputedStyle {
     bool     justifyContentSet = false;
     // Grid tracks remain CSS tokens until their containing block is known.
     std::vector<std::string> gridTemplateColumns;
+    std::vector<std::vector<std::string>> gridTemplateColumnLineNames;
     bool     gridTemplateColumnsSet = false;
     std::vector<std::string> gridTemplateRows;
     bool     gridTemplateRowsSet = false;
+    std::vector<std::vector<std::string>> gridTemplateAreas;
+    bool     gridTemplateAreasSet = false;
     int      gridColumnStart = 0, gridColumnEnd = 0; // 0 = auto
+    std::string gridColumnStartName, gridColumnEndName;
     int      gridRowStart = 0, gridRowEnd = 0;
+    std::string gridAreaName;
     float    gridGap         = -1; // gap for grid (both row and column if not set separately)
     float    gridRowGap      = -1;
     float    gridColumnGap   = -1;
@@ -471,11 +476,16 @@ struct ComputedStyle {
         if (child.flexColumnGap >= 0) out.flexColumnGap = child.flexColumnGap;
         if (child.alignContentSet) { out.alignContent = child.alignContent; out.alignContentSet = true; }
         if (child.gridTemplateColumnsSet) { out.gridTemplateColumns = child.gridTemplateColumns; out.gridTemplateColumnsSet = true; }
+        if (child.gridTemplateColumnsSet) out.gridTemplateColumnLineNames = child.gridTemplateColumnLineNames;
         if (child.gridTemplateRowsSet) { out.gridTemplateRows = child.gridTemplateRows; out.gridTemplateRowsSet = true; }
+        if (child.gridTemplateAreasSet) { out.gridTemplateAreas = child.gridTemplateAreas; out.gridTemplateAreasSet = true; }
         if (child.gridColumnStart) out.gridColumnStart = child.gridColumnStart;
         if (child.gridColumnEnd) out.gridColumnEnd = child.gridColumnEnd;
+        if (!child.gridColumnStartName.empty()) out.gridColumnStartName = child.gridColumnStartName;
+        if (!child.gridColumnEndName.empty()) out.gridColumnEndName = child.gridColumnEndName;
         if (child.gridRowStart) out.gridRowStart = child.gridRowStart;
         if (child.gridRowEnd) out.gridRowEnd = child.gridRowEnd;
+        if (!child.gridAreaName.empty()) out.gridAreaName = child.gridAreaName;
         if (child.gridGap >= 0) out.gridGap = child.gridGap;
         if (child.gridRowGap >= 0) out.gridRowGap = child.gridRowGap;
         if (child.gridColumnGap >= 0) out.gridColumnGap = child.gridColumnGap;

@@ -1711,7 +1711,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/web-platform/general-platform-stubs",
         RunGeneralPlatformStubsSnapshot(),
-        "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P||true:false:true|true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
+        "CSS1Compat|visible|false|https://example.org/wiki/Page|example.org|en-US:4:0|true:true|false|2:1|4:true:true|7|P|Made|true:false:true|true:true:a\\ b|true:true|start:vertex:true:true;|clip|idle:false:true;\n",
         result);
 
     ExpectEqual(

@@ -3,8 +3,11 @@
 // geometry + key style. Lets us debug layout without the GUI.
 #include "html/parser.h"
 #include "css/stylesheet.h"
+#include "network/resource_cache.h"
+#include "network/text_decode.h"
 #include "layout/layout_engine.h"
 #include "network/url.h"
+#include "platform/browser_core.h"
 
 #include <cstdio>
 #include <fstream>
@@ -94,13 +97,25 @@ static void Dump(const LayoutBox& b, int depth) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) { fprintf(stderr, "usage: dump_layout file.html\n"); return 1; }
-    std::ifstream f(argv[1], std::ios::binary);
-    std::stringstream ss; ss << f.rdbuf();
-    std::string html = ss.str();
+    if (argc < 2) { fprintf(stderr, "usage: dump_layout file.html|url [viewport_width]\n"); return 1; }
+    const std::string source = argv[1];
+    std::string html;
+    std::string baseUrl;
+    if (HasUrlScheme(source)) {
+        FetchResult res = FetchResourceCached(source, 12 * 1024 * 1024, ResourceKind::Document);
+        if (!res.success) { fprintf(stderr, "fetch failed: %s\n", res.error.c_str()); return 2; }
+        html = DecodeTextToUtf8(res.body, res.contentType);
+        baseUrl = res.finalUrl.empty() ? source : res.finalUrl;
+    } else {
+        std::ifstream f(source, std::ios::binary);
+        std::stringstream ss; ss << f.rdbuf();
+        html = ss.str();
+    }
 
     auto dom = ParseHtml(html);
+    if (!baseUrl.empty()) LoadExternalStylesheets(dom, baseUrl);
     Stylesheet sheet = CollectCss(dom.get());
+    sheet.setViewport(argc > 2 ? (float)atoi(argv[2]) : 1200.f, 800.f);
     StubMeasure measure;
 
     LayoutInput in;
@@ -110,6 +125,7 @@ int main(int argc, char** argv) {
     in.viewportW = argc > 2 ? (float)atoi(argv[2]) : 1200.f;
     in.viewportH = 800.f;
     in.zoom = 1.f;
+    in.baseUrl = baseUrl;
 
     auto root = LayoutDocument(in);
     if (root) Dump(*root, 0);
