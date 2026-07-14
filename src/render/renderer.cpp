@@ -1006,8 +1006,8 @@ int Renderer::CursorAt(float x, float y, float scrollY, float topInset) const {
     const float docY = y + scrollY - topInset;
     const float viewportH = (float)m_height - topInset;
     for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
-        const float elemBottom = it->y - scrollY;
-        const float elemTop = elemBottom - it->h;
+        const float elemTop = it->y - scrollY;
+        const float elemBottom = elemTop + it->h;
         if (elemBottom < -100.f || elemTop > viewportH + 100.f) continue;
         if (x >= it->x && x <= it->x + it->w
             && docY >= it->y && docY <= it->y + it->h) {
@@ -1052,8 +1052,8 @@ const Node* Renderer::HoverNodeAt(float x, float y, float scrollY, float topInse
     const float viewportH = (float)m_height - topInset;
     for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
         // Quick viewport culling: skip elements completely off-screen
-        const float elemBottom = it->y - scrollY;
-        const float elemTop = elemBottom - it->h;
+        const float elemTop = it->y - scrollY;
+        const float elemBottom = elemTop + it->h;
         if (elemBottom < -100.f || elemTop > viewportH + 100.f) continue;
         
         if (x >= it->x && x <= it->x + it->w

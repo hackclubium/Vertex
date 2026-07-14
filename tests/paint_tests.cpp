@@ -580,6 +580,20 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        const bool stableHover =
+            renderer.find("const float elemTop = it->y - scrollY") != std::string::npos
+            && renderer.find("const float elemBottom = elemTop + it->h") != std::string::npos
+            && mainWin.find("InvalidateContent();\n    return;") != std::string::npos;
+        ExpectEqual("paint/hover-cursor-and-style-invalidations-are-stable",
+            stableHover ? "stable\n" : "flicker\n",
+            "stable\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         const bool statusIsIdempotent =
             mainWin.find("static std::string lastStatus;") != std::string::npos

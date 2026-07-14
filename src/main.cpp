@@ -1526,6 +1526,8 @@ static RECT HoverRegionToClientRect(const HitRegion& region) {
 
 static void InvalidateHoverRegions(const HitRegion* oldRegion, const HitRegion* newRegion) {
     if (!g_hwnd) return;
+    InvalidateContent();
+    return;
     if (!oldRegion || !newRegion) {
         InvalidateContent();
         return;
