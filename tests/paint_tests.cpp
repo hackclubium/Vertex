@@ -585,7 +585,9 @@ TestResult RunPaintTests() {
         const bool stableHover =
             renderer.find("const float elemTop = it->y - scrollY") != std::string::npos
             && renderer.find("const float elemBottom = elemTop + it->h") != std::string::npos
-            && mainWin.find("InvalidateContent();\n    return;") != std::string::npos;
+            && mainWin.find("static void InvalidateHoverRegions") != std::string::npos
+            && mainWin.find("InvalidateContent();") != std::string::npos
+            && mainWin.find("HoverRegionToClientRect(*oldRegion)") == std::string::npos;
         ExpectEqual("paint/hover-cursor-and-style-invalidations-are-stable",
             stableHover ? "stable\n" : "flicker\n",
             "stable\n",
