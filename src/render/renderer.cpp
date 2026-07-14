@@ -1013,7 +1013,8 @@ int Renderer::CursorAt(float x, float y, float scrollY, float topInset) const {
             && docY >= it->y && docY <= it->y + it->h) {
             if (it->box->style.cursorSet) return it->box->style.cursor;
             if (!it->box->href.empty()) return 1; // links default to pointer
-            return 0;
+            // Deep child boxes inside links often have cursor:auto; keep scanning
+            // broader candidates so the ancestor link can still supply pointer.
         }
     }
     return 0;
