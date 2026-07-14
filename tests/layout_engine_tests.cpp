@@ -240,6 +240,25 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><p><span id=\"wrap\"><a id=\"link\">Hello</a></span></p></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        auto* wrap = FindEngineBoxById(layout2.get(), "wrap");
+        auto* link = FindEngineBoxById(layout2.get(), "link");
+        bool ok = wrap && link && wrap->contentH > 0 && link->contentH > 0;
+        ExpectEqual("layout-engine/inline-text-boxes-keep-fragment-geometry",
+            std::string(ok ? "kept" : "zero") + "\n",
+            "kept\n",
+            result);
+    }
+
+    {
         auto dom2 = ParseHtml("<html><body><div id=\"shown\">a</div><div id=\"hidden\" class=\"oo-ui-element-hidden\">b</div></body></html>");
         Stylesheet sheet2;
         LayoutInput input2;
@@ -623,6 +642,40 @@ TestResult RunLayoutEngineTests() {
         ExpectEqual("layout-engine/flex-align-items-center",
             std::string(ok ? "ok " : "missing ") + "delta=" + std::to_string(delta) + "\n",
             "ok delta=40\n",
+            result);
+    }
+
+    // Flex item intrinsic width should include a descendant min-width button.
+    {
+        auto fdom = ParseHtml(
+            "<html><body><div id=\"bar\"><nav id=\"nav\"><label id=\"btn\"></label></nav><a id=\"logo\">Logo</a></div></body></html>");
+        auto fsheet = ParseStylesheet(
+            "#bar { display:flex; width:280px; gap:20px; } #btn { display:inline-flex; min-width:32px; min-height:32px; } #logo { width:200px; }");
+        LayoutInput fin; fin.document = fdom.get(); fin.sheet = &fsheet;
+        fin.measure = &measure; fin.viewportW = 320.f; fin.viewportH = 480.f;
+        auto fl = LayoutDocument(fin);
+        auto* nav = FindEngineBoxById(fl.get(), "nav");
+        bool ok = nav && nav->contentW >= 30.f;
+        ExpectEqual("layout-engine/flex-item-intrinsic-includes-child-min-width",
+            std::string(ok ? "kept" : "collapsed") + "\n",
+            "kept\n",
+            result);
+    }
+
+    // Auto-basis flex items keep content min-size when siblings overflow.
+    {
+        auto fdom = ParseHtml(
+            "<html><body><div id=\"bar\"><nav id=\"nav\"><label id=\"btn\"></label></nav><a id=\"logo\">Logo</a></div></body></html>");
+        auto fsheet = ParseStylesheet(
+            "#bar { display:flex; width:220px; gap:20px; } #btn { display:inline-flex; min-width:32px; min-height:32px; } #logo { width:200px; }");
+        LayoutInput fin; fin.document = fdom.get(); fin.sheet = &fsheet;
+        fin.measure = &measure; fin.viewportW = 320.f; fin.viewportH = 480.f;
+        auto fl = LayoutDocument(fin);
+        auto* nav = FindEngineBoxById(fl.get(), "nav");
+        bool ok = nav && nav->contentW >= 30.f;
+        ExpectEqual("layout-engine/flex-auto-item-does-not-shrink-below-content",
+            std::string(ok ? "kept" : "collapsed") + "\n",
+            "kept\n",
             result);
     }
 

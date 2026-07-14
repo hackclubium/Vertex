@@ -857,11 +857,13 @@ struct Engine {
         if (box.kind == BoxKind::Text) {
             FontKey f = fontFor(box.style);
             float result = in.measure ? in.measure->MeasureText(box.text, f) : (float)box.text.size() * f.size * 0.5f;
+            if (s.minWidth >= 0) result = std::max(result, px(s.minWidth));
             maxContentCache[&box] = result;
             return result;
         }
         if (box.kind == BoxKind::Replaced || (!box.replacedUrl.empty() && box.kids.empty())) {
             float result = box.intrinsicW > 0 ? px(box.intrinsicW) : 0;
+            if (s.minWidth >= 0) result = std::max(result, px(s.minWidth));
             maxContentCache[&box] = result;
             return result;
         }
@@ -870,6 +872,7 @@ struct Engine {
             // Inline content sits on one line: sum child outer widths.
             float sum = 0;
             for (auto& k : box.kids) sum += maxContent(*k) + hExtra(k->style);
+            if (s.minWidth >= 0) sum = std::max(sum, px(s.minWidth));
             maxContentCache[&box] = sum;
             return sum;
         }
@@ -879,6 +882,7 @@ struct Engine {
             if (k->isOutOfFlow()) continue;
             w = std::max(w, maxContent(*k) + hExtra(k->style));
         }
+        if (s.minWidth >= 0) w = std::max(w, px(s.minWidth));
         maxContentCache[&box] = w;
         return w;
     }
@@ -1306,23 +1310,27 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
 
     // ── row direction: flex-wrap, grow, shrink, basis, align-self ───────────
 
-    struct FlexItem { LayoutBox* box; float basis; float grow; float shrink; float extra; };
+    struct FlexItem { LayoutBox* box; float basis; float grow; float shrink; float extra; float minMain; };
 
     // Compute hypothetical main sizes (basis + hExtra).
     std::vector<FlexItem> allItems;
     for (LayoutBox* item : items) {
         float basis;
+        float minMain = 0.f;
         if (item->style.flexBasisSet && item->style.flexBasis >= 0)
             basis = px(item->style.flexBasis);
         else {
             basis = usedWidth(item->style, box.contentW);
-            if (basis < 0) basis = maxContent(*item);
+            if (basis < 0) {
+                basis = maxContent(*item);
+                minMain = basis;
+            }
         }
         basis = std::max(0.f, basis);
         float grow = item->style.flexGrowSet ? item->style.flexGrow : 0.f;
         float shrink = item->style.flexShrinkSet ? item->style.flexShrink : 1.f;
         float extra = hExtra(item->style);
-        allItems.push_back({ item, basis, grow, shrink, extra });
+        allItems.push_back({ item, basis, grow, shrink, extra, minMain });
     }
 
     // Split items into flex lines (all on one line if nowrap).
@@ -1380,6 +1388,7 @@ void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) 
                 w += slack * fi.grow / growTotal;
             else if (slack < 0 && shrinkTotal > 0)
                 w += slack * fi.shrink / shrinkTotal;
+            w = std::max(w, fi.minMain);
             w = std::max(0.f, w);
 
             float marginLeft = child.style.marginLeftSet() && !child.style.isMarginAuto(child.style.marginLeft)
@@ -2005,6 +2014,17 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
     std::vector<InlineItem> items;
     struct InlineBounds { float minX = 0, minY = 0, maxX = 0, maxY = 0; bool set = false; };
     std::unordered_map<LayoutBox*, InlineBounds> inlineBounds;
+    auto addInlineBound = [&](LayoutBox* owner, const InlineFrag& frag) {
+        if (!owner) return;
+        auto& b = inlineBounds[owner];
+        if (!b.set) {
+            b.minX = frag.x; b.minY = frag.y; b.maxX = frag.x + frag.w; b.maxY = frag.y + frag.h;
+            b.set = true;
+        } else {
+            b.minX = std::min(b.minX, frag.x); b.minY = std::min(b.minY, frag.y);
+            b.maxX = std::max(b.maxX, frag.x + frag.w); b.maxY = std::max(b.maxY, frag.y + frag.h);
+        }
+    };
     float inlineCbH = usedHeight(box.style, box.contentH >= 0 ? box.contentH : -1.f);
     if (inlineCbH >= 0 && box.style.boxSizing == 1) {
         const float vbp = box.borderTop + box.padTop + box.borderBottom + box.padBottom;
@@ -2153,17 +2173,8 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
                 float ny = frag.y + it.box->marginTop;
                 TranslateSubtree(*it.box, nx - it.box->x, ny - it.box->y);
             }
-            for (LayoutBox* owner : it.owners) {
-                if (!owner) continue;
-                auto& b = inlineBounds[owner];
-                if (!b.set) {
-                    b.minX = frag.x; b.minY = frag.y; b.maxX = frag.x + frag.w; b.maxY = frag.y + frag.h;
-                    b.set = true;
-                } else {
-                    b.minX = std::min(b.minX, frag.x); b.minY = std::min(b.minY, frag.y);
-                    b.maxX = std::max(b.maxX, frag.x + frag.w); b.maxY = std::max(b.maxY, frag.y + frag.h);
-                }
-            }
+            if (it.box && it.box->kind == BoxKind::Text) addInlineBound(it.box, frag);
+            for (LayoutBox* owner : it.owners) addInlineBound(owner, frag);
             line.frags.push_back(frag);
             fx += it.width;
         }
