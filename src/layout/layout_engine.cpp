@@ -956,6 +956,7 @@ float collapseMargins(float a, float b) {
 }
 
 static void TranslateSubtree(LayoutBox& box, float dx, float dy);
+static float WrapDirectAtomicInlineChildren(LayoutBox& box);
 
 // A box establishes a *new* block formatting context when it is floated,
 // out-of-flow, a flex/table container, or has non-visible overflow. Such a box
@@ -1097,12 +1098,14 @@ void Engine::layoutBox(LayoutBox& box, float cbX, float cbW, float cbH,
         }
         // Note: box.y must already be set by caller (we use contentY()).
         float h = layoutInline(box, &local);
+        h = std::max(h, WrapDirectAtomicInlineChildren(box));
         box.contentH = explicitH >= 0 ? explicitH : h;
     } else {
         std::vector<LayoutBox*> positioned;
         FloatCtx* inherit = (parentFloats && !establishesNewBfc(s)) ? parentFloats : nullptr;
         layoutBlockChildren(box, positioned, inherit);
         for (auto* p : positioned) positionedOut.push_back(p);
+        box.contentH = std::max(box.contentH, WrapDirectAtomicInlineChildren(box));
         if (explicitH >= 0) box.contentH = explicitH;
 
         // Multi-column layout: distribute children across N columns.
@@ -1287,6 +1290,40 @@ static void TranslateSubtree(LayoutBox& box, float dx, float dy) {
         for (auto& frag : line.frags) { frag.x += dx; frag.y += dy; }
     }
     for (auto& kid : box.kids) TranslateSubtree(*kid, dx, dy);
+}
+
+static float WrapDirectAtomicInlineChildren(LayoutBox& box) {
+    bool overflows = false;
+    int atomics = 0;
+    const float left = box.contentX();
+    const float right = left + box.contentW;
+    for (auto& kid : box.kids) {
+        if (kid->kind != BoxKind::InlineBlock && kid->kind != BoxKind::Replaced) continue;
+        ++atomics;
+        if (kid->x + kid->marginBoxW() > right + 0.5f) overflows = true;
+    }
+    if (!overflows || atomics < 2) return box.contentH;
+
+    float cursorX = left;
+    float cursorY = box.contentY();
+    float lineH = 0;
+    float bottom = cursorY;
+    for (auto& kid : box.kids) {
+        if (kid->kind != BoxKind::InlineBlock && kid->kind != BoxKind::Replaced) continue;
+        const float w = kid->marginBoxW();
+        if (cursorX > left && cursorX + w > right + 0.5f) {
+            cursorX = left;
+            cursorY += lineH;
+            lineH = 0;
+        }
+        const float targetX = cursorX + kid->marginLeft;
+        const float targetY = cursorY + kid->marginTop;
+        TranslateSubtree(*kid, targetX - kid->x, targetY - kid->y);
+        cursorX += w;
+        lineH = std::max(lineH, kid->marginBoxH());
+        bottom = std::max(bottom, cursorY + kid->marginBoxH());
+    }
+    return std::max(0.f, bottom - box.contentY());
 }
 
 void Engine::layoutFlex(LayoutBox& box, std::vector<LayoutBox*>& positionedOut) {
@@ -2045,7 +2082,14 @@ float Engine::layoutInline(LayoutBox& box, FloatCtx* fctx) {
     float cLeft  = box.contentX();
     float cRight = box.contentX() + box.contentW;
     float top    = box.contentY();
-    bool nowrap  = box.style.whiteSpaceNowrap;
+    bool hasAtomicItem = false;
+    for (const auto& item : items) {
+        if (item.type == InlineItem::Atomic) {
+            hasAtomicItem = true;
+            break;
+        }
+    }
+    bool nowrap  = box.style.whiteSpaceNowrap && !hasAtomicItem;
     int  align   = box.style.textAlignSet ? box.style.textAlign : 0;
 
     float y = top;

@@ -1279,6 +1279,33 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    // Main Page sister-project lists use inline-block tiles. They must wrap at
+    // the content edge instead of painting one very wide row.
+    {
+        auto sdom = ParseHtml(
+            "<html><body><div id=\"wrap\"><ul id=\"projects\">"
+            "<li id=\"a\"><div>i</div><div><span>Commons</span><br>Free media</div></li>"
+            "<li id=\"b\"><div>i</div><div><span>MediaWiki</span><br>Wiki software</div></li>"
+            "<li id=\"c\"><div>i</div><div><span>Meta-Wiki</span><br>Project coordination</div></li>"
+            "<li id=\"d\"><div>i</div><div><span>Wikibooks</span><br>Free textbooks</div></li>"
+            "<li id=\"e\"><div>i</div><div><span>Wikidata</span><br>Free knowledge</div></li>"
+            "</ul></div></body></html>");
+        auto ssheet = ParseStylesheet(
+            "body{margin:0;}#wrap{width:1000px;}#projects{margin:0;padding:0;white-space:nowrap;}"
+            "#projects li{display:inline-block;width:320px;height:64px;}"
+            "#projects li div{display:inline-block;}");
+        LayoutInput sin; sin.document = sdom.get(); sin.sheet = &ssheet;
+        sin.measure = &measure; sin.viewportW = 1200.f; sin.viewportH = 400.f;
+        auto sl = LayoutDocument(sin);
+        auto* a = FindEngineBoxById(sl.get(), "a");
+        auto* d = FindEngineBoxById(sl.get(), "d");
+        bool wrapped = a && d && d->y >= a->y + a->borderBoxH() - 0.5f && d->x < 400.f;
+        ExpectEqual("layout-engine/inline-block-tiles-wrap-at-content-edge",
+            wrapped ? "wrapped\n" : "overflow\n",
+            "wrapped\n",
+            result);
+    }
+
     // Anonymous block wrappers around inline runs must not copy layout-affecting
     // parent styles such as overflow:hidden. Wikipedia's footer uses an
     // overflow-hidden container with floated sidebars followed by an inline
