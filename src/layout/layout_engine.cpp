@@ -572,6 +572,8 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     if (HasClass(node, "oo-ui-element-hidden")) return nullptr;
     if (HasClass(node, "vector-menu-item--collapsible")
         && HasAncestorClass(node, "vector-user-links-main")) return nullptr;
+    if (HasClass(node, "vector-menu-item--collapsible")
+        && HasAncestorClass(node, "vector-collapsible")) return nullptr;
     if (tag == "dialog" && !HasAttr(node, "open")) return nullptr;
     if (tag == "input" && LowerAscii(node->attr("type")) == "hidden") return nullptr;
 
