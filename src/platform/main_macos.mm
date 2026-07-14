@@ -74,6 +74,16 @@ static std::string HitTestLink(float x, float y) {
     return {};
 }
 
+static bool SubmitFormFromControl(Node* control) {
+    FormState::Submission sub;
+    std::string base = CurTab().page ? CurTab().page->url : CurTab().url;
+    Node* submitter = FormState::isSubmitControl(control) ? control : nullptr;
+    if (!g_formState.buildSubmission(control, submitter, base, sub)) return false;
+    g_formState.blur();
+    g_chrome.navigate(sub.request);
+    return true;
+}
+
 // ── profile data helpers ─────────────────────────────────────────────────────
 
 static std::string HtmlEscape(const std::string& input) {
@@ -443,6 +453,11 @@ static Stylesheet CollectCSS(const Node* root) {
     if (g_layoutRoot && !g_tabs.empty()) {
         Node* input = FormState::hitTestInput(*g_layoutRoot, (float)pt.x, (float)pt.y, CurTab().scrollY, 0);
         if (input) {
+            if (FormState::isSubmitControl(input)) {
+                SubmitFormFromControl(input);
+                [self setNeedsDisplay:YES];
+                return;
+            }
             g_formState.focus(input);
             [self setNeedsDisplay:YES];
             return;
@@ -542,19 +557,7 @@ static Stylesheet CollectCSS(const Node* root) {
     if (!g_formState.focusedInput) { [super keyDown:event]; return; }
     unsigned short kc = [event keyCode];
     if (kc == 36) { // Return
-        std::string url = g_formState.buildFormQuery();
-        if (!url.empty()) {
-            g_formState.blur();
-            if (!url.empty() && url[0] == '/') {
-                std::string base = CurTab().page ? CurTab().page->url : "";
-                size_t scheme = base.find("://");
-                if (scheme != std::string::npos) {
-                    size_t slash = base.find('/', scheme + 3);
-                    url = base.substr(0, slash) + url;
-                }
-            }
-            g_chrome.navigate(url);
-        }
+        SubmitFormFromControl(g_formState.focusedInput);
         return;
     }
     if (kc == 51) { g_formState.backspace(); [self setNeedsDisplay:YES]; return; } // Backspace
@@ -826,7 +829,8 @@ int main(int argc, const char* argv[]) {
             CurTab().scrollY = std::max(0.f, y - 16.f);
             if (g_view) [g_view setNeedsDisplay:YES];
         };
-        g_chrome.onNavigateRequested = [](int tabIdx, const std::string& url) {
+        g_chrome.onNavigateRequested = [](int tabIdx, FetchRequest request) {
+            std::string url = request.url;
             // Handle internal pages
             if (url == "vertex://history" || url == "vertex://bookmarks" || 
                 url == "vertex://downloads" || url == "vertex://settings" || 
@@ -848,7 +852,9 @@ int main(int argc, const char* argv[]) {
             
             // Regular network fetch
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                auto res = FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
+                auto res = request.method == "POST"
+                    ? FetchUrl(request, 12 * 1024 * 1024)
+                    : FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
                 auto* page = new Page();
                 page->url = url;
                 if (res.success && !res.body.empty()) {

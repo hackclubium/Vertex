@@ -1008,7 +1008,8 @@ static std::string PlatformFeaturesPageHtml() {
     return vertex::platform_features::PageHtml(g_platformFeatures, AppPageCss());
 }
 
-static void platformFetch(int tabIdx, const std::string& url) {
+static void platformFetch(int tabIdx, FetchRequest request) {
+    const std::string url = request.url;
     // Handle internal pages
     if (url == "vertex://history") {
         auto* page = new Page();
@@ -1078,8 +1079,10 @@ static void platformFetch(int tabIdx, const std::string& url) {
     }
     
     // Regular network fetch
-    std::thread([tabIdx, url]() {
-        auto res = FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
+    std::thread([tabIdx, url, request]() {
+        auto res = request.method == "POST"
+            ? FetchUrl(request, 12 * 1024 * 1024)
+            : FetchResourceCached(url, 12 * 1024 * 1024, ResourceKind::Document);
         auto* page = new Page();
         page->url = url;
         if (res.success && !res.body.empty()) {
@@ -1103,6 +1106,17 @@ static void platformFetch(int tabIdx, const std::string& url) {
             RequestRedraw();
         });
     }).detach();
+}
+
+static bool SubmitFormFromControl(Node* control) {
+    FormState::Submission sub;
+    std::string base = CurTab().page ? CurTab().page->url : CurTab().url;
+    Node* submitter = FormState::isSubmitControl(control) ? control : nullptr;
+    if (!g_formState.buildSubmission(control, submitter, base, sub)) return false;
+    g_formState.blur();
+    g_urlEdit.setText(sub.url);
+    g_chrome.navigate(sub.request);
+    return true;
 }
 
 // ── input handling ───────────────────────────────────────────────────────────
@@ -1214,6 +1228,11 @@ static void OnButtonPress(uint8_t button, int x, int y) {
     if (g_layoutRoot) {
         Node* input = FormState::hitTestInput(*g_layoutRoot, (float)x, (float)contentY, CurTab().scrollY, 0);
         if (input) {
+            if (FormState::isSubmitControl(input)) {
+                SubmitFormFromControl(input);
+                RequestRedraw();
+                return;
+            }
             g_formState.focus(input);
             RequestRedraw();
             return;
@@ -1357,20 +1376,7 @@ static void OnKeyPress(xcb_keycode_t kc, uint16_t state) {
 
     if (!g_formState.focusedInput) return;
     if (sym == XK_Return) {
-        std::string url = g_formState.buildFormQuery();
-        if (!url.empty()) {
-            g_formState.blur();
-            if (url[0] == '/') {
-                std::string base = CurTab().page ? CurTab().page->url : "";
-                size_t scheme = base.find("://");
-                if (scheme != std::string::npos) {
-                    size_t slash = base.find('/', scheme + 3);
-                    url = base.substr(0, slash) + url;
-                }
-            }
-            g_urlEdit.setText(url);
-            g_chrome.navigate(url);
-        }
+        SubmitFormFromControl(g_formState.focusedInput);
         RequestRedraw();
         return;
     }

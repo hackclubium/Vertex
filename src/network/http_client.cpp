@@ -70,6 +70,11 @@ std::string ToLower(std::string s) {
     return s;
 }
 
+std::string ToUpper(std::string s) {
+    for (auto& c : s) c = (char)std::toupper((unsigned char)c);
+    return s;
+}
+
 std::string Trim(const std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
     size_t end = s.find_last_not_of(" \t\r\n");
@@ -193,8 +198,9 @@ bool ReadChunkedBody(Sock& sock, std::string& body, std::string& out, size_t max
 // HTTP-level outcomes (redirects, 4xx/5xx) are reported via `r` itself.
 template <typename Sock>
 bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& currentUrl,
-                     size_t maxResponseBytes, FetchResult& r,
-                     std::string& outBody, std::vector<HeaderLine>& headers) {
+                     const FetchRequest& fetchRequest,
+                      size_t maxResponseBytes, FetchResult& r,
+                      std::string& outBody, std::vector<HeaderLine>& headers) {
     // Validate host and path to prevent header injection via CRLF
     for (char c : parsed.hostHeader) {
         if (c == '\r' || c == '\n') { r.error = "Invalid host"; return false; }
@@ -202,15 +208,28 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
     for (char c : parsed.path) {
         if (c == '\r' || c == '\n') { r.error = "Invalid path"; return false; }
     }
+    std::string method = fetchRequest.method.empty() ? "GET" : ToUpper(fetchRequest.method);
+    if (method != "GET" && method != "POST") { r.error = "Unsupported HTTP method"; return false; }
+    for (char c : method) {
+        if (c == '\r' || c == '\n' || c == ' ') { r.error = "Invalid method"; return false; }
+    }
+    for (char c : fetchRequest.contentType) {
+        if (c == '\r' || c == '\n') { r.error = "Invalid content type"; return false; }
+    }
     std::string cookieHeader = CookieJar::instance().cookieHeader(currentUrl);
     std::string request =
-        "GET " + parsed.path + " HTTP/1.1\r\n"
+        method + " " + parsed.path + " HTTP/1.1\r\n"
         "Host: " + parsed.hostHeader + "\r\n"
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Vertex/0.1 (+https://github.com/vertex-browser)\r\n"
         "Accept-Encoding: gzip\r\n"
         "Connection: close\r\n";
     if (!cookieHeader.empty()) request += "Cookie: " + cookieHeader + "\r\n";
+    if (method == "POST") {
+        request += "Content-Type: " + (fetchRequest.contentType.empty() ? "application/x-www-form-urlencoded" : fetchRequest.contentType) + "\r\n";
+        request += "Content-Length: " + std::to_string(fetchRequest.body.size()) + "\r\n";
+    }
     request += "\r\n";
+    if (method == "POST") request += fetchRequest.body;
 
     if (!sock.SendAll(request.data(), request.size())) { r.error = "Failed to send request"; return false; }
 
@@ -268,8 +287,15 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
 } // namespace
 
 FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
+    FetchRequest request;
+    request.url = url;
+    return FetchHttp(request, maxResponseBytes);
+}
+
+FetchResult FetchHttp(const FetchRequest& request, size_t maxResponseBytes) {
     FetchResult r;
-    std::string currentUrl = url;
+    std::string currentUrl = request.url;
+    FetchRequest currentRequest = request;
     std::set<std::string> visited;
 
     for (int redirects = 0; redirects <= 10; redirects++) {
@@ -297,7 +323,7 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
                 TorProxy(proxyHost, proxyPort);
                 if (!tls.ConnectSocks5(proxyHost, proxyPort, parsed.host, parsed.port)) { r.error = "Tor SOCKS5 TLS connection failed"; return r; }
             } else if (!tls.Connect(parsed.host, parsed.port)) { r.error = "TLS connection failed"; return r; }
-            ok = PerformRequest(tls, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
+            ok = PerformRequest(tls, parsed, currentUrl, currentRequest, maxResponseBytes, r, outBody, headers);
         } else {
             TcpSocket sock;
             if (onion) {
@@ -306,7 +332,7 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
                 TorProxy(proxyHost, proxyPort);
                 if (!sock.ConnectSocks5(proxyHost, proxyPort, parsed.host, parsed.port)) { r.error = "Tor SOCKS5 connection failed"; return r; }
             } else if (!sock.Connect(parsed.host, parsed.port)) { r.error = "Connection failed"; return r; }
-            ok = PerformRequest(sock, parsed, currentUrl, maxResponseBytes, r, outBody, headers);
+            ok = PerformRequest(sock, parsed, currentUrl, currentRequest, maxResponseBytes, r, outBody, headers);
         }
         if (!ok) return r;
 
@@ -334,6 +360,12 @@ FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes) {
             std::string location = FindHeader(headers, "location");
             if (!location.empty() && redirects < 10) {
                 currentUrl = ResolveUrlAgainstBase(location, currentUrl);
+                currentRequest.url = currentUrl;
+                if (r.status == 303 || ((r.status == 301 || r.status == 302) && ToUpper(currentRequest.method) == "POST")) {
+                    currentRequest.method = "GET";
+                    currentRequest.body.clear();
+                    currentRequest.contentType.clear();
+                }
                 continue;
             }
         }

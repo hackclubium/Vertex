@@ -212,6 +212,10 @@ public:
         navigate(state.activeTab, rawUrl, true);
     }
 
+    void navigate(const FetchRequest& request) {
+        navigate(state.activeTab, request, true);
+    }
+
     void navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         if (tabIdx < 0 || tabIdx >= (int)state.tabs.size()) return;
         Tab& tab = state.tabs[tabIdx];
@@ -240,20 +244,33 @@ public:
             url = "https://duckduckgo.com/html/?q=" + UrlEncodeQuery(url);
         }
 
-        tab.url = url;
+        FetchRequest request;
+        request.url = url;
+        request.method = "GET";
+        navigate(tabIdx, request, pushHistory, url);
+    }
+
+    void navigate(int tabIdx, const FetchRequest& request, bool pushHistory, const std::string& displayUrl = {}) {
+        if (tabIdx < 0 || tabIdx >= (int)state.tabs.size()) return;
+        Tab& tab = state.tabs[tabIdx];
+        if (tab.loading) return;
+        clearPendingScriptsForTab(tabIdx);
+
+        tab.url = request.url;
+        tab.displayUrl = displayUrl.empty() ? request.url : displayUrl;
         tab.title = "Loading...";
         tab.loading = true;
         tab.scrollY = 0;
         state.loading = true;
-        if (pushHistory) pushToHistory(tab, url);
+        if (pushHistory) pushToHistory(tab, request.url);
         updateTitle();
-        if (cb.setAddressText) cb.setAddressText(url);
+        if (cb.setAddressText) cb.setAddressText(tab.displayUrl);
         if (cb.repaint) cb.repaint();
 
         // Emit navigate-requested intent. The platform adapter owns the fetch
         // thread and posts the result back on the UI thread via onPageReady().
         // This avoids lifetime/thread bugs from detached threads in the chrome.
-        if (onNavigateRequested) onNavigateRequested(tabIdx, url);
+        if (onNavigateRequested) onNavigateRequested(tabIdx, request);
     }
 
     void onPageReady(int tabIdx, Page* page) {
@@ -361,7 +378,7 @@ public:
     // Platform callbacks for navigation:
     // onNavigateRequested: platform fetches the URL and calls onPageReady() when done.
     // This keeps thread ownership in the platform layer, not the chrome.
-    std::function<void(int tabIdx, const std::string& url)> onNavigateRequested;
+    std::function<void(int tabIdx, FetchRequest request)> onNavigateRequested;
 
 private:
     void pushToHistory(Tab& tab, const std::string& url) {

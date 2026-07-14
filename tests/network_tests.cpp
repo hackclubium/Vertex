@@ -11,11 +11,13 @@
 #include "platform/profile.h"
 #include "html/parser.h"
 #include "html/resources.h"
+#include "platform/form_state.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <thread>
 
@@ -238,6 +240,11 @@ void HandleHttpTestConnection(SockFd clientSock, int serverPort) {
     } else if (path == "/host") {
         std::string body = ExtractHeaderValue(req, "host");
         resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    } else if (path == "/submit") {
+        size_t bodyStart = req.find("\r\n\r\n");
+        std::string body = (bodyStart == std::string::npos) ? "" : req.substr(bodyStart + 4);
+        std::string out = requestLine + "|" + ExtractHeaderValue(req, "content-type") + "|" + body;
+        resp = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(out.size()) + "\r\n\r\n" + out;
     } else {
         std::string body = "not found";
         resp = "HTTP/1.1 404 Not Found\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
@@ -748,10 +755,46 @@ TestResult RunNetworkTests() {
             "ok:127.0.0.1:" + std::to_string(server.port) + "\n",
             result);
 
+        FetchRequest post;
+        post.url = base + "/submit";
+        post.method = "POST";
+        post.body = "q=Vertex+Browser&go=Search";
+        post.contentType = "application/x-www-form-urlencoded";
+        auto posted = FetchHttp(post);
+        ExpectEqual("network/http/post-form-urlencoded-body",
+            (posted.success ? "ok:" : "fail:") + posted.body + "\n",
+            "ok:POST /submit HTTP/1.1|application/x-www-form-urlencoded|q=Vertex+Browser&go=Search\n",
+            result);
+
         auto notFound = FetchHttp(base + "/does-not-exist");
         ExpectEqual("network/http/404-is-reported-as-failure",
             std::string(notFound.success ? "unexpected-ok " : "failed ") + std::to_string(notFound.status) + "\n",
             "failed 404\n",
+            result);
+    }
+
+    {
+        auto dom = ParseHtml("<html><body><form method=post action=/search>"
+            "<input name=q value='Vertex Browser'><input type=checkbox name=exact checked>"
+            "<textarea name=note>Hello Text</textarea><select name=lang><option>en</option><option selected value=fr>French</option></select>"
+            "<button name=go value=1>Search</button><button name=skip value=1>Skip</button>"
+            "</form></body></html>");
+        Node* q = nullptr;
+        Node* go = nullptr;
+        std::function<void(Node*)> walk = [&](Node* n) {
+            if (!n) return;
+            if (n->attr("name") == "q") q = n;
+            if (n->attr("name") == "go") go = n;
+            for (auto& c : n->children) walk(c.get());
+        };
+        walk(dom.get());
+        FormState form;
+        form.focus(q);
+        FormState::Submission sub;
+        bool ok = form.buildSubmission(q, go, "https://example.test/page", sub);
+        ExpectEqual("network/forms/post-submitter-serialization",
+            std::string(ok ? "ok:" : "fail:") + sub.request.method + " " + sub.url + " " + sub.request.body + "\n",
+            "ok:POST https://example.test/search q=Vertex+Browser&exact=on&note=Hello+Text&lang=fr&go=1\n",
             result);
     }
 

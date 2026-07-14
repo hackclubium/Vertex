@@ -1686,6 +1686,18 @@ static void StartDownload(const std::string& url, const std::string& downloadNam
         });
 }
 
+static void NavigateRequest(int tabIdx, const FetchRequest& request, bool pushHistory);
+
+static bool SubmitFormFromControl(Node* control) {
+    FormState::Submission sub;
+    std::string base = CurTab().page ? CurTab().page->url : CurTab().url;
+    Node* submitter = FormState::isSubmitControl(control) ? control : nullptr;
+    if (!g_formState.buildSubmission(control, submitter, base, sub)) return false;
+    g_formState.blur();
+    NavigateRequest(g_activeTab, sub.request, true);
+    return true;
+}
+
 static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     if (tabIdx < 0 || tabIdx >= (int)g_tabs.size()) return;
     if (g_windowFullscreen && tabIdx == g_activeTab)
@@ -1780,15 +1792,67 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
     }
 
     HWND hwnd = g_hwnd;
-    std::string fetchUrl = UrlWithoutFragment(url);
-    std::thread([hwnd, url, fetchUrl, tabIdx]() {
+    FetchRequest request;
+    request.url = UrlWithoutFragment(url);
+    std::thread([hwnd, url, request, tabIdx]() {
         auto* p = new Page;
         p->url   = url;
         try {
-            auto res = FetchResourceCached(fetchUrl, 12 * 1024 * 1024, ResourceKind::Document);
+            auto res = request.method == "POST"
+                ? FetchUrl(request, 12 * 1024 * 1024)
+                : FetchResourceCached(request.url, 12 * 1024 * 1024, ResourceKind::Document);
             if (res.success) {
                 p->dom = ParseHtml(DecodeTextToUtf8(res.body, res.contentType, true));
                 if (!res.finalUrl.empty() && res.finalUrl != url)
+                    p->url = res.finalUrl;
+                LoadExternalStylesheets(p->dom, p->url);
+                LoadExternalScriptSources(p->dom, p->url);
+            } else {
+                p->error = res.error;
+            }
+        } catch (...) {
+            p->dom.reset();
+            p->error = "Failed to load page (internal error).";
+        }
+        auto* pm = new PageMsg{ tabIdx, p };
+        PostMessageW(hwnd, WM_PAGE_READY, 0, (LPARAM)pm);
+    }).detach();
+}
+
+static void NavigateRequest(int tabIdx, const FetchRequest& request, bool pushHistory) {
+    if (request.method != "POST") { Navigate(tabIdx, request.url, pushHistory); return; }
+    if (tabIdx < 0 || tabIdx >= (int)g_tabs.size()) return;
+    Tab& tab = g_tabs[tabIdx];
+    if (tab.loading) return;
+    ClearPendingPageScriptsForTab(tabIdx);
+    tab.loading = true;
+    tab.url = request.url;
+    tab.displayUrl = request.url;
+    tab.title = "Loading…";
+    tab.pendingFragment.clear();
+    tab.fragmentScrollPending = false;
+    if (pushHistory) {
+        TabPushHistory(tab, request.url);
+        AppendHistoryRecord(request.url);
+    }
+    if (tabIdx == g_activeTab) {
+        EnableWindow(g_hwndStop, TRUE);
+        EnableWindow(g_hwndRefr, FALSE);
+        SetUrlBar(request.url);
+        UpdateTitle();
+        SetTimer(g_hwnd, TIMER_MAIN, 16, NULL);
+        InvalidateRect(g_hwnd, NULL, FALSE);
+    }
+
+    HWND hwnd = g_hwnd;
+    std::thread([hwnd, request, tabIdx]() {
+        auto* p = new Page;
+        p->url = request.url;
+        try {
+            auto res = FetchUrl(request, 12 * 1024 * 1024);
+            if (res.success) {
+                p->dom = ParseHtml(DecodeTextToUtf8(res.body, res.contentType, true));
+                if (!res.finalUrl.empty() && res.finalUrl != request.url)
                     p->url = res.finalUrl;
                 LoadExternalStylesheets(p->dom, p->url);
                 LoadExternalScriptSources(p->dom, p->url);
@@ -2636,6 +2700,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 Node* input = FormState::hitTestInput(*g_renderer.GetLayoutRoot(),
                     (float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
                 if (input) {
+                    if (FormState::isSubmitControl(input)) {
+                        SubmitFormFromControl(input);
+                        return 0;
+                    }
                     g_formState.focus(input);
                     InvalidateContent();
                     return 0;
@@ -2925,12 +2993,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (g_formState.focusedInput) {
         if (msg == WM_CHAR) {
             if (wp == '\r') {
-                // Enter in a form input: submit the form via GET.
-                std::string url = g_formState.buildFormQuery();
-                if (!url.empty()) {
-                    g_formState.blur();
-                    Navigate(url);
-                }
+                SubmitFormFromControl(g_formState.focusedInput);
             } else if (wp == '\b') {
                 g_formState.backspace();
                 InvalidateContent();

@@ -1,7 +1,10 @@
 #pragma once
 #include "html/dom.h"
 #include "layout/box.h"
+#include "network/fetcher.h"
+#include "network/url.h"
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <map>
 #include <functional>
@@ -30,6 +33,10 @@ struct FormState {
         if (n) {
             std::string v = n->attr("value");
             if (!v.empty()) return v;
+            if (n->tagName == "textarea") {
+                for (auto& c : n->children) if (c->type == NodeType::Text) v += c->text;
+                return v;
+            }
         }
         return "";
     }
@@ -76,30 +83,102 @@ struct FormState {
         }
     }
 
+    struct Submission {
+        std::string url;
+        FetchRequest request;
+    };
+
+    static Node* enclosingForm(Node* node) {
+        Node* form = node;
+        while (form && form->tagName != "form") form = form->parent;
+        return form;
+    }
+
+    static bool isSubmitControl(const Node* n) {
+        if (!n || n->type != NodeType::Element) return false;
+        std::string type = n->attr("type");
+        for (char& c : type) c = (char)std::tolower((unsigned char)c);
+        return n->tagName == "button" || (n->tagName == "input" && (type == "submit" || type == "image"));
+    }
+
     // Find the enclosing <form> element and build a GET query string.
     std::string buildFormQuery() const {
-        if (!focusedInput) return "";
-        Node* form = focusedInput->parent;
-        while (form && form->tagName != "form") form = form->parent;
-        if (!form) return "";
+        Submission sub;
+        return buildSubmission(focusedInput, nullptr, "", sub) ? sub.url : "";
+    }
+
+    bool buildSubmission(Node* control, Node* submitter, const std::string& baseUrl, Submission& out) const {
+        if (!control && !submitter) return false;
+        Node* form = enclosingForm(submitter ? submitter : control);
+        if (!form) return false;
         std::string action = form->attr("action");
+        if (action.empty()) action = baseUrl.empty() ? "/" : baseUrl;
+        else if (!baseUrl.empty()) action = ResolveUrlAgainstBase(action, baseUrl);
+        std::string method = form->attr("method");
+        for (char& c : method) c = (char)std::tolower((unsigned char)c);
+        if (method != "post") method = "get";
         std::string query;
         // Collect all named inputs within this form.
         std::function<void(Node*)> collect = [&](Node* n) {
             if (!n) return;
+            if (n->type == NodeType::Element && n->attrs.find("disabled") != n->attrs.end()) return;
             if (n->type == NodeType::Element
-                && (n->tagName == "input" || n->tagName == "textarea")
+                && (n->tagName == "input" || n->tagName == "textarea" || n->tagName == "button" || n->tagName == "select")
                 && !n->attr("name").empty()) {
+                std::string type = n->attr("type");
+                for (char& c : type) c = (char)std::tolower((unsigned char)c);
+                if (n->tagName == "input" && (type == "button" || type == "reset" || type == "file")) {
+                    for (auto& c : n->children) collect(c.get());
+                    return;
+                }
+                if (isSubmitControl(n) && n != submitter) {
+                    for (auto& c : n->children) collect(c.get());
+                    return;
+                }
                 std::string name = n->attr("name");
                 std::string val = getValue(const_cast<Node*>(n));
+                if (n->tagName == "select") {
+                    bool found = false;
+                    for (auto& c : n->children) {
+                        if (c->type == NodeType::Element && c->tagName == "option" && c->attrs.find("selected") != c->attrs.end()) {
+                            val = c->attr("value");
+                            if (val.empty()) for (auto& t : c->children) if (t->type == NodeType::Text) val += t->text;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        for (auto& c : n->children) {
+                            if (c->type == NodeType::Element && c->tagName == "option") {
+                                val = c->attr("value");
+                                if (val.empty()) for (auto& t : c->children) if (t->type == NodeType::Text) val += t->text;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (n->tagName == "input" && (type == "checkbox" || type == "radio") && n->attrs.find("checked") == n->attrs.end()) {
+                    for (auto& c : n->children) collect(c.get());
+                    return;
+                }
+                if (n->tagName == "input" && (type == "checkbox" || type == "radio") && val.empty()) val = "on";
+                if (n == submitter && val.empty() && n->tagName == "button") {
+                    for (auto& c : n->children) if (c->type == NodeType::Text) val += c->text;
+                }
                 if (!query.empty()) query += '&';
                 query += urlEncode(name) + "=" + urlEncode(val);
             }
             for (auto& c : n->children) collect(c.get());
         };
         collect(form);
-        if (action.empty()) action = "/";
-        return action + (action.find('?') != std::string::npos ? "&" : "?") + query;
+        out.url = method == "get" ? action + (action.find('?') != std::string::npos ? "&" : "?") + query : action;
+        out.request.url = out.url;
+        out.request.method = method == "post" ? "POST" : "GET";
+        if (method == "post") {
+            out.request.body = query;
+            out.request.contentType = "application/x-www-form-urlencoded";
+        }
+        return true;
     }
 
     static std::string urlEncode(const std::string& s) {
@@ -215,7 +294,7 @@ struct FormState {
             if (&box != &root && box.style.overflowHidden && !inside)
                 return;
             if (box.kind == BoxKind::Replaced && box.node
-                && (box.node->tagName == "input" || box.node->tagName == "textarea")) {
+                && (box.node->tagName == "input" || box.node->tagName == "textarea" || box.node->tagName == "button")) {
                 if (inside)
                     found = const_cast<Node*>(box.node);
             }

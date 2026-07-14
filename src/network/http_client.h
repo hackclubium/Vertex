@@ -14,3 +14,4 @@
 #include <string>
 
 FetchResult FetchHttp(const std::string& url, size_t maxResponseBytes = 12 * 1024 * 1024);
+FetchResult FetchHttp(const FetchRequest& request, size_t maxResponseBytes = 12 * 1024 * 1024);

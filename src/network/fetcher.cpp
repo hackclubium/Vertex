@@ -116,8 +116,9 @@ static std::filesystem::path FileUrlToPath(const std::string& url) {
 
 // ── public API ───────────────────────────────────────────────────────────────
 
-FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
+FetchResult FetchUrl(const FetchRequest& request, size_t maxResponseBytes) {
     FetchResult r;
+    const std::string& url = request.url;
 
     // data: URLs are decoded locally (no network).
     if (StartsWithNoCase(url, "data:")) {
@@ -186,9 +187,15 @@ FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
 
     // HTTP(S) via hand-rolled client (http_client.h — zero third-party deps).
     if (StartsWithNoCase(url, "http://") || StartsWithNoCase(url, "https://")) {
-        return FetchHttp(url, maxResponseBytes);
+        return FetchHttp(request, maxResponseBytes);
     }
 
     r.error = "Unsupported URL scheme";
     return r;
+}
+
+FetchResult FetchUrl(const std::string& url, size_t maxResponseBytes) {
+    FetchRequest request;
+    request.url = url;
+    return FetchUrl(request, maxResponseBytes);
 }
