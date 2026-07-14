@@ -9,6 +9,20 @@ static std::string toLower(std::string s) {
     return s;
 }
 
+static std::string normalizeNewlines(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\r') {
+            out += '\n';
+            if (i + 1 < s.size() && s[i + 1] == '\n') ++i;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
 static std::string utf8(unsigned long cp) {
     std::string out;
     if (cp < 0x80) {
@@ -254,7 +268,7 @@ void HtmlTokenizer::tokenize(const std::string& html, Callback cb) {
                 raw += consume();
             HtmlToken t;
             t.type = TokenType::Text;
-            t.data = decodeEntities(raw);
+            t.data = normalizeNewlines(decodeEntities(raw));
             cb(t);
             continue;
         }
@@ -267,7 +281,7 @@ void HtmlTokenizer::tokenize(const std::string& html, Callback cb) {
             m_pos += 3;
             size_t commentStart = m_pos;
             skipUntil("-->");
-            std::string commentData = m_src->substr(commentStart, m_pos - commentStart);
+            std::string commentData = normalizeNewlines(m_src->substr(commentStart, m_pos - commentStart));
             m_pos += 3;
             HtmlToken ct; ct.type = TokenType::Comment; ct.data = commentData; cb(ct);
             continue;
@@ -338,7 +352,7 @@ void HtmlTokenizer::tokenize(const std::string& html, Callback cb) {
             if (m_pos > rawStart) {
                 HtmlToken rawText;
                 rawText.type = TokenType::Text;
-                rawText.data = m_src->substr(rawStart, m_pos - rawStart);
+                rawText.data = normalizeNewlines(m_src->substr(rawStart, m_pos - rawStart));
                 cb(rawText);
             }
         }
