@@ -121,6 +121,12 @@ bool HasClass(const Node* n, const char* cls) {
     return false;
 }
 
+bool HasAncestorClass(const Node* n, const char* cls) {
+    for (const Node* p = n ? n->parent : nullptr; p; p = p->parent)
+        if (HasClass(p, cls)) return true;
+    return false;
+}
+
 std::string LowerAscii(std::string value) {
     for (char& c : value)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -564,6 +570,8 @@ std::unique_ptr<LayoutBox> BuildBox(const Node* node, const ComputedStyle& paren
     if (IsSkippedTag(tag)) return nullptr;
     if (HasAttr(node, "hidden")) return nullptr;
     if (HasClass(node, "oo-ui-element-hidden")) return nullptr;
+    if (HasClass(node, "vector-menu-item--collapsible")
+        && HasAncestorClass(node, "vector-user-links-main")) return nullptr;
     if (tag == "dialog" && !HasAttr(node, "open")) return nullptr;
     if (tag == "input" && LowerAscii(node->attr("type")) == "hidden") return nullptr;
 

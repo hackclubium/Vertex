@@ -276,6 +276,23 @@ TestResult RunLayoutEngineTests() {
     }
 
     {
+        auto dom2 = ParseHtml("<html><body><div class=\"vector-user-links-main\"><li id=\"hidden\" class=\"vector-menu-item--collapsible\">Hidden</li></div><li id=\"shown\" class=\"vector-menu-item--collapsible\">Shown</li></body></html>");
+        Stylesheet sheet2;
+        LayoutInput input2;
+        input2.document = dom2.get();
+        input2.sheet = &sheet2;
+        input2.measure = &measure;
+        input2.viewportW = 320.f;
+        input2.viewportH = 480.f;
+        auto layout2 = LayoutDocument(input2);
+        ExpectEqual("layout-engine/vector-user-collapsible-items-hidden",
+            std::string(FindEngineBoxById(layout2.get(), "shown") ? "shown" : "missing") + ":"
+                + (FindEngineBoxById(layout2.get(), "hidden") ? "hidden" : "gone") + "\n",
+            "shown:gone\n",
+            result);
+    }
+
+    {
         auto dom2 = ParseHtml("<html><body><img id=\"logo\" src=\"logo.svg\" style=\"display:block;width:8.75em;height:1.375em\"></body></html>");
         Stylesheet sheet2;
         LayoutInput input2;
