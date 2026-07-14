@@ -241,7 +241,8 @@ static auto& g_js        = g_chrome.state.js;
 // rather than redeclaring them.
 static std::deque<PendingPageScript> g_pendingPageScripts;
 
-static HCURSOR  g_cursorArrow, g_cursorHand;
+static HCURSOR  g_cursorArrow, g_cursorHand, g_cursorIBeam, g_cursorSizeAll,
+                g_cursorNo, g_cursorCross, g_cursorHelp;
 static HFONT    g_uiFont = nullptr;
 static HFONT    g_iconFont = nullptr; // Segoe MDL2 Assets, for the nav toolbar glyphs
 static HFONT    g_urlFont = nullptr;
@@ -637,6 +638,20 @@ static void SetBrowserCursor(HCURSOR cursor) {
     if (cursor == lastCursor) return;
     lastCursor = cursor;
     SetCursor(cursor);
+}
+
+static HCURSOR CursorFromCss(int cursor) {
+    switch (cursor) {
+    case 1: return g_cursorHand;
+    case 2: return g_cursorIBeam;
+    case 3:
+    case 5:
+    case 6: return g_cursorSizeAll;
+    case 4: return g_cursorNo;
+    case 7: return g_cursorCross;
+    case 8: return g_cursorHelp;
+    default: return g_cursorArrow;
+    }
 }
 static void UpdateTitle() {
     std::wstring t = ToWide(CurTab().title);
@@ -2116,6 +2131,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         g_cursorArrow = LoadCursor(NULL, IDC_ARROW);
         g_cursorHand  = LoadCursor(NULL, IDC_HAND);
+        g_cursorIBeam = LoadCursor(NULL, IDC_IBEAM);
+        g_cursorSizeAll = LoadCursor(NULL, IDC_SIZEALL);
+        g_cursorNo = LoadCursor(NULL, IDC_NO);
+        g_cursorCross = LoadCursor(NULL, IDC_CROSS);
+        g_cursorHelp = LoadCursor(NULL, IDC_HELP);
         ApplyThemedWindowIcon(hwnd);
 
         HINSTANCE hi = GetModuleHandleW(NULL);
@@ -2730,7 +2750,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_windowFullscreen) ArmFullscreenCursorTimer();
         if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
-            SetBrowserCursor(href.empty() ? g_cursorArrow : g_cursorHand);
+            int cursor = g_renderer.CursorAt((float)px, (float)py,
+                CurTab().scrollY, (float)ChromeTopInset());
+            SetBrowserCursor(CursorFromCss(cursor));
             SetStatus(href);
             // Track :hover node for CSS hover styles (throttled adaptively based on page complexity).
             if (g_renderer.GetLayoutRoot() && g_renderer.UsesHoverStyles()) {

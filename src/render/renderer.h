@@ -61,6 +61,7 @@ public:
                 bool repaintChrome = true);
 
     std::string HitTest(float x, float y) const;
+    int         CursorAt(float x, float y, float scrollY, float topInset) const;
     bool        LastHitWasDownload() const { return m_lastHitDownload; }
     std::string LastHitDownloadName() const { return m_lastHitDownloadName; }
     const Node* HoverNodeAt(float x, float y, float scrollY, float topInset) const;

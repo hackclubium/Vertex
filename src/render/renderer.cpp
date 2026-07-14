@@ -1001,14 +1001,32 @@ std::string Renderer::HitTest(float x, float y) const {
     return {};
 }
 
+int Renderer::CursorAt(float x, float y, float scrollY, float topInset) const {
+    if (!m_layoutRoot) return 0;
+    const float docY = y + scrollY - topInset;
+    const float viewportH = (float)m_height - topInset;
+    for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
+        const float elemBottom = it->y - scrollY;
+        const float elemTop = elemBottom - it->h;
+        if (elemBottom < -100.f || elemTop > viewportH + 100.f) continue;
+        if (x >= it->x && x <= it->x + it->w
+            && docY >= it->y && docY <= it->y + it->h) {
+            if (it->box->style.cursorSet) return it->box->style.cursor;
+            if (!it->box->href.empty()) return 1; // links default to pointer
+            return 0;
+        }
+    }
+    return 0;
+}
+
 void Renderer::BuildHoverIndex(const LayoutBox& box) {
     // Only index boxes with nodes (elements) that can be hovered
     if (box.node && box.node->type == NodeType::Element) {
         const float w = box.borderBoxW();
         const float h = box.borderBoxH();
         const float area = std::max(0.f, w) * std::max(0.f, h);
-        // Only index reasonably-sized boxes or inline elements or links
-        if (area <= 100000.f || box.isInlineLevel() || !box.href.empty()) {
+        // Only index reasonably-sized boxes or inline elements, links, or cursor overrides.
+        if (area <= 100000.f || box.isInlineLevel() || !box.href.empty() || box.style.cursorSet) {
             m_hoverCandidates.push_back({ &box, box.x, box.y, w, h });
         }
     }
