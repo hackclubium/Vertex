@@ -76,7 +76,8 @@ static std::string HitTestLink(float x, float y) {
 
 static bool SubmitFormFromControl(Node* control) {
     FormState::Submission sub;
-    std::string base = CurTab().page ? CurTab().page->url : CurTab().url;
+    Tab& tab = g_chrome.state.curTab();
+    std::string base = tab.page ? tab.page->url : tab.url;
     Node* submitter = FormState::isSubmitControl(control) ? control : nullptr;
     if (!g_formState.buildSubmission(control, submitter, base, sub)) return false;
     g_formState.blur();
