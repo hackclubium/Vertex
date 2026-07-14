@@ -284,7 +284,8 @@ TestResult RunPaintTests() {
         const bool timerSleeps =
             engine.find("hasPendingMacrotasks() const") != std::string::npos
             && mainWin.find("!g_js.hasPendingMacrotasks()") != std::string::npos
-            && mainWin.find("KillTimer(hwnd, 1);") != std::string::npos;
+            && (mainWin.find("KillTimer(hwnd, TIMER_MAIN);") != std::string::npos
+                || mainWin.find("KillTimer(hwnd, 1);") != std::string::npos);
         ExpectEqual("paint/windows-js-timer-sleeps-when-idle",
             timerSleeps ? "sleeps\n" : "spins\n",
             "sleeps\n",

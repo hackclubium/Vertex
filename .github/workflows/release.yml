@@ -19,12 +19,18 @@ jobs:
           - os: windows-latest
             name: windows
             configure: cmake -B build -A x64 -DVERTEX_BUILD_ARTI=ON
+            exe: build/Release
+            ext: .exe
           - os: macos-latest
             name: macos
             configure: cmake -B build -DVERTEX_BUILD_ARTI=ON
+            exe: build
+            ext: ""
           - os: ubuntu-latest
             name: linux
             configure: cmake -B build -DVERTEX_BUILD_ARTI=ON
+            exe: build
+            ext: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -62,6 +68,30 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release
+
+      - name: Run html tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} html
+
+      - name: Run css tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} css
+
+      - name: Run layout tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} layout
+
+      - name: Run paint tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} paint
+
+      - name: Run js tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} js
+
+      - name: Run network tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} network
+
+      - name: Run codec tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} codec
+
+      - name: Run layout engine tests
+        run: ${{ matrix.exe }}/vertex-layout-engine-tests${{ matrix.ext }}
 
       - name: Package Windows installer
         if: matrix.name == 'windows'

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            configure: cmake -B build -A x64
+            exe: build/Release
+            ext: .exe
+          - os: macos-latest
+            configure: cmake -B build
+            exe: build
+            ext: ""
+          - os: ubuntu-latest
+            configure: cmake -B build
+            exe: build
+            ext: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev pkg-config
+
+      - name: Configure
+        run: ${{ matrix.configure }}
+
+      - name: Build tests
+        run: cmake --build build --config Release --target vertex-tests vertex-layout-engine-tests
+
+      - name: Run html tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} html
+
+      - name: Run css tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} css
+
+      - name: Run layout tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} layout
+
+      - name: Run paint tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} paint
+
+      - name: Run js tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} js
+
+      - name: Run network tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} network
+
+      - name: Run codec tests
+        run: ${{ matrix.exe }}/vertex-tests${{ matrix.ext }} codec
+
+      - name: Run layout engine tests
+        run: ${{ matrix.exe }}/vertex-layout-engine-tests${{ matrix.ext }}
