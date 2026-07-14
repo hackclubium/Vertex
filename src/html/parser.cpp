@@ -101,12 +101,6 @@ static bool implicitlyCloses(const std::string& newTag, const std::string& openT
         return openTag == "td" || openTag == "th" || openTag == "tr"
             || openTag == "thead" || openTag == "tbody" || openTag == "tfoot"
             || openTag == "caption" || openTag == "colgroup";
-    // <table> inside <table> closes the outer table's open elements
-    if (newTag == "table")
-        return openTag == "td" || openTag == "th" || openTag == "tr"
-            || openTag == "thead" || openTag == "tbody" || openTag == "tfoot"
-            || openTag == "caption";
-
     // Lists
     if (newTag == "li") return openTag == "li";
     if (newTag == "dt" || newTag == "dd") return openTag == "dt" || openTag == "dd";

@@ -605,6 +605,27 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    // Nested tables inside cells must stay inside the cell (Wikipedia navbox subgroups).
+    {
+        auto tdom = ParseHtml(
+            "<html><body><table id=\"outer\"><tr><td id=\"left\">L</td><td id=\"right\"><table id=\"inner\"><tr><td>I</td></tr></table></td></tr></table></body></html>");
+        auto tsheet = ParseStylesheet("table { border-spacing:0; } td { padding:0; margin:0; }");
+        LayoutInput tin;
+        tin.document = tdom.get();
+        tin.sheet = &tsheet;
+        tin.measure = &measure;
+        tin.viewportW = 320.f;
+        tin.viewportH = 480.f;
+        auto tlayout = LayoutDocument(tin);
+        auto* right = FindEngineBoxById(tlayout.get(), "right");
+        auto* inner = FindEngineBoxById(tlayout.get(), "inner");
+        bool ok = right && inner && inner->x >= right->x && inner->x < right->x + right->borderBoxW();
+        ExpectEqual("layout-engine/nested-table-stays-inside-cell",
+            std::string(ok ? "inside" : "escaped") + "\n",
+            "inside\n",
+            result);
+    }
+
     // Rowspans reserve their columns in following rows, so later cells land in
     // the same shared columns as the row above instead of sliding left.
     {
