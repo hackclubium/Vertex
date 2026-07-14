@@ -245,6 +245,7 @@ static std::deque<PendingPageScript> g_pendingPageScripts;
 
 static HCURSOR  g_cursorArrow, g_cursorHand, g_cursorIBeam, g_cursorSizeAll,
                 g_cursorNo, g_cursorCross, g_cursorHelp;
+static HCURSOR  g_desiredCursor = nullptr;
 static HFONT    g_uiFont = nullptr;
 static HFONT    g_iconFont = nullptr; // Segoe MDL2 Assets, for the nav toolbar glyphs
 static HFONT    g_urlFont = nullptr;
@@ -637,6 +638,7 @@ static void UpdatePerfStatusMaybe() {
 }
 static void SetBrowserCursor(HCURSOR cursor) {
     static HCURSOR lastCursor = nullptr;
+    g_desiredCursor = cursor;
     if (cursor == lastCursor) return;
     lastCursor = cursor;
     SetCursor(cursor);
@@ -2347,6 +2349,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT && g_desiredCursor) {
+            SetCursor(g_desiredCursor);
+            return TRUE;
+        }
+        break;
 
     case WM_DPICHANGED: {
         if (g_windowFullscreen) {

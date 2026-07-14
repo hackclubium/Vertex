@@ -746,7 +746,9 @@ TestResult RunPaintTests() {
         const bool cursorCached =
             mainWin.find("SetBrowserCursor(HCURSOR cursor)") != std::string::npos
             && mainWin.find("static HCURSOR lastCursor") != std::string::npos
-            && mainWin.find("if (cursor == lastCursor) return;") != std::string::npos;
+            && mainWin.find("if (cursor == lastCursor) return;") != std::string::npos
+            && mainWin.find("case WM_SETCURSOR:") != std::string::npos
+            && mainWin.find("SetCursor(g_desiredCursor)") != std::string::npos;
         ExpectEqual("paint/cursor-updates-skip-redundant-setcursor",
             cursorCached ? "cached\n" : "chatty\n",
             "cached\n",
