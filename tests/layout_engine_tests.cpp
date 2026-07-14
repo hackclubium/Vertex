@@ -1306,6 +1306,28 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
+    // Same tile row nested inside a normal block-flow child. This mirrors the
+    // Main Page section: parent block has final width, child list must re-wrap.
+    {
+        auto ndom = ParseHtml(
+            "<html><body><section id=\"section\"><div id=\"box\"><ul id=\"nested\">"
+            "<li id=\"n1\">one</li><li id=\"n2\">two</li><li id=\"n3\">three</li>"
+            "<li id=\"n4\">four</li><li id=\"n5\">five</li></ul></div></section></body></html>");
+        auto nsheet = ParseStylesheet(
+            "body{margin:0;}#section{width:1000px;}#box{width:100%;}#nested{margin:0;padding:0;white-space:nowrap;}"
+            "#nested li{display:inline-block;width:320px;height:40px;}");
+        LayoutInput nin; nin.document = ndom.get(); nin.sheet = &nsheet;
+        nin.measure = &measure; nin.viewportW = 1200.f; nin.viewportH = 400.f;
+        auto nl = LayoutDocument(nin);
+        auto* n1 = FindEngineBoxById(nl.get(), "n1");
+        auto* n4 = FindEngineBoxById(nl.get(), "n4");
+        bool wrapped = n1 && n4 && n4->y >= n1->y + n1->borderBoxH() - 0.5f && n4->x < 400.f;
+        ExpectEqual("layout-engine/nested-inline-block-tiles-wrap-after-child-layout",
+            wrapped ? "wrapped\n" : "overflow\n",
+            "wrapped\n",
+            result);
+    }
+
     // Anonymous block wrappers around inline runs must not copy layout-affecting
     // parent styles such as overflow:hidden. Wikipedia's footer uses an
     // overflow-hidden container with floated sidebars followed by an inline

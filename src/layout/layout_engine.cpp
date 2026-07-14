@@ -1266,6 +1266,7 @@ void Engine::layoutBlockChildren(LayoutBox& box, std::vector<LayoutBox*>&
         std::vector<LayoutBox*> pos;
         layoutBox(*k, box.contentX(), box.contentW, childCbH, pos, &fctx);
         for (auto* p : pos) positionedOut.push_back(p);
+        k->contentH = std::max(k->contentH, WrapDirectAtomicInlineChildren(*k));
 
         cursorY = k->y + k->borderBoxH();
         prevMarginBottom = k->marginBottom;
