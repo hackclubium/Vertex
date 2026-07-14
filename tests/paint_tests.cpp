@@ -729,6 +729,19 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
+        const bool cursorUsesRealLinkHits =
+            renderer.find("int Renderer::CursorAt") != std::string::npos
+            && renderer.find("for (auto it = m_hits.rbegin(); it != m_hits.rend(); ++it)") != std::string::npos
+            && renderer.find("return 1;") != std::string::npos;
+        ExpectEqual("paint/link-cursor-uses-real-hit-regions",
+            cursorUsesRealLinkHits ? "stable\n" : "flicker\n",
+            "stable\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         const bool cursorCached =
             mainWin.find("SetBrowserCursor(HCURSOR cursor)") != std::string::npos

@@ -1003,6 +1003,19 @@ std::string Renderer::HitTest(float x, float y) const {
 
 int Renderer::CursorAt(float x, float y, float scrollY, float topInset) const {
     if (!m_layoutRoot) return 0;
+    if (m_lastHitValid
+        && x >= m_lastHitRegion.x && x <= m_lastHitRegion.x + m_lastHitRegion.w
+        && y >= m_lastHitRegion.y && y <= m_lastHitRegion.y + m_lastHitRegion.h
+        && !m_lastHitHref.empty()) {
+        return 1;
+    }
+    for (auto it = m_hits.rbegin(); it != m_hits.rend(); ++it) {
+        if (!it->href.empty()
+            && x >= it->x && x <= it->x + it->w
+            && y >= it->y && y <= it->y + it->h) {
+            return 1;
+        }
+    }
     const float docY = y + scrollY - topInset;
     const float viewportH = (float)m_height - topInset;
     for (auto it = m_hoverCandidates.rbegin(); it != m_hoverCandidates.rend(); ++it) {
