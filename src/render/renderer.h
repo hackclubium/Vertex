@@ -108,6 +108,11 @@ public:
     void SetSearchQuery(const std::wstring& q) { m_searchQuery = q; }
     const std::wstring& GetSearchQuery() const { return m_searchQuery; }
     bool FindTextY(const std::wstring& query, float currentY, bool backwards, float& outY) const;
+    void BeginTextSelection(float x, float y, float scrollY, float topInset);
+    void UpdateTextSelection(float x, float y, float scrollY, float topInset);
+    void ClearTextSelection();
+    bool HasTextSelection() const { return m_hasTextSelection; }
+    std::string SelectedTextUtf8();
 
 private:
     // ── D2D / DWrite / WIC ────────────────────────────────────────────────
@@ -169,6 +174,13 @@ private:
     mutable HitRegion m_lastHoverNodeRegion;
     mutable const Node* m_lastHoverNode = nullptr;
     std::map<std::string, float> m_anchorY;
+
+    bool  m_hasTextSelection = false;
+    float m_selStartX = 0.f, m_selStartY = 0.f;
+    float m_selEndX = 0.f, m_selEndY = 0.f;
+    bool  TextSelectionSpan(const InlineFrag& frag, size_t& begin, size_t& end);
+    float TextWidthForSelection(const InlineFrag& frag, size_t begin, size_t end);
+    size_t TextIndexAtX(const InlineFrag& frag, float x);
 
     struct TabHit { float x, y, w, h; int idx; bool isClose; };
     std::vector<TabHit> m_tabHits;

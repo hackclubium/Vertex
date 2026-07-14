@@ -403,6 +403,24 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string mainWin = ReadTextFile(root / "src/main.cpp");
+        std::string rendererH = ReadTextFile(root / "src/render/renderer.h");
+        std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
+        const bool selectionWired =
+            rendererH.find("BeginTextSelection") != std::string::npos
+            && rendererH.find("SelectedTextUtf8") != std::string::npos
+            && painter.find("TextSelectionSpan") != std::string::npos
+            && painter.find("TextIndexAtX") != std::string::npos
+            && painter.find("0x2b67d8") != std::string::npos
+            && mainWin.find("WriteClipboardText(selected)") != std::string::npos;
+        ExpectEqual("paint/text-selection-drag-and-copy-is-wired",
+            selectionWired ? "selection\n" : "missing\n",
+            "selection\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string painter = ReadTextFile(root / "src/render/box_paint.cpp");
         std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
         const bool lineCull =

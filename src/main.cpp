@@ -92,6 +92,8 @@ static std::vector<Node*> g_topLayerNodes;
 static Node* g_activePopover = nullptr;
 static bool g_dragActive = false;
 static std::vector<std::string> g_dragFiles;
+static bool g_selectingText = false;
+static bool g_textSelectionMoved = false;
 static std::string g_lastClipboardHtml;
 static std::vector<uint8_t> g_lastClipboardImage;
 static bool g_gamepadConnected[4] = {};
@@ -1704,6 +1706,7 @@ static void Navigate(int tabIdx, const std::string& rawUrl, bool pushHistory) {
         ExitWindowFullscreen(false);
     Tab& tab = g_tabs[tabIdx];
     if (tab.loading) return;
+    g_renderer.ClearTextSelection();
     ClearPendingPageScriptsForTab(tabIdx);
 
     std::string url = rawUrl;
@@ -2684,12 +2687,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        if (py >= ChromeTopInset()) {
+            g_selectingText = true;
+            g_textSelectionMoved = false;
+            g_renderer.BeginTextSelection((float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
+            SetCapture(hwnd);
+            InvalidateContent();
+        }
         return 0;
     }
 
     case WM_LBUTTONUP: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
+        if (g_selectingText) {
+            g_selectingText = false;
+            ReleaseCapture();
+            if (!g_textSelectionMoved) g_renderer.ClearTextSelection();
+            InvalidateContent();
+            if (g_textSelectionMoved) return 0;
+        }
         if (g_activePopover && py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
             if (href.empty()) HidePlatformPopover();
@@ -2815,6 +2832,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         int px = (int)(short)LOWORD(lp);
         int py = (int)(short)HIWORD(lp);
+        if (g_selectingText) {
+            g_textSelectionMoved = true;
+            g_renderer.UpdateTextSelection((float)px, (float)py, CurTab().scrollY, (float)ChromeTopInset());
+            InvalidateContent();
+            return 0;
+        }
         if (g_windowFullscreen) ArmFullscreenCursorTimer();
         if (py >= ChromeTopInset()) {
             std::string href = g_renderer.HitTest((float)px, (float)py);
@@ -3113,6 +3136,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow) {
                 } else if (msg.wParam == 'F') {
                     ShowFind(!g_findVisible);
                     handled = true;
+                } else if (msg.wParam == 'C') {
+                    std::string selected = g_renderer.SelectedTextUtf8();
+                    if (!selected.empty()) WriteClipboardText(selected);
+                    handled = !selected.empty();
                 } else if (msg.wParam == 'G') {
                     FindNextInPage(shift);
                     handled = true;

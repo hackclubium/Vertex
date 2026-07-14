@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <memory>
+#include <sstream>
 
 static D2D1_COLOR_F ToD2Dc(const CssColor& c) { return { c.r, c.g, c.b, c.a }; }
 static constexpr size_t kMaxMeasuredTextChars = 16 * 1024;
@@ -165,6 +166,118 @@ IDWriteTextFormat* Renderer::FormatForKey(const FontKey& f) {
     if (fmt) fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     m_fmtCache[key] = fmt;
     return fmt;
+}
+
+static std::string WideToUtf8Simple(const std::wstring& s) {
+    std::string out;
+    for (wchar_t wc : s) {
+        unsigned int cp = (unsigned int)wc;
+        if (cp < 0x80) out.push_back((char)cp);
+        else if (cp < 0x800) {
+            out.push_back((char)(0xC0 | (cp >> 6)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back((char)(0xE0 | (cp >> 12)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    return out;
+}
+
+void Renderer::BeginTextSelection(float x, float y, float scrollY, float topInset) {
+    m_hasTextSelection = true;
+    m_selStartX = m_selEndX = x;
+    m_selStartY = m_selEndY = y + scrollY - topInset;
+}
+
+void Renderer::UpdateTextSelection(float x, float y, float scrollY, float topInset) {
+    if (!m_hasTextSelection) BeginTextSelection(x, y, scrollY, topInset);
+    m_selEndX = x;
+    m_selEndY = y + scrollY - topInset;
+}
+
+void Renderer::ClearTextSelection() {
+    m_hasTextSelection = false;
+}
+
+static int CompareSelectionPoint(float ax, float ay, float bx, float by) {
+    if (ay < by - 0.5f) return -1;
+    if (ay > by + 0.5f) return 1;
+    if (ax < bx) return -1;
+    if (ax > bx) return 1;
+    return 0;
+}
+
+float Renderer::TextWidthForSelection(const InlineFrag& frag, size_t begin, size_t end) {
+    if (!frag.src || begin >= end || begin >= frag.text.size()) return 0.f;
+    end = std::min(end, frag.text.size());
+    const ComputedStyle& fs = frag.src->style;
+    FontKey f;
+    f.size = std::clamp((fs.fontSize > 0 ? fs.fontSize : 16.f) * m_zoom, 1.f, 40.f);
+    f.bold = fs.bold;
+    f.italic = fs.italic;
+    f.family = fs.fontFamily;
+    std::string fl;
+    for (char c : fs.fontFamily) fl += (char)std::tolower((unsigned char)c);
+    f.mono = (fl.find("mono") != std::string::npos || fl.find("consol") != std::string::npos || fl.find("courier") != std::string::npos);
+    return MeasureText(frag.text.substr(begin, end - begin), f);
+}
+
+size_t Renderer::TextIndexAtX(const InlineFrag& frag, float x) {
+    if (frag.text.empty()) return 0;
+    const float rel = std::clamp(x - frag.x, 0.f, frag.w);
+    size_t best = 0;
+    for (size_t i = 1; i <= frag.text.size(); ++i) {
+        const float w = TextWidthForSelection(frag, 0, i);
+        if (w <= rel) best = i;
+        else {
+            const float prev = TextWidthForSelection(frag, 0, i - 1);
+            return (rel - prev) < (w - rel) ? i - 1 : i;
+        }
+    }
+    return best;
+}
+
+bool Renderer::TextSelectionSpan(const InlineFrag& frag, size_t& begin, size_t& end) {
+    if (!m_hasTextSelection) return false;
+    if (!frag.src || frag.src->kind != BoxKind::Text || frag.text.empty()) return false;
+    float sx = m_selStartX, sy = m_selStartY, ex = m_selEndX, ey = m_selEndY;
+    if (CompareSelectionPoint(ex, ey, sx, sy) < 0) { std::swap(sx, ex); std::swap(sy, ey); }
+    if (CompareSelectionPoint(frag.x + frag.w, frag.y, sx, sy) < 0) return false;
+    if (CompareSelectionPoint(frag.x, frag.y, ex, ey) > 0) return false;
+    begin = 0;
+    end = frag.text.size();
+    const bool startLine = sy >= frag.y - 0.5f && sy <= frag.y + frag.h + 0.5f;
+    const bool endLine = ey >= frag.y - 0.5f && ey <= frag.y + frag.h + 0.5f;
+    if (startLine) begin = TextIndexAtX(frag, sx);
+    if (endLine) end = TextIndexAtX(frag, ex);
+    if (begin > end) std::swap(begin, end);
+    return begin < end;
+}
+
+std::string Renderer::SelectedTextUtf8() {
+    if (!m_layoutRoot || !m_hasTextSelection) return {};
+    std::ostringstream out;
+    bool wrote = false;
+    std::function<void(const LayoutBox&)> walk = [&](const LayoutBox& box) {
+        for (const auto& line : box.lines) {
+            bool lineWrote = false;
+            for (const auto& frag : line.frags) {
+                size_t begin = 0, end = 0;
+                if (TextSelectionSpan(frag, begin, end)) {
+                    out << WideToUtf8Simple(frag.text.substr(begin, end - begin));
+                    wrote = lineWrote = true;
+                }
+            }
+            if (lineWrote) out << '\n';
+        }
+        for (const auto& kid : box.kids) walk(*kid);
+    };
+    walk(*m_layoutRoot);
+    std::string s = out.str();
+    while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    return wrote ? s : std::string{};
 }
 
 float Renderer::MeasureText(const std::wstring& s, const FontKey& f) {
@@ -674,6 +787,13 @@ void Renderer::PaintLines(const LayoutBox& box, float scrollY, float topInset, b
             if (!fmt) continue;
             ID2D1SolidColorBrush* brush = fs.color.valid ? TempBrush(ToD2Dc(fs.color))
                                         : (!frag.src->href.empty() ? m_linkBrush : m_textBrush);
+            size_t selBegin = 0, selEnd = 0;
+            if (TextSelectionSpan(frag, selBegin, selEnd)) {
+                const float selX = frag.x + TextWidthForSelection(frag, 0, selBegin);
+                const float selW = TextWidthForSelection(frag, selBegin, selEnd);
+                m_rt->FillRectangle(D2D1::RectF(selX, sy, selX + selW, sy + frag.h),
+                    TempBrush(D2D1::ColorF(0x2b67d8, 0.35f)));
+            }
             bool needsLayoutObject =
                    (!fs.noUnderline && (fs.underline || !frag.src->href.empty()))
                 || fs.lineThrough
