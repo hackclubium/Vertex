@@ -2477,6 +2477,7 @@ static JsObject* makeWasmInstanceObject(VM& vm, std::shared_ptr<WasmModuleData> 
             JsValue fn = mod.isObject() ? mod.asObject()->getProp(f.importName) : JsValue::undefined();
             if (!fn.isCallable()) vm.throwError("LinkError", "missing WebAssembly function import");
             imports[i] = fn;
+            inst->setProp("__wasm_import_" + std::to_string(i), fn);
         }
     }
     for (const auto& it : module->exports) {
