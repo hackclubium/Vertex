@@ -824,19 +824,28 @@ TestResult RunLayoutEngineTests() {
             result);
     }
 
-    // position:sticky should parse as a relative-style fallback, not static.
+    // position:sticky stays in normal flow; scroll-time sticking happens in paint.
     {
-        auto sdom = ParseHtml("<html><body><div id=\"sticky\"></div></body></html>");
-        auto ssheet = ParseStylesheet("#sticky { position: sticky; top: 12px; }");
+        auto sdom = ParseHtml("<html><body><div id=\"wrap\"><div id=\"sticky\"></div><div id=\"after\"></div></div></body></html>");
+        auto ssheet = ParseStylesheet(
+            "body { margin:0; }"
+            "#wrap { margin:0; }"
+            "#sticky { position: sticky; top: 12px; height:20px; }"
+            "#after { height:20px; }");
         LayoutInput sin; sin.document = sdom.get(); sin.sheet = &ssheet;
         sin.measure = &measure; sin.viewportW = 320.f; sin.viewportH = 480.f;
         auto sl = LayoutDocument(sin);
+        auto* wrap = FindEngineBoxById(sl.get(), "wrap");
         auto* sticky = FindEngineBoxById(sl.get(), "sticky");
-        const bool positioned = sticky && (sticky->style.positionMode == 1 || sticky->style.positionMode == 4)
-            && sticky->style.topSet;
-        ExpectEqual("layout-engine/sticky-falls-back-to-relative",
-            positioned ? "relative\n" : "static\n",
-            "relative\n",
+        auto* after = FindEngineBoxById(sl.get(), "after");
+        const bool stickyFlow = wrap && sticky && after
+            && sticky->style.positionMode == 4
+            && sticky->style.topSet
+            && sticky->parent == wrap
+            && static_cast<int>(after->y - sticky->y + 0.5f) == 20;
+        ExpectEqual("layout-engine/sticky-stays-in-flow-with-parent",
+            stickyFlow ? "sticky\n" : "relative-offset\n",
+            "sticky\n",
             result);
     }
 

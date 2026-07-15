@@ -142,6 +142,18 @@ static bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
     return screenMax < dirtyTop || screenMin > dirtyBottom;
 }
 
+static float StickyEffectiveScrollY(const LayoutBox& box, float scrollY, float topInset, float zoom) {
+    if (box.style.positionMode != 4 || !box.style.topSet) return scrollY;
+    const float natural = box.y - scrollY + topInset;
+    const float stuckTop = topInset + box.style.top * zoom;
+    float stickyTop = std::max(natural, stuckTop);
+    if (box.parent) {
+        const float parentBottom = box.parent->y + box.parent->borderBoxH() - scrollY + topInset;
+        stickyTop = std::min(stickyTop, parentBottom - box.borderBoxH());
+    }
+    return box.y + topInset - stickyTop;
+}
+
 // ─── ITextMeasure ─────────────────────────────────────────────────────────────
 
 IDWriteTextFormat* Renderer::FormatForKey(const FontKey& f) {
@@ -853,14 +865,8 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     if (box.style.isDisplayNone()) return;
     bool fixed = underFixed || box.style.positionMode == 3;
     float effScroll = fixed ? 0.f : scrollY;
-    // position:sticky (top-only, viewport-relative approximation): once the
-    // box's natural screen Y would scroll above `top`, pin it there and shift
-    // its subtree by the same delta (mirrors how `fixed` forces effScroll=0).
-    if (!fixed && box.style.positionMode == 4 && box.style.topSet) {
-        float minY = topInset + box.style.top * m_zoom;
-        float natural = box.y - scrollY + topInset;
-        if (natural < minY) effScroll = box.y + topInset - minY;
-    }
+    if (!fixed) effScroll = StickyEffectiveScrollY(box, scrollY, topInset, m_zoom);
+    const float childScroll = box.style.positionMode == 4 ? effScroll : scrollY;
 
     float authoredOpacity = box.style.opacitySet ? box.style.opacity : 1.f;
     if (box.style.filterSet) authoredOpacity *= box.style.filterOpacity;
@@ -1003,7 +1009,7 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
         if (box.establishesInline) {
             if (!hidden) PaintLines(box, effScroll, topInset, fixed);
         } else {
-            for (auto& kptr : box.kids) PaintBox(*kptr, scrollY, topInset, fixed);
+            for (auto& kptr : box.kids) PaintBox(*kptr, childScroll, topInset, fixed);
         }
         if (clipped) {
             m_rt->PopAxisAlignedClip();
@@ -1037,16 +1043,16 @@ void Renderer::PaintBox(const LayoutBox& box, float scrollY, float topInset, boo
     std::stable_sort(negZ.begin(), negZ.end(), byZ);
     std::stable_sort(posZ.begin(), posZ.end(), byZ);
 
-    for (auto* k : negZ)   PaintBox(*k, scrollY, topInset, fixed);
+        for (auto* k : negZ)   PaintBox(*k, childScroll, topInset, fixed);
 
     // In-flow content of THIS box.
     if (box.establishesInline) {
         if (!hidden) PaintLines(box, effScroll, topInset, fixed);
     } else {
-        for (auto* k : inflow) PaintBox(*k, scrollY, topInset, fixed);
-    }
-    for (auto* k : floats) PaintBox(*k, scrollY, topInset, fixed);
-    for (auto* k : posZ)   PaintBox(*k, scrollY, topInset, fixed);
+            for (auto* k : inflow) PaintBox(*k, childScroll, topInset, fixed);
+        }
+        for (auto* k : floats) PaintBox(*k, childScroll, topInset, fixed);
+        for (auto* k : posZ)   PaintBox(*k, childScroll, topInset, fixed);
 
     if (clipped) {
         m_rt->PopAxisAlignedClip();

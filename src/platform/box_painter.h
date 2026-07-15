@@ -118,6 +118,18 @@ inline bool CanCullOffscreenPaintSubtree(const LayoutBox& box,
     return screenMax < topInset || screenMin > viewportH;
 }
 
+inline float StickyEffectiveScrollY(const LayoutBox& box, float scrollY, float topInset, float zoom) {
+    if (box.style.positionMode != 4 || !box.style.topSet) return scrollY;
+    const float natural = box.y - scrollY + topInset;
+    const float stuckTop = topInset + box.style.top * zoom;
+    float stickyTop = std::max(natural, stuckTop);
+    if (box.parent) {
+        const float parentBottom = box.parent->y + box.parent->borderBoxH() - scrollY + topInset;
+        stickyTop = std::min(stickyTop, parentBottom - box.borderBoxH());
+    }
+    return box.y + topInset - stickyTop;
+}
+
 inline PlatColor ToPlatColor(const CssColor& c) { return { c.r, c.g, c.b, c.a }; }
 
 inline PlatFont GetOrCreateFont(PaintState& ps, const FontKey& f) {
@@ -461,12 +473,15 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     if (CanCullOffscreenPaintSubtree(box, ps.scrollY, ps.topInset, (float)ps.r->Height()))
         return;
 
+    const float boxScrollY = box.style.positionMode == 3
+        ? 0.f
+        : StickyEffectiveScrollY(box, ps.scrollY, ps.topInset, ps.zoom);
+
     if (!hidden && ps.hits && !box.href.empty()
         && box.kind != BoxKind::Text && box.kind != BoxKind::Inline
         && box.kind != BoxKind::Break) {
-        float hitScrollY = box.style.positionMode == 3 ? 0.f : ps.scrollY;
         float hx = box.x;
-        float hy = box.y - hitScrollY + ps.topInset;
+        float hy = box.y - boxScrollY + ps.topInset;
         float hw = box.borderBoxW();
         float hh = box.borderBoxH();
         bool hitVisible = hy + hh >= ps.topInset && hy <= (float)ps.r->Height();
@@ -494,9 +509,8 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
 
     bool cssClipped = false;
     if (!hidden && box.style.clipRectSet) {
-        float effScroll = box.style.positionMode == 3 ? 0.f : ps.scrollY;
         float clipX = box.x + box.style.clipLeft;
-        float clipY = box.y - effScroll + ps.topInset + box.style.clipTop;
+        float clipY = box.y - boxScrollY + ps.topInset + box.style.clipTop;
         float clipW = box.style.clipRight - box.style.clipLeft;
         float clipH = box.style.clipBottom - box.style.clipTop;
         if (clipW <= 0.f || clipH <= 0.f) hidden = true;
@@ -504,20 +518,18 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
     }
 
     // Decorations
-    if (!hidden && box.kind != BoxKind::Text && box.kind != BoxKind::Inline && box.kind != BoxKind::Break)
+    if (!hidden && box.kind != BoxKind::Text && box.kind != BoxKind::Inline && box.kind != BoxKind::Break) {
+        float oldScroll = ps.scrollY;
+        ps.scrollY = boxScrollY;
         PaintBoxDecorations(ps, box);
+        ps.scrollY = oldScroll;
+    }
 
     // overflow:hidden/auto/scroll clip + scroll offset
     bool clipped = false;
     float savedScrollForOverflow = ps.scrollY;
     if (box.style.overflowHidden && !hidden) {
-        float effScroll = box.style.positionMode == 3 ? 0.f : ps.scrollY;
-        if (box.style.positionMode == 4 && box.style.topSet) {
-            float minY = ps.topInset + box.style.top * ps.zoom;
-            float natural = box.y - ps.scrollY + ps.topInset;
-            if (natural < minY) effScroll = box.y + ps.topInset - minY;
-        }
-        float cx = box.x, cy = box.y - effScroll + ps.topInset;
+        float cx = box.x, cy = box.y - boxScrollY + ps.topInset;
         float cw = box.borderBoxW(), ch = box.borderBoxH();
         if (cw > 0 && ch > 0) {
             ps.r->PushClip(cx, cy, cw, ch);
@@ -549,7 +561,8 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         }
     }
     if (simpleInFlowChildren) {
-        float screenY = box.y - ps.scrollY + ps.topInset;
+        float effectiveScrollY = boxScrollY;
+        float screenY = box.y - effectiveScrollY + ps.topInset;
         bool offscreenSimpleSubtree =
                box.style.positionMode != 3
             && !box.style.transformSet
@@ -573,11 +586,14 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         // this stays correct if that ever changes (e.g. longer-lived canvas
         // contexts).
         try {
+            float oldScroll = ps.scrollY;
+            ps.scrollY = effectiveScrollY;
             if (box.establishesInline) {
                 if (!hidden) PaintLines(ps, box);
             } else {
                 for (auto& k : box.kids) PaintBoxTree(ps, *k);
             }
+            ps.scrollY = oldScroll;
         } catch (...) {
             if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
             if (cssClipped) ps.r->PopClip();
@@ -620,6 +636,8 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
 
     // Same exception-safety rationale as the simple-children path above.
     try {
+        float effectiveScrollY = boxScrollY;
+        float oldScroll = ps.scrollY; ps.scrollY = effectiveScrollY;
         for (auto* k : negZ)   PaintBoxTree(ps, *k);
         if (box.establishesInline) {
             if (!hidden) PaintLines(ps, box);
@@ -628,6 +646,7 @@ inline void PaintBoxTree(PaintState& ps, const LayoutBox& box) {
         }
         for (auto* k : floats) PaintBoxTree(ps, *k);
         for (auto* k : posZ)   PaintBoxTree(ps, *k);
+        ps.scrollY = oldScroll;
     } catch (...) {
         if (clipped) { ps.r->PopClip(); ps.scrollY = savedScrollForOverflow; }
         if (cssClipped) ps.r->PopClip();

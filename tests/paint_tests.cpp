@@ -580,6 +580,22 @@ TestResult RunPaintTests() {
 
     {
         auto root = FindRepoRoot();
+        std::string renderer = ReadTextFile(root / "src/render/box_paint.cpp");
+        std::string sharedPainter = ReadTextFile(root / "src/platform/box_painter.h");
+        const bool stickyPaintsAtScrolledTop =
+            renderer.find("StickyEffectiveScrollY") != std::string::npos
+            && renderer.find("const float childScroll = box.style.positionMode == 4 ? effScroll : scrollY;") != std::string::npos
+            && sharedPainter.find("inline float StickyEffectiveScrollY") != std::string::npos
+            && sharedPainter.find("const float boxScrollY = box.style.positionMode == 3") != std::string::npos
+            && sharedPainter.find("ps.scrollY = effectiveScrollY;") != std::string::npos;
+        ExpectEqual("paint/sticky-uses-effective-scroll",
+            stickyPaintsAtScrolledTop ? "sticky\n" : "static\n",
+            "sticky\n",
+            result);
+    }
+
+    {
+        auto root = FindRepoRoot();
         std::string renderer = ReadTextFile(root / "src/render/renderer.cpp");
         std::string mainWin = ReadTextFile(root / "src/main.cpp");
         const bool stableHover =

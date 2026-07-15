@@ -2409,7 +2409,7 @@ void Engine::layoutPositioned(LayoutBox& root, std::vector<LayoutBox*>& /*unused
 // ─── relative offset pass ────────────────────────────────────────────────────
 void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
     for (auto& k : box.kids) ApplyRelativeOffsets(E, *k);
-    if (box.style.positionMode == 1 || box.style.positionMode == 4) {
+    if (box.style.positionMode == 1) {
         float dx = 0, dy = 0;
         if (box.style.leftSet)       dx = E.px(box.style.left);
         else if (box.style.rightSet) dx = -E.px(box.style.right);
@@ -2422,6 +2422,11 @@ void ApplyRelativeOffsets(Engine& E, LayoutBox& box) {
         };
         shift(box);
     }
+}
+
+void AssignLayoutParents(LayoutBox& box, LayoutBox* parent = nullptr) {
+    box.parent = parent;
+    for (auto& child : box.kids) AssignLayoutParents(*child, &box);
 }
 
 float ScrollableBottom(const LayoutBox& box, bool includeSelf, float clipBottom = std::numeric_limits<float>::infinity()) {
@@ -2482,6 +2487,7 @@ std::unique_ptr<LayoutBox> LayoutDocument(const LayoutInput& in) {
             if (auto cb = BuildBox(c.get(), rootStyle, bc, "")) root->kids.push_back(std::move(cb));
     }
     AnonymousFixup(root.get());
+    AssignLayoutParents(*root);
 
     Engine E(in);
     root->x = 0; root->y = 0;
@@ -2500,6 +2506,7 @@ std::unique_ptr<LayoutBox> LayoutDocument(const LayoutInput& in) {
     ApplyRelativeOffsets(E, *root);
     std::vector<LayoutBox*> dummy;
     E.layoutPositioned(*root, dummy);
+    AssignLayoutParents(*root);
     root->contentH = std::max(root->contentH,
         std::max(0.f, ScrollableBottom(*root, false) - root->contentY()));
 

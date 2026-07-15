@@ -80,6 +80,7 @@ struct LineBox {
 };
 
 struct LayoutBox {
+    LayoutBox*    parent = nullptr;
     const Node*   node  = nullptr;       // source DOM node (nullptr = anonymous)
     ComputedStyle style;
     BoxKind       kind  = BoxKind::Block;
