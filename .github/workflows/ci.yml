@@ -67,6 +67,8 @@ jobs:
 
   sanitizer:
     runs-on: ubuntu-latest
+    env:
+      SAN_EXE: build-sanitize/Debug
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,28 +80,28 @@ jobs:
         run: cmake -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 
       - name: Build tests
-        run: cmake --build build-sanitize --target vertex-tests vertex-layout-engine-tests
+        run: cmake --build build-sanitize --config Debug --target vertex-tests vertex-layout-engine-tests
 
       - name: Run html tests
-        run: build-sanitize/vertex-tests html
+        run: $SAN_EXE/vertex-tests html
 
       - name: Run css tests
-        run: build-sanitize/vertex-tests css
+        run: $SAN_EXE/vertex-tests css
 
       - name: Run layout tests
-        run: build-sanitize/vertex-tests layout
+        run: $SAN_EXE/vertex-tests layout
 
       - name: Run paint tests
-        run: build-sanitize/vertex-tests paint
+        run: $SAN_EXE/vertex-tests paint
 
       - name: Run js tests
-        run: build-sanitize/vertex-tests js
+        run: $SAN_EXE/vertex-tests js
 
       - name: Run network tests
-        run: build-sanitize/vertex-tests network
+        run: $SAN_EXE/vertex-tests network
 
       - name: Run codec tests
-        run: build-sanitize/vertex-tests codec
+        run: $SAN_EXE/vertex-tests codec
 
       - name: Run layout engine tests
-        run: build-sanitize/vertex-layout-engine-tests
+        run: $SAN_EXE/vertex-layout-engine-tests
