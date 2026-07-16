@@ -178,6 +178,7 @@ jobs:
           [ -d vertex-windows-portable ] && (cd vertex-windows-portable && zip -r ../Vertex-windows-portable.zip .) || true
           [ -d vertex-macos-portable ] && (cd vertex-macos-portable && zip -r ../Vertex-macos-portable.zip .) || true
           [ -d vertex-linux-portable ] && (cd vertex-linux-portable && tar -czf ../Vertex-linux-portable.tar.gz .) || true
+          find . -maxdepth 1 -type f -name 'Vertex-*' ! -name 'Vertex-SHA256SUMS.txt' -printf '%f\0' | sort -z | xargs -0 sha256sum > Vertex-SHA256SUMS.txt
 
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 && \
             gh release upload "$tag" Vertex-* --repo "$GITHUB_REPOSITORY" --clobber || \

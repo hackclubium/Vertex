@@ -51,7 +51,7 @@ void Lexer::skipWhitespace() {
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { advance(); continue; }
         if (c == '/' && m_pos+1 < m_src.size()) {
             if (m_src[m_pos+1] == '/') { skipLineComment(); continue; }
-            if (m_src[m_pos+1] == '*') { skipBlockComment(); continue; }
+            if (m_src[m_pos+1] == '*') { if (!skipBlockComment()) { m_error = true; return; } continue; }
         }
         break;
     }
@@ -61,13 +61,15 @@ void Lexer::skipLineComment() {
     while (m_pos < m_src.size() && m_src[m_pos] != '\n') m_pos++;
 }
 
-void Lexer::skipBlockComment() {
+bool Lexer::skipBlockComment() {
     m_pos += 2; // skip /*
     while (m_pos + 1 < m_src.size()) {
         if (m_src[m_pos] == '\n') m_line++;
-        if (m_src[m_pos] == '*' && m_src[m_pos+1] == '/') { m_pos += 2; return; }
+        if (m_src[m_pos] == '*' && m_src[m_pos+1] == '/') { m_pos += 2; return true; }
         m_pos++;
     }
+    m_pos = m_src.size();
+    return false;
 }
 
 Token Lexer::makeToken(TT t, std::string val) const {
@@ -293,6 +295,11 @@ std::vector<Token> Lexer::tokenize() {
 
     while (true) {
         skipWhitespace();
+        if (m_error) {
+            toks.push_back(makeToken(TT::Error, "unterminated block comment"));
+            toks.push_back(makeToken(TT::Eof));
+            break;
+        }
         if (m_pos >= m_src.size()) { toks.push_back(makeToken(TT::Eof)); break; }
 
         char c = m_src[m_pos++];

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <cstdio>
 
 namespace vertex::downloads {
 namespace {
@@ -201,7 +202,9 @@ DownloadRecord SaveFetchedBody(const std::string& url,
 
     try {
         std::filesystem::create_directories(std::filesystem::u8path(dir));
-        std::ofstream out(std::filesystem::u8path(record.path), std::ios::binary);
+        std::string tempPath = record.path + ".part";
+        std::filesystem::remove(std::filesystem::u8path(tempPath));
+        std::ofstream out(std::filesystem::u8path(tempPath), std::ios::binary);
         if (!out) {
             record.error = "Could not create file";
             return record;
@@ -211,6 +214,8 @@ DownloadRecord SaveFetchedBody(const std::string& url,
             record.error = "Could not write file";
             return record;
         }
+        out.close();
+        std::filesystem::rename(std::filesystem::u8path(tempPath), std::filesystem::u8path(record.path));
         record.success = true;
     } catch (const std::exception& e) {
         record.error = e.what();

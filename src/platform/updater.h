@@ -11,6 +11,7 @@
 
 #include "platform/version.h"
 #include "network/fetcher.h"
+#include "codec/sha256.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <cctype>
 #include <fstream>
 #include <tuple>
 #include <vector>
@@ -219,14 +221,25 @@ private:
 
         std::string downloadUrl = findAssetUrl(assetName);
         std::string bridgeUrl = findAssetUrl(bridgeAssetName);
+        std::string sumsUrl = findAssetUrl("Vertex-SHA256SUMS.txt");
 
         if (downloadUrl.empty()) { setStatus(""); return; }
+        if (sumsUrl.empty()) { setStatus("Update manifest missing."); return; }
+
+        auto sumsRes = FetchUrl(sumsUrl);
+        if (!sumsRes.success || sumsRes.body.empty()) { setStatus("Update manifest download failed."); return; }
+        std::string expectedAssetHash = sha256ForAsset(sumsRes.body, assetName);
+        if (expectedAssetHash.empty()) { setStatus("Update manifest missing asset hash."); return; }
 
         setStatus("Downloading Vertex " + tag + "...");
 
         auto dlRes = FetchUrl(downloadUrl);
         if (!dlRes.success || dlRes.body.size() < 500 * 1024) {
             setStatus("Update download failed.");
+            return;
+        }
+        if (!hashMatches(dlRes.body, expectedAssetHash)) {
+            setStatus("Update hash mismatch.");
             return;
         }
 
@@ -238,8 +251,10 @@ private:
         }
 
         if (!bridgeUrl.empty()) {
+            std::string expectedBridgeHash = sha256ForAsset(sumsRes.body, bridgeAssetName);
             auto bridgeRes = FetchUrl(bridgeUrl);
-            if (bridgeRes.success && bridgeRes.body.size() > 100 * 1024) {
+            if (bridgeRes.success && bridgeRes.body.size() > 100 * 1024
+                && !expectedBridgeHash.empty() && hashMatches(bridgeRes.body, expectedBridgeHash)) {
                 std::ofstream bridgeOut(bridgePendingPath(exePath), std::ios::binary);
                 if (bridgeOut.is_open()) bridgeOut.write(bridgeRes.body.data(), bridgeRes.body.size());
             }
@@ -348,5 +363,33 @@ private:
             return {major, minor, patch};
         };
         return parse(remote) > parse(local);
+    }
+
+    static std::string sha256ForAsset(const std::string& sums, const std::string& assetName) {
+        size_t pos = 0;
+        while (pos < sums.size()) {
+            size_t end = sums.find('\n', pos);
+            std::string line = sums.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t i = 0;
+            while (i < line.size() && std::isxdigit((unsigned char)line[i])) ++i;
+            if (i == 64) {
+                size_t name = line.find_first_not_of(" \t*", i);
+                if (name != std::string::npos && line.substr(name) == assetName)
+                    return line.substr(0, 64);
+            }
+            if (end == std::string::npos) break;
+            pos = end + 1;
+        }
+        return {};
+    }
+
+    static bool hashMatches(const std::string& body, const std::string& expectedHex) {
+        std::string actual = Sha256Hex(body);
+        if (actual.size() != expectedHex.size()) return false;
+        for (size_t i = 0; i < actual.size(); ++i) {
+            if (std::tolower((unsigned char)actual[i]) != std::tolower((unsigned char)expectedHex[i])) return false;
+        }
+        return true;
     }
 };

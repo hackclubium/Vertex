@@ -65,6 +65,15 @@ static std::string RunEngineDomRegistrationSnapshot() {
     return ok ? "registered\n" : "script failed\n";
 }
 
+static std::string FirstLexerError(const std::string& source) {
+    Lexer lexer(source);
+    for (const auto& token : lexer.tokenize()) {
+        if (token.type == TT::Error) return "error:" + token.value + "\n";
+        if (token.type == TT::Eof) break;
+    }
+    return "no-error\n";
+}
+
 static std::string RunEngineDomKeepsBuiltinsSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body></body></html>");
@@ -1516,6 +1525,12 @@ TestResult RunJsTests() {
         "js/engine/script-comment-survives-html-extraction",
         RunScriptCommentSurvivesHtmlExtractionSnapshot(),
         "text=AFTER-COMMENT\n",
+        result);
+
+    ExpectEqual(
+        "js/lexer/unterminated-block-comment-is-error",
+        FirstLexerError("var ok = 1; /* unterminated"),
+        "error:unterminated block comment\n",
         result);
 
     ExpectEqual(

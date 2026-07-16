@@ -58,6 +58,7 @@ private:
     std::string m_src;
     size_t      m_pos  = 0;
     uint32_t    m_line = 1;
+    bool        m_error = false;
 
     char peek(int ahead = 0) const;
     char advance();
@@ -65,7 +66,7 @@ private:
     bool match(const char* s, int len);
     void skipWhitespace();
     void skipLineComment();
-    void skipBlockComment();
+    bool skipBlockComment();
 
     Token readNumber();
     Token readString(char quote);

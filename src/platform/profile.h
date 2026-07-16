@@ -31,6 +31,6 @@ bool EnsureDirectories(const ProfilePaths& paths);
 void AppendTsvRow(const std::string& path, const std::vector<std::string>& fields);
 
 std::vector<std::vector<std::string>> ReadTsvRows(const std::string& path,
-                                                  size_t maxRows = 0);
+                                                  size_t maxRows = 10000);
 
 } // namespace vertex::profile

@@ -3,6 +3,7 @@
 #include "codec/png.h"
 #include "codec/jpeg.h"
 #include "codec/webp.h"
+#include "codec/sha256.h"
 
 #include <algorithm>
 #include <cctype>
@@ -171,6 +172,11 @@ std::vector<uint8_t> MakeExtendedVp8LWebp(int width, int height, uint8_t r, uint
 
 TestResult RunCodecTests() {
     TestResult result;
+
+    ExpectEqual("codec/sha256/known-vector",
+        Sha256Hex(std::string("abc")) + "\n",
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n",
+        result);
 
     // All hex vectors below were produced by Python's stdlib zlib (an
     // independent, industry-standard implementation), not by Vertex's own

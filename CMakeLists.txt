@@ -62,6 +62,7 @@ endif()
 add_library(vertex_engine STATIC
     src/codec/inflate.cpp
     src/codec/crc32.cpp
+    src/codec/sha256.cpp
     src/codec/png.cpp
     src/codec/jpeg.cpp
     src/codec/webp.cpp
@@ -293,6 +294,20 @@ target_link_libraries(site_probe PRIVATE vertex_engine)
 add_executable(debug_title tools/debug_title.cpp)
 target_include_directories(debug_title PRIVATE src)
 target_link_libraries(debug_title PRIVATE vertex_engine)
+
+option(VERTEX_BUILD_FUZZERS "Build libFuzzer harnesses" OFF)
+if (VERTEX_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_js_lexer tests/fuzz/fuzz_js_lexer.cpp)
+    add_executable(fuzz_html_tokenizer tests/fuzz/fuzz_html_tokenizer.cpp)
+    add_executable(fuzz_css_stylesheet tests/fuzz/fuzz_css_stylesheet.cpp)
+    add_executable(fuzz_url tests/fuzz/fuzz_url.cpp)
+    foreach(fuzzer fuzz_js_lexer fuzz_html_tokenizer fuzz_css_stylesheet fuzz_url)
+        target_include_directories(${fuzzer} PRIVATE src)
+        target_link_libraries(${fuzzer} PRIVATE vertex_engine)
+        target_compile_options(${fuzzer} PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
+        target_link_options(${fuzzer} PRIVATE -fsanitize=fuzzer,address,undefined)
+    endforeach()
+endif()
 
 if (MSVC)
     target_link_options(dump_js PRIVATE /DYNAMICBASE:NO /MAP)
