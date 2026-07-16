@@ -17,11 +17,13 @@
 // never throws, since decompressing attacker-controlled network/file bytes
 // must not be able to crash the browser.
 bool Inflate(const uint8_t* data, size_t size, std::string& out);
+bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes);
 
 // RFC 1950 zlib format: a 2-byte header, a raw DEFLATE stream, then a 4-byte
 // big-endian Adler-32 checksum of the decompressed data. This is exactly the
 // format PNG's IDAT chunks use.
 bool ZlibInflate(const uint8_t* data, size_t size, std::string& out);
+bool ZlibInflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes);
 
 // RFC 1952 gzip format: a 10+ byte header (with optional FEXTRA/FNAME/
 // FCOMMENT/FHCRC fields depending on the flags byte), a raw DEFLATE stream,
@@ -29,5 +31,6 @@ bool ZlibInflate(const uint8_t* data, size_t size, std::string& out);
 // (uncompressed size mod 2^32) trailer. This is the format HTTP's
 // Content-Encoding: gzip uses.
 bool GzipInflate(const uint8_t* data, size_t size, std::string& out);
+bool GzipInflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes);
 
 uint32_t Adler32(const uint8_t* data, size_t size);

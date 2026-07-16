@@ -204,8 +204,13 @@ private:
         size_t hostEnd = url.find('/', hostStart);
         std::string host = url.substr(hostStart, hostEnd == std::string::npos ? std::string::npos : hostEnd - hostStart);
         // Remove port.
-        size_t colon = host.find(':');
-        if (colon != std::string::npos) host = host.substr(0, colon);
+        if (!host.empty() && host[0] == '[') {
+            size_t close = host.find(']');
+            if (close != std::string::npos) host = host.substr(0, close + 1);
+        } else {
+            size_t colon = host.find(':');
+            if (colon != std::string::npos) host = host.substr(0, colon);
+        }
         return toLower(host);
     }
 

@@ -266,7 +266,7 @@ bool PerformRequest(Sock& sock, const HttpUrl& parsed, const std::string& curren
         char chunk[8192];
         while (body.size() < contentLength) {
             int n = sock.Recv(chunk, sizeof(chunk));
-            if (n <= 0) break; // peer closed early — treat what we have as final (matches lenient real-world behavior)
+            if (n <= 0) { r.error = "Truncated response body"; return false; }
             body.append(chunk, n);
         }
         outBody = body.substr(0, std::min(body.size(), contentLength));
@@ -339,17 +339,15 @@ FetchResult FetchHttp(const FetchRequest& request, size_t maxResponseBytes) {
         std::string contentEncoding = ToLower(FindHeader(headers, "content-encoding"));
         if (contentEncoding == "gzip") {
             std::string decompressed;
-            if (GzipInflate((const uint8_t*)outBody.data(), outBody.size(), decompressed))
+            if (GzipInflate((const uint8_t*)outBody.data(), outBody.size(), decompressed, maxResponseBytes))
                 outBody = std::move(decompressed);
-            // A body that fails to decompress is passed through as-is rather
-            // than failing the whole fetch — matches curl's own tolerance
-            // for a mislabeled/malformed Content-Encoding.
+            else { r.error = "Malformed or oversized gzip response"; return r; }
         } else if (contentEncoding == "deflate") {
             std::string decompressed;
-            if (ZlibInflate((const uint8_t*)outBody.data(), outBody.size(), decompressed) ||
-                Inflate((const uint8_t*)outBody.data(), outBody.size(), decompressed)) {
+            if (ZlibInflate((const uint8_t*)outBody.data(), outBody.size(), decompressed, maxResponseBytes) ||
+                Inflate((const uint8_t*)outBody.data(), outBody.size(), decompressed, maxResponseBytes)) {
                 outBody = std::move(decompressed);
-            }
+            } else { r.error = "Malformed or oversized deflate response"; return r; }
         }
 
         for (auto& h : headers) {

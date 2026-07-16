@@ -219,6 +219,13 @@ void HandleHttpTestConnection(SockFd clientSock, int serverPort) {
         resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n"
                "Content-Length: " + std::to_string(gz.size()) + "\r\n\r\n";
         resp.append((const char*)gz.data(), gz.size());
+    } else if (path == "/gzip-too-large") {
+        auto gz = HexToBytesForHttpTest("1f8b08000000000004004b4c1c5800008c362bf180000000");
+        resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n"
+               "Content-Length: " + std::to_string(gz.size()) + "\r\n\r\n";
+        resp.append((const char*)gz.data(), gz.size());
+    } else if (path == "/short-body") {
+        resp = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\ntiny";
     } else if (path == "/redirect1") {
         resp = "HTTP/1.1 302 Found\r\nLocation: /redirect2\r\nContent-Length: 0\r\n\r\n";
     } else if (path == "/redirect2") {
@@ -429,12 +436,17 @@ TestResult RunNetworkTests() {
         actual += CookieJar::instance().cookieHeader("http://example.test/application/page") + "\n";
         actual += CookieJar::instance().cookieHeader("https://example.test/other/page") + "\n";
         actual += CookieJar::instance().documentCookies("http://example.test/app/page") + "\n";
+        CookieJar::instance().handleSetCookie("vertex_ipv6=1; Path=/", "http://[::1]/");
+        actual += CookieJar::instance().cookieHeader("http://[::1]/") + "\n";
+        actual += CookieJar::instance().cookieHeader("http://[::2]/") + "\n";
         ExpectEqual("network/cookies/domain-path-and-secure-boundaries",
             actual,
             "vertex_ok=1; vertex_secure=1; vertex_default=1\n"
             "\n"
             "vertex_secure=1\n"
-            "vertex_ok=1; vertex_default=1\n",
+            "vertex_ok=1; vertex_default=1\n"
+            "vertex_ipv6=1\n"
+            "\n",
             result);
     }
 
@@ -722,6 +734,18 @@ TestResult RunNetworkTests() {
         ExpectEqual("network/http/gzip-content-encoding",
             (gz.success ? "ok:" : "fail:") + gz.body + "\n",
             "ok:hello gzip from python\n",
+            result);
+
+        auto gzTooLarge = FetchHttp(base + "/gzip-too-large", 64);
+        ExpectEqual("network/http/decompressed-body-honors-size-limit",
+            std::string(gzTooLarge.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected\n",
+            result);
+
+        auto shortBody = FetchHttp(base + "/short-body");
+        ExpectEqual("network/http/short-content-length-is-failure",
+            std::string(shortBody.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected\n",
             result);
 
         auto redirected = FetchHttp(base + "/redirect1");

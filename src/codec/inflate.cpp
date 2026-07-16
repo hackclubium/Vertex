@@ -177,11 +177,12 @@ bool ReadDynamicTables(BitReader& br, HuffmanTable& litTable, HuffmanTable& dist
     return true;
 }
 
-bool InflateBlock(BitReader& br, const HuffmanTable& litTable, const HuffmanTable& distTable, std::string& out) {
+bool InflateBlock(BitReader& br, const HuffmanTable& litTable, const HuffmanTable& distTable, std::string& out, size_t maxOutputBytes) {
     for (;;) {
         int sym = DecodeSymbol(br, litTable);
         if (sym < 0 || br.error()) return false;
         if (sym < 256) {
+            if (out.size() >= maxOutputBytes) return false;
             out.push_back((char)sym);
         } else if (sym == 256) {
             return true;
@@ -198,6 +199,7 @@ bool InflateBlock(BitReader& br, const HuffmanTable& litTable, const HuffmanTabl
             // e.g. distance=1 is a run-length repeat of the last byte — and
             // each iteration must see bytes appended by earlier iterations
             // of this same copy for that self-overlap to work correctly.
+            if (out.size() + (size_t)length > maxOutputBytes) return false;
             for (int k = 0; k < length; k++) out.push_back(out[start + (size_t)k]);
         }
         if (br.error()) return false;
@@ -208,6 +210,10 @@ bool InflateBlock(BitReader& br, const HuffmanTable& litTable, const HuffmanTabl
 
 bool Inflate(const uint8_t* data, size_t size, std::string& out) {
     constexpr size_t kMaxDecompressedSize = 256 * 1024 * 1024; // 256 MB limit
+    return Inflate(data, size, out, kMaxDecompressedSize);
+}
+
+bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes) {
     BitReader br(data, size);
     bool final = false;
     while (!final) {
@@ -220,7 +226,7 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out) {
             uint16_t len = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             uint16_t nlen = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             if (br.error() || (uint16_t)(~len) != nlen) return false;
-            if (out.size() + len > kMaxDecompressedSize) return false;
+            if (out.size() + len > maxOutputBytes) return false;
             for (int i = 0; i < len; i++) {
                 out.push_back((char)br.ReadByte());
                 if (br.error()) return false;
@@ -232,8 +238,7 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out) {
             } else {
                 if (!ReadDynamicTables(br, litTable, distTable)) return false;
             }
-            if (!InflateBlock(br, litTable, distTable, out)) return false;
-            if (out.size() > kMaxDecompressedSize) return false;
+            if (!InflateBlock(br, litTable, distTable, out, maxOutputBytes)) return false;
         } else {
             return false; // btype == 3 is reserved/invalid
         }
@@ -252,13 +257,18 @@ uint32_t Adler32(const uint8_t* data, size_t size) {
 }
 
 bool ZlibInflate(const uint8_t* data, size_t size, std::string& out) {
+    constexpr size_t kMaxDecompressedSize = 256 * 1024 * 1024;
+    return ZlibInflate(data, size, out, kMaxDecompressedSize);
+}
+
+bool ZlibInflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes) {
     if (size < 6) return false; // 2-byte header + at least an empty deflate block + 4-byte trailer
     uint8_t cmf = data[0], flg = data[1];
     if ((cmf & 0x0F) != 8) return false;       // compression method must be DEFLATE
     if (((cmf << 8) | flg) % 31 != 0) return false; // header check bits (RFC 1950 §2.2)
     if (flg & 0x20) return false;              // FDICT set — preset dictionary not supported
 
-    if (!Inflate(data + 2, size - 6, out)) return false;
+    if (!Inflate(data + 2, size - 6, out, maxOutputBytes)) return false;
 
     uint32_t expected = ((uint32_t)data[size - 4] << 24) | ((uint32_t)data[size - 3] << 16) |
                          ((uint32_t)data[size - 2] << 8) | (uint32_t)data[size - 1];
@@ -266,6 +276,11 @@ bool ZlibInflate(const uint8_t* data, size_t size, std::string& out) {
 }
 
 bool GzipInflate(const uint8_t* data, size_t size, std::string& out) {
+    constexpr size_t kMaxDecompressedSize = 256 * 1024 * 1024;
+    return GzipInflate(data, size, out, kMaxDecompressedSize);
+}
+
+bool GzipInflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes) {
     if (size < 18) return false; // 10-byte header + empty deflate block + 8-byte trailer, minimum
     if (data[0] != 0x1F || data[1] != 0x8B) return false; // magic
     if (data[2] != 8) return false; // compression method must be DEFLATE
@@ -292,7 +307,7 @@ bool GzipInflate(const uint8_t* data, size_t size, std::string& out) {
     if (flg & 0x02) pos += 2; // FHCRC (header CRC16, not verified)
     if (pos + 8 > size) return false; // must leave room for the 8-byte trailer
 
-    if (!Inflate(data + pos, size - pos - 8, out)) return false;
+    if (!Inflate(data + pos, size - pos - 8, out, maxOutputBytes)) return false;
 
     uint32_t expectedCrc = (uint32_t)data[size - 8] | ((uint32_t)data[size - 7] << 8) |
                             ((uint32_t)data[size - 6] << 16) | ((uint32_t)data[size - 5] << 24);
