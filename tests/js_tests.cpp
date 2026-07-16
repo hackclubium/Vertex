@@ -1119,6 +1119,20 @@ static std::string RunDocumentElementShortcutsSnapshot() {
     return body ? body->attr("data-result") + "\n" : "missing body\n";
 }
 
+static std::string RunDocumentElementInnerHtmlKeepsBodySnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><head></head><body><div id='old'></div></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "document.documentElement.innerHTML = '<!DOCTYPE html><html><head><title>x</title></head><body><p id=counter>0</p></body></html>';\n"
+        "var script = document.createElement('script');\n"
+        "document.body.appendChild(script);\n"
+        "document.body.setAttribute('data-result', document.getElementById('counter').textContent + ':' + document.body.children.length);\n",
+        "html-innerhtml-body");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
 static std::string RunDomModernMutationConveniencesSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body><ul id=\"list\"><li id=\"a\">A</li><li id=\"b\">B</li></ul><p id=\"tail\">T</p></body></html>");
@@ -1685,6 +1699,12 @@ TestResult RunJsTests() {
         "js/dom/document-element-shortcuts-are-wrappers",
         RunDocumentElementShortcutsSnapshot(),
         "html|head|body\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/document-element-innerhtml-keeps-body",
+        RunDocumentElementInnerHtmlKeepsBodySnapshot(),
+        "ok:0:2\n",
         result);
 
     ExpectEqual(

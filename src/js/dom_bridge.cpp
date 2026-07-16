@@ -2790,9 +2790,13 @@ static void setInnerHtml(Node* parent, const std::string& html) {
                 if (Node* r = findTag(c.get(), tag)) return r;
             }
             return nullptr;
-        };
+    };
     Node* content = doc.get();
-    if (Node* body = findTag(doc.get(), "body")) content = body;
+    if (parent->tagName == "html") {
+        if (Node* htmlNode = findTag(doc.get(), "html")) content = htmlNode;
+    } else if (Node* body = findTag(doc.get(), "body")) {
+        content = body;
+    }
     parent->children.clear();
     for (auto& c : content->children) {
         c->parent = parent;
