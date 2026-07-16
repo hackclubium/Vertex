@@ -9,6 +9,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <limits.h>
 #else
