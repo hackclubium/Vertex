@@ -210,6 +210,8 @@ void HandleHttpTestConnection(SockFd clientSock, int serverPort) {
             resp += std::string(lenBuf) + "\r\n" + part + "\r\n";
         }
         resp += "0\r\n\r\n";
+    } else if (path == "/chunked-bad-crlf") {
+        resp = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nbodyXX0\r\n\r\n";
     } else if (path == "/gzip") {
         // gzip-compresses to "hello gzip from python" — same vector already
         // independently verified in codec/inflate/gzip-wrapper.
@@ -424,6 +426,7 @@ TestResult RunNetworkTests() {
     }
 
     {
+        CookieJar::instance().clearForTests();
         CookieJar::instance().handleSetCookie("vertex_ok=1; Domain=example.test; Path=/app", "https://example.test/app/start");
         CookieJar::instance().handleSetCookie("vertex_bad=1; Domain=evil.test; Path=/", "https://example.test/app/start");
         CookieJar::instance().handleSetCookie("vertex_secure=1; Secure; Path=/", "https://example.test/app/start");
@@ -728,6 +731,12 @@ TestResult RunNetworkTests() {
         ExpectEqual("network/http/chunked-transfer-encoding",
             (chunked.success ? "ok:" : "fail:") + chunked.body + "\n",
             "ok:chunk-one-chunk-two-chunk-three\n",
+            result);
+
+        auto badChunked = FetchHttp(base + "/chunked-bad-crlf");
+        ExpectEqual("network/http/chunked-requires-crlf-after-data",
+            std::string(badChunked.success ? "unexpected-ok\n" : "rejected\n"),
+            "rejected\n",
             result);
 
         auto gz = FetchHttp(base + "/gzip");

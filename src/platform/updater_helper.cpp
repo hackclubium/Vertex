@@ -57,6 +57,15 @@ static bool fileLooksUsable(const std::string& path) {
     return size > 500 * 1024;
 }
 
+static bool bridgeLooksUsable(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    long size = std::ftell(f);
+    std::fclose(f);
+    return size > 100 * 1024;
+}
+
 static void waitForProcessExit(const std::string& pidText) {
     if (pidText.empty()) return;
     unsigned long pid = std::strtoul(pidText.c_str(), nullptr, 10);
@@ -140,9 +149,41 @@ static void restartTarget(const std::string& targetPath) {
 #endif
 }
 
+static std::string bridgePathForTarget(const std::string& targetPath) {
+    size_t slash = targetPath.find_last_of("/\\");
+    std::string dir = slash == std::string::npos ? std::string() : targetPath.substr(0, slash + 1);
+#ifdef _WIN32
+    return dir + "vertex_arti.dll";
+#elif defined(__APPLE__)
+    return dir + "libvertex_arti.dylib";
+#else
+    return dir + "libvertex_arti.so";
+#endif
+}
+
+static void applyBridgeUpdate(const std::string& bridgeUpdatePath, const std::string& targetPath, const std::string& logPath) {
+    if (bridgeUpdatePath.empty()) return;
+    if (!bridgeLooksUsable(bridgeUpdatePath)) {
+        LogMsg(logPath, "bridge update skipped: missing or too small");
+        return;
+    }
+    const std::string bridgePath = bridgePathForTarget(targetPath);
+#ifdef _WIN32
+    if (!MoveFileExA(bridgeUpdatePath.c_str(), bridgePath.c_str(), MOVEFILE_REPLACE_EXISTING))
+        LogMsg(logPath, "bridge update failed, GetLastError=" + std::to_string(GetLastError()));
+#else
+    if (std::rename(bridgeUpdatePath.c_str(), bridgePath.c_str()) != 0) {
+        LogMsg(logPath, "bridge update failed, errno=" + std::to_string(errno));
+    } else {
+        chmod(bridgePath.c_str(), 0755);
+    }
+#endif
+}
+
 int main(int argc, char** argv) {
     std::string targetPath = argValue(argc, argv, "--target");
     std::string updatePath = argValue(argc, argv, "--update");
+    std::string bridgeUpdatePath = argValue(argc, argv, "--bridge-update");
     std::string logPath = LogPath(targetPath);
     LogMsg(logPath, "--- update start: target=" + targetPath + " update=" + updatePath + " ---");
 
@@ -154,6 +195,7 @@ int main(int argc, char** argv) {
     waitForProcessExit(argValue(argc, argv, "--pid"));
     if (!replaceFileWithRetry(updatePath, targetPath, logPath))
         return 3;
+    applyBridgeUpdate(bridgeUpdatePath, targetPath, logPath);
 
     LogMsg(logPath, "update applied successfully");
     if (hasFlag(argc, argv, "--restart"))

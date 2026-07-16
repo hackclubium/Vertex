@@ -64,3 +64,42 @@ jobs:
 
       - name: Run layout engine tests
         run: ${{ matrix.exe }}/vertex-layout-engine-tests${{ matrix.ext }}
+
+  sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev pkg-config
+
+      - name: Configure ASan UBSan
+        run: cmake -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build tests
+        run: cmake --build build-sanitize --target vertex-tests vertex-layout-engine-tests
+
+      - name: Run html tests
+        run: build-sanitize/vertex-tests html
+
+      - name: Run css tests
+        run: build-sanitize/vertex-tests css
+
+      - name: Run layout tests
+        run: build-sanitize/vertex-tests layout
+
+      - name: Run paint tests
+        run: build-sanitize/vertex-tests paint
+
+      - name: Run js tests
+        run: build-sanitize/vertex-tests js
+
+      - name: Run network tests
+        run: build-sanitize/vertex-tests network
+
+      - name: Run codec tests
+        run: build-sanitize/vertex-tests codec
+
+      - name: Run layout engine tests
+        run: build-sanitize/vertex-layout-engine-tests

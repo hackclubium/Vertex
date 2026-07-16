@@ -169,6 +169,7 @@ bool ReadChunkedBody(Sock& sock, std::string& body, std::string& out, size_t max
         for (;;) {
             std::string::size_type found = body.find("\r\n", pos);
             if (found != std::string::npos) { lineEnd = found; break; }
+            if (body.size() - pos > 8192) return false;
             int r = sock.Recv(chunk, sizeof(chunk));
             if (r <= 0) return false;
             body.append(chunk, r);
@@ -182,8 +183,9 @@ bool ReadChunkedBody(Sock& sock, std::string& body, std::string& out, size_t max
 
         if (chunkSize == 0) return true; // final chunk — ignore any trailer headers after it
 
-        if (out.size() + chunkSize > maxBytes) return false;
+        if (chunkSize > maxBytes - out.size()) return false;
         if (!fillTo(pos + chunkSize + 2)) return false; // +2 for the chunk's trailing CRLF
+        if (body[pos + chunkSize] != '\r' || body[pos + chunkSize + 1] != '\n') return false;
         out.append(body, pos, chunkSize);
         pos += chunkSize + 2;
 

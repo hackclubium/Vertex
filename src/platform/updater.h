@@ -55,6 +55,7 @@ struct Updater {
             + " --pid " + std::to_string(GetCurrentProcessId())
             + " --target " + quoteArg(exePath)
             + " --update " + quoteArg(updatePath)
+            + bridgeUpdateArg(exePath)
             + " --restart";
         std::vector<char> mutableCommand(command.begin(), command.end());
         mutableCommand.push_back('\0');
@@ -77,6 +78,7 @@ struct Updater {
                 "--pid", pid.c_str(),
                 "--target", exePath.c_str(),
                 "--update", updatePath.c_str(),
+                "--bridge-update", bridgePendingPath(exePath).c_str(),
                 "--restart",
                 nullptr);
         _exit(0);
@@ -119,8 +121,11 @@ struct Updater {
 
 #ifdef _WIN32
         if (MoveFileA(exePath.c_str(), oldPath.c_str())) {
-            if (!MoveFileA(updatePath.c_str(), exePath.c_str()))
+            if (MoveFileA(updatePath.c_str(), exePath.c_str())) {
+                applyPendingBridgeUpdate(exePath);
+            } else {
                 MoveFileA(oldPath.c_str(), exePath.c_str());
+            }
         }
 #else
         // Previously unchecked: a failed rename (e.g. no write permission on
@@ -130,7 +135,9 @@ struct Updater {
         // leaves exePath untouched, so unlike the Windows branch above there
         // is nothing to roll back, but it's still worth logging so a stuck
         // update is diagnosable instead of invisible.
-        if (std::rename(updatePath.c_str(), exePath.c_str()) != 0) {
+        if (std::rename(updatePath.c_str(), exePath.c_str()) == 0) {
+            applyPendingBridgeUpdate(exePath);
+        } else {
             LogUpdaterEvent(exePath, "applyPendingUpdate: rename failed, errno=" + std::to_string(errno));
         }
 #endif
@@ -233,7 +240,7 @@ private:
         if (!bridgeUrl.empty()) {
             auto bridgeRes = FetchUrl(bridgeUrl);
             if (bridgeRes.success && bridgeRes.body.size() > 100 * 1024) {
-                std::ofstream bridgeOut(bridgePath(exePath), std::ios::binary);
+                std::ofstream bridgeOut(bridgePendingPath(exePath), std::ios::binary);
                 if (bridgeOut.is_open()) bridgeOut.write(bridgeRes.body.data(), bridgeRes.body.size());
             }
         }
@@ -265,6 +272,17 @@ private:
         return true;
     }
 
+    static void applyPendingBridgeUpdate(const std::string& exePath) {
+        std::string pending = bridgePendingPath(exePath);
+        if (!fileExists(pending)) return;
+#ifdef _WIN32
+        MoveFileExA(pending.c_str(), bridgePath(exePath).c_str(), MOVEFILE_REPLACE_EXISTING);
+#else
+        if (std::rename(pending.c_str(), bridgePath(exePath).c_str()) == 0)
+            chmod(bridgePath(exePath).c_str(), 0755);
+#endif
+    }
+
     static std::string helperPath(const std::string& exePath) {
         size_t slash = exePath.find_last_of("/\\");
         std::string dir = slash == std::string::npos ? std::string() : exePath.substr(0, slash + 1);
@@ -285,6 +303,15 @@ private:
 #else
         return dir + "libvertex_arti.so";
 #endif
+    }
+
+    static std::string bridgePendingPath(const std::string& exePath) {
+        return bridgePath(exePath) + ".update";
+    }
+
+    static std::string bridgeUpdateArg(const std::string& exePath) {
+        std::string pending = bridgePendingPath(exePath);
+        return fileExists(pending) ? " --bridge-update " + quoteArg(pending) : "";
     }
 
     // Windows command-line quoting: a backslash is only special immediately

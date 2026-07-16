@@ -169,6 +169,11 @@ public:
         handleSetCookie(cookieStr, url);
     }
 
+    void clearForTests() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_cookies.clear();
+    }
+
 private:
     mutable std::mutex m_mutex;
     std::vector<Cookie> m_cookies;
