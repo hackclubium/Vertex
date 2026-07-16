@@ -139,16 +139,15 @@ void JsEngine::dispatchDocumentEvent(const std::string& eventName) {
 void JsEngine::runMacrotasks(size_t maxTasks) {
     auto& vm = m_impl->vm;
     auto& queue = vm.macrotasks();
-    const size_t initialTasks = queue.size();
-    const size_t taskBudget = std::min(maxTasks, initialTasks);
+    for (auto& task : queue)
+        task.delay = std::max(0, task.delay - 16);
     std::vector<VM::Macrotask> tasks;
-    tasks.reserve(taskBudget);
-    for (size_t i = 0; i < taskBudget; ++i)
-        tasks.push_back(std::move(queue[i]));
-    if (taskBudget == queue.size())
-        queue.clear();
-    else if (taskBudget > 0)
-        queue.erase(queue.begin(), queue.begin() + (ptrdiff_t)taskBudget);
+    tasks.reserve(std::min(maxTasks, queue.size()));
+    for (auto it = queue.begin(); it != queue.end() && tasks.size() < maxTasks; ) {
+        if (it->delay > 0) { ++it; continue; }
+        tasks.push_back(std::move(*it));
+        it = queue.erase(it);
+    }
 
     for (auto& task : tasks) {
         if (task.id <= 0 || !task.fn.isCallable()) continue;
@@ -156,8 +155,10 @@ void JsEngine::runMacrotasks(size_t maxTasks) {
             vm.call(task.fn, JsValue::undefined(), task.args);
             vm.drainMicrotasks();
         } catch (...) {}
-        if (task.interval)
+        if (task.interval) {
+            task.delay = std::max(1, task.intervalDelay);
             queue.push_back(task);
+        }
     }
 }
 

@@ -78,6 +78,7 @@ public:
         JsValue fn;
         std::vector<JsValue> args;
         int delay = 0;
+        int intervalDelay = 0;
         int id = 0;
         bool interval = false;
     };

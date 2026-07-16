@@ -1567,6 +1567,7 @@ static void RunPendingPageScripts(HWND hwnd) {
         try {
             if (job.dispatchLoadEvents) {
                 g_js.dispatchDocumentEvent("DOMContentLoaded");
+                g_js.dispatchWindowEvent("DOMContentLoaded");
                 g_js.dispatchWindowEvent("load");
             } else if (PendingPageScriptWaitingForFetch(job)) {
                 FetchResourceAsync(job.filename, 1024 * 1024, ResourceKind::Script,

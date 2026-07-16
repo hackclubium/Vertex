@@ -246,6 +246,9 @@ int main(int argc, char** argv) {
         if (!ok) ++failed;
         ++attempted;
     }
+    js.dispatchDocumentEvent("DOMContentLoaded");
+    js.dispatchWindowEvent("DOMContentLoaded");
+    js.dispatchWindowEvent("load");
     try { js.runMacrotasks(32); } catch (...) { Log("macrotasks crashed\n"); }
 
     // — Layout —

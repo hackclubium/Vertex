@@ -583,10 +583,12 @@ static std::string RunStartupEventListenerSnapshot() {
     bool ok = engine.runScript(
         "globalThis.startupEvents = 'events:';\n"
         "document.addEventListener('DOMContentLoaded', function(event) { globalThis.startupEvents = globalThis.startupEvents + event.type; });\n"
+        "addEventListener('DOMContentLoaded', function(event) { globalThis.startupEvents = globalThis.startupEvents + '|window-' + event.type; });\n"
         "addEventListener('load', function(event) { globalThis.startupEvents = globalThis.startupEvents + '|' + event.type; });\n",
         "startup-listener-setup");
     if (!ok) return "script failed\n";
     engine.dispatchDocumentEvent("DOMContentLoaded");
+    engine.dispatchWindowEvent("DOMContentLoaded");
     engine.dispatchWindowEvent("load");
     ok = engine.runScript(
         "document.getElementsByTagName('body')[0].setAttribute('data-result', globalThis.startupEvents);\n",
@@ -1133,6 +1135,19 @@ static std::string RunDocumentElementInnerHtmlKeepsBodySnapshot() {
     return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
 }
 
+static std::string RunDynamicScriptAppendSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "var script = document.createElement('script');\n"
+        "script.src = 'data:text/javascript,document.body.setAttribute(%22data-result%22%2C%22dynamic-ok%22)%3B';\n"
+        "document.body.appendChild(script);\n",
+        "dynamic-script-append");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
 static std::string RunDomModernMutationConveniencesSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body><ul id=\"list\"><li id=\"a\">A</li><li id=\"b\">B</li></ul><p id=\"tail\">T</p></body></html>");
@@ -1578,7 +1593,7 @@ TestResult RunJsTests() {
     ExpectEqual(
         "js/window/startup-events-dispatch",
         RunStartupEventListenerSnapshot(),
-        "events:DOMContentLoaded|load\n",
+        "events:DOMContentLoaded|window-DOMContentLoaded|load\n",
         result);
 
     ExpectEqual(
@@ -1705,6 +1720,12 @@ TestResult RunJsTests() {
         "js/dom/document-element-innerhtml-keeps-body",
         RunDocumentElementInnerHtmlKeepsBodySnapshot(),
         "ok:0:2\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/dynamic-script-append-runs",
+        RunDynamicScriptAppendSnapshot(),
+        "ok:dynamic-ok\n",
         result);
 
     ExpectEqual(

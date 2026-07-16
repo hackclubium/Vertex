@@ -393,6 +393,7 @@ int VM::scheduleMacrotask(JsValue fn, std::vector<JsValue> args, int delay, bool
     task.fn = fn;
     task.args = std::move(args);
     task.delay = std::max(0, delay);
+    task.intervalDelay = task.delay;
     task.interval = interval;
     task.id = m_nextMacrotaskId++;
     if (m_nextMacrotaskId <= 0) m_nextMacrotaskId = 1;

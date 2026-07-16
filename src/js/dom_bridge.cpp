@@ -1,8 +1,12 @@
 #include "js/dom_bridge.h"
 #include "js/canvas_bridge.h"
+#include "js/compiler.h"
+#include "js/lexer.h"
+#include "js/parser.h"
 #include "css/stylesheet.h"
 #include "html/parser.h"
 #include "network/resource_cache.h"
+#include "network/text_decode.h"
 #include "network/cookies.h"
 #include "network/url.h"
 #include "network/websocket.h"
@@ -97,6 +101,8 @@ static std::vector<std::unique_ptr<JsValue>> g_observerRoots;
 static std::vector<std::unique_ptr<JsValue>> g_platformRoots;
 static JsObject* g_elementProto = nullptr;
 static std::unordered_map<Node*, std::shared_ptr<Node>> g_shadowRoots;
+static std::string g_pageUrl;
+static std::vector<std::unique_ptr<BytecodeFunction>> g_dynamicScripts;
 // Keeps each `new WebSocket(...)` object alive independent of script-level
 // reachability — a real WebSocket keeps firing events even if the script
 // drops its only reference, and OpenWebSocket()'s callback only ever holds a
@@ -569,6 +575,7 @@ static bool isFormControl(const Node* n) {
 }
 
 static std::string elementValue(Node* n);
+static void runInsertedScriptIfNeeded(VM& vm, Node* node);
 
 static void collectDescendants(Node* root, std::vector<Node*>& out,
                                const std::function<bool(Node*)>& accept) {
@@ -2063,6 +2070,7 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         if (childShared) {
             insertSharedChild(n, childShared);
             markDomDirty(vm, n, "childList");
+            runInsertedScriptIfNeeded(vm, childShared.get());
         }
         return ARG(0);
     });
@@ -2086,6 +2094,7 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
         if (!childShared) return ARG(0);
         insertSharedChild(n, childShared, ref);
         markDomDirty(vm, n, "childList");
+        runInsertedScriptIfNeeded(vm, childShared.get());
         return ARG(0);
     });
     addNativeM("replaceChild", NATIVE("replaceChild") {
@@ -2190,6 +2199,7 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
             if (shared) {
                 insertSharedChild(parent, shared, before);
                 markDomDirty(vm, parent, "childList");
+                runInsertedScriptIfNeeded(vm, shared.get());
                 return ARG(1);
             }
         }
@@ -2213,8 +2223,10 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     addNativeM("getElementById", NATIVE("getElementById") {
         Node* n = unwrapNode(thisVal);
         if (!n || args.empty()) return JsValue::null();
-        auto results = domQueryAll(n, "#" + args[0].toString());
-        return results.empty() ? JsValue::null() : wrapNode(vm, results[0]);
+        Node* found = findElementById(n, args[0].toString());
+        auto shared = getShared(found);
+        if (!shared && found) shared = std::shared_ptr<Node>(found, [](Node*) {});
+        return shared ? wrapNode(vm, shared) : JsValue::null();
     });
     addNativeM("getElementsByClassName", NATIVE("getElementsByClassName") {
         Node* n = unwrapNode(thisVal);
@@ -3456,6 +3468,46 @@ static JsValue makeFetchResponse(VM& vm, const std::string& url, const FetchResu
     return JsValue::object(response);
 }
 
+static bool isClassicScriptNode(Node* node) {
+    if (!node || node->type != NodeType::Element || node->tagName != "script") return false;
+    std::string type = lowerCopy(node->attr("type"));
+    return type.empty() || type == "text/javascript" || type == "application/javascript"
+        || type == "application/ecmascript" || type == "text/ecmascript";
+}
+
+static void runInsertedScriptIfNeeded(VM& vm, Node* node) {
+    if (!isClassicScriptNode(node) || hasAttr(node, "__vertex_executed")) return;
+    node->attrs["__vertex_executed"] = "true";
+    std::string source;
+    std::string filename = "dynamic-script";
+    std::string src = node->attr("src");
+    if (!src.empty()) {
+        filename = ResolveUrlAgainstBase(src, g_pageUrl);
+        FetchResult res = FetchResourceCached(filename, 1024 * 1024, ResourceKind::Script);
+        if (!res.success || res.body.empty()) return;
+        source = DecodeTextToUtf8(res.body, res.contentType);
+    } else {
+        for (auto& child : node->children)
+            if (child->type == NodeType::Text) source += child->text;
+    }
+    if (source.empty() || source.size() > 1024 * 1024) return;
+    try {
+        Lexer lex(source);
+        Parser parser(lex.tokenize());
+        Program program = parser.parse();
+        auto bytecode = Compiler::compile(program);
+        vm.execute(bytecode.get());
+        g_dynamicScripts.push_back(std::move(bytecode));
+        vm.drainMicrotasks();
+    } catch (const JsException& e) {
+        std::fprintf(stderr, "[JS] Dynamic script failed: %s: %s\n", filename.c_str(), e.val.toString().c_str());
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[JS] Dynamic script failed: %s: %s\n", filename.c_str(), e.what());
+    } catch (...) {
+        std::fprintf(stderr, "[JS] Dynamic script failed: %s\n", filename.c_str());
+    }
+}
+
 void registerDom(VM& vm, std::shared_ptr<Node> docNode,
                  std::function<void()> onRepaint,
                  const std::string& pageUrl,
@@ -3463,6 +3515,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     vm.onDomDirty = onRepaint;
     vm.onDomPaintDirty = callbacks.repaintOnly ? callbacks.repaintOnly : onRepaint;
     g_domCallbacks = std::move(callbacks);
+    g_pageUrl = pageUrl;
     g_windowScrollX = 0.f;
     g_windowScrollY = 0.f;
     g_currentDocument = docNode;
@@ -3790,6 +3843,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     for (auto& r : g_platformRoots) vm.gc().removeRoot(r.get());
     g_platformRoots.clear();
     g_shadowRoots.clear();
+    g_dynamicScripts.clear();
 
     auto* elementCtor = vm.gc().newNativeFunction(NATIVE("Element") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "Element");
     g_elementProto = vm.gc().newObject(ObjKind::Plain);
