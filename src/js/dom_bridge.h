@@ -46,6 +46,7 @@ Node* unwrapNode(JsValue val);
 bool dispatchDomEvent(VM& vm, Node* target, const std::string& eventName);
 bool activateDomElement(VM& vm, Node* target);
 void dispatchWindowEvent(VM& vm, const std::string& eventName, JsValue eventValue = JsValue::undefined());
+void markDomEventListenerRoots(GC& gc);
 
 // Mark DOM state dirty and coalesce repaint callbacks until the timer tick.
 void notifyDomDirtyCoalesced(VM& vm, bool affectsLayout = true);

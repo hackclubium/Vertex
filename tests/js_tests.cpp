@@ -1177,6 +1177,45 @@ static std::string RunDynamicScriptAfterPortfolioRewriteSnapshot() {
     return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
 }
 
+static std::string RunPortfolioButtonShakeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><div class=\"app1\"></div><div class=\"app2\"></div><div class=\"app3\"></div><div class=\"app4\"></div><div class=\"app5\"><button id=\"button\"></button></div><div class=\"app6\"></div></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/portfolio.html");
+    bool ok = engine.runScript(
+        "const button = document.getElementById('button');\n"
+        "const app1 = document.getElementsByClassName('app1')[0];\n"
+        "const app2 = document.getElementsByClassName('app2')[0];\n"
+        "const app3 = document.getElementsByClassName('app3')[0];\n"
+        "const app4 = document.getElementsByClassName('app4')[0];\n"
+        "const app5 = document.getElementsByClassName('app5')[0];\n"
+        "const app6 = document.getElementsByClassName('app6')[0];\n"
+        "const mobilecheck = window.getComputedStyle(app6).position === 'fixed';\n"
+        "button.addEventListener('click', () => {\n"
+        "  if (app1.classList.contains('shaking')) {\n"
+        "    app1.classList.remove('shaking'); app2.classList.remove('shaking'); app3.classList.remove('shaking');\n"
+        "    app4.classList.remove('shaking'); app5.classList.remove('shaking'); app6.classList.remove('shaking');\n"
+        "  } else {\n"
+        "    setTimeout(() => {app1.classList.add('shaking');}, 0);\n"
+        "    setTimeout(() => {app2.classList.add('shaking');}, 10);\n"
+        "    setTimeout(() => {app3.classList.add('shaking');}, 20);\n"
+        "    setTimeout(() => {app4.classList.add('shaking');}, 30);\n"
+        "    setTimeout(() => {app5.classList.add('shaking');}, 40);\n"
+        "    if (!mobilecheck) { setTimeout(() => {app6.classList.add('shaking');}, 50); }\n"
+        "  }\n"
+        "});\n",
+        "portfolio-button-shake");
+    engine.dispatchClick(FindById(dom.get(), "button"), 0, 0);
+    for (int i = 0; i < 4; ++i) engine.runMacrotasks(8);
+    Node* app1 = nullptr;
+    std::vector<Node*> stack{dom.get()};
+    while (!stack.empty()) {
+        Node* n = stack.back(); stack.pop_back();
+        if (n && n->attr("class").find("app1") != std::string::npos) { app1 = n; break; }
+        if (n) for (auto& c : n->children) stack.push_back(c.get());
+    }
+    return std::string(ok ? "ok:" : "fail:") + (app1 ? app1->attr("class") : "missing") + "\n";
+}
+
 static std::string RunLocalStorageMissingStrictEqualitySnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body></body></html>");
@@ -2113,6 +2152,12 @@ TestResult RunJsTests() {
         "js/dom/dynamic-script-after-portfolio-html-rewrite",
         RunDynamicScriptAfterPortfolioRewriteSnapshot(),
         "ok:button\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/portfolio-button-shake",
+        RunPortfolioButtonShakeSnapshot(),
+        "ok:app1 shaking\n",
         result);
 
     ExpectEqual(

@@ -18,6 +18,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <functional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -94,7 +95,7 @@ static std::string PageTitle(const Node* root) {
     return {};
 }
 
-static Stylesheet CollectCss(const Node* root) {
+static Stylesheet CollectCss(const Node* root, const std::string& baseUrl) {
     Stylesheet sheet;
     std::function<void(const Node*)> walk = [&](const Node* n) {
         if (!n) return;
@@ -102,6 +103,14 @@ static Stylesheet CollectCss(const Node* root) {
             Stylesheet part = ParseStylesheet(TextContent(n));
             if (part.rootRemBaseSet) { sheet.rootRemBase = part.rootRemBase; sheet.rootRemBaseSet = true; }
             for (auto& r : part.rules) sheet.rules.push_back(std::move(r));
+        } else if (n->type == NodeType::Element && n->tagName == "link"
+            && Lower(n->attr("rel")).find("stylesheet") != std::string::npos) {
+            FetchResult res = FetchResourceCached(ResolveUrlAgainstBase(n->attr("href"), baseUrl), 1024 * 1024, ResourceKind::Stylesheet);
+            if (res.success && !res.body.empty()) {
+                Stylesheet part = ParseStylesheet(DecodeTextToUtf8(res.body, res.contentType));
+                if (part.rootRemBaseSet) { sheet.rootRemBase = part.rootRemBase; sheet.rootRemBaseSet = true; }
+                for (auto& r : part.rules) sheet.rules.push_back(std::move(r));
+            }
         }
         for (const auto& c : n->children) walk(c.get());
     };
@@ -188,6 +197,14 @@ static void Pump(JsEngine& js, int ticks) {
 static std::string Truncate(const std::string& s, size_t limit) {
     if (s.size() <= limit) return s;
     return s.substr(0, limit) + "...[" + std::to_string(s.size()) + "]";
+}
+
+static bool HasClass(Node* n, const std::string& cls) {
+    if (!n) return false;
+    std::istringstream in(n->attr("class"));
+    std::string token;
+    while (in >> token) if (token == cls) return true;
+    return false;
 }
 
 int main(int argc, char** argv) {
@@ -318,12 +335,23 @@ int main(int argc, char** argv) {
         try { Pump(js, 64); } catch (...) { Log("flow async drain crashed\n"); }
         Node* counter = FindById(dom.get(), "counter");
         Node* button = FindById(dom.get(), "button");
+        Node* app1 = nullptr;
+        std::vector<Node*> stack{dom.get()};
+        while (!stack.empty()) {
+            Node* n = stack.back(); stack.pop_back();
+            if (HasClass(n, "app1")) { app1 = n; break; }
+            if (n) for (auto& c : n->children) stack.push_back(c.get());
+        }
+        if (button) {
+            js.dispatchClick(button, 0, 0);
+            try { Pump(js, 8); } catch (...) { Log("flow portfolio button crashed\n"); }
+        }
         Node* prompt = FindById(dom.get(), "prompt");
-        Node* body = FindByTagMutable(dom.get(), "body");
         Log("websitething counter=%s title=%s portfolio_button=%d\n",
             counter ? TextContent(counter).c_str() : "missing",
             Truncate(PageTitle(dom.get()), 120).c_str(),
             button ? 1 : 0);
+        Log("websitething portfolio_shaking=%d\n", HasClass(app1, "shaking") ? 1 : 0);
         Log("websitething prompt=%s\n", prompt ? TextContent(prompt).c_str() : "missing");
         Log("websitething pending_macrotasks=%d\n", js.hasPendingMacrotasks() ? 1 : 0);
         Log("websitething pending_resources=%d\n", HasPendingResourceCompletions() ? 1 : 0);
@@ -331,7 +359,7 @@ int main(int argc, char** argv) {
     }
 
     // — Layout —
-    Stylesheet sheet = CollectCss(dom.get());
+    Stylesheet sheet = CollectCss(dom.get(), finalUrl);
     Log("css rules=%zu\n", sheet.rules.size());
 
     ProbeMeasure measure;

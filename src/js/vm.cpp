@@ -27,6 +27,7 @@ VM::VM(GC& gc) : m_gc(gc) {
             gc.markValue(task.fn);
             gc.markValue(task.arg);
         }
+        markDomEventListenerRoots(gc);
     };
     m_stack.reserve(1024);
     m_frames.reserve(256);
@@ -210,6 +211,27 @@ void VM::closeUpvalues(JsValue* minSlot) {
         if (uv->slot >= minSlot) { uv->close(); it = m_openUpvalues.erase(it); }
         else ++it;
     }
+}
+
+void VM::closeFunctionUpvalues(JsValue fn) {
+    if (!fn.isObject()) return;
+    JsObject* obj = fn.asObject();
+    for (size_t i = 0; i < obj->upvalues.size(); ++i) {
+        auto* uv = obj->upvalues[i];
+        if (!uv || !uv->isOpen) continue;
+        if (!uv->get().isObject() && obj->bcFn && i < obj->bcFn->upvalDescs.size()) {
+            JsValue global = getGlobal(obj->bcFn->upvalDescs[i].name);
+            if (global.isObject()) uv->set(global);
+        }
+        uv->close();
+        m_openUpvalues.erase(std::remove(m_openUpvalues.begin(), m_openUpvalues.end(), uv), m_openUpvalues.end());
+    }
+}
+
+void VM::closeAllOpenUpvalues() {
+    for (auto* uv : m_openUpvalues)
+        if (uv && uv->isOpen) uv->close();
+    m_openUpvalues.clear();
 }
 
 // ── Iterator protocol ─────────────────────────────────────────────────────────
@@ -400,6 +422,7 @@ void VM::drainMicrotasks() {
 
 int VM::scheduleMacrotask(JsValue fn, std::vector<JsValue> args, int delay, bool interval) {
     if (!fn.isCallable()) return 0;
+    closeFunctionUpvalues(fn);
     Macrotask task;
     task.fn = fn;
     task.args = std::move(args);
@@ -644,8 +667,13 @@ JsValue VM::runFrame(CallFrame& frame) {
         }
 
         case OP_GET_UPVAL:
-            if (ins.b < frame.upvalues.size()) REG(ins.a) = frame.upvalues[ins.b]->get();
-            else REG(ins.a) = JsValue::undefined();
+            if (ins.b < frame.upvalues.size()) {
+                REG(ins.a) = frame.upvalues[ins.b]->get();
+                if (!REG(ins.a).isObject() && ins.b < frame.fn->upvalDescs.size()) {
+                    JsValue global = getGlobal(frame.fn->upvalDescs[ins.b].name);
+                    if (global.isObject()) REG(ins.a) = global;
+                }
+            } else REG(ins.a) = JsValue::undefined();
             break;
         case OP_SET_UPVAL:
             if (ins.b < frame.upvalues.size()) frame.upvalues[ins.b]->set(REG(ins.a));

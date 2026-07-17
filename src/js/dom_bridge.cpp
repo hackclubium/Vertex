@@ -93,6 +93,12 @@ static const char* kNamespaceAttr = "__vertex_namespaceURI";
 struct EventListener { std::string event; JsValue fn; };
 static std::unordered_map<Node*, std::vector<EventListener>> g_eventListeners;
 static std::vector<EventListener> g_windowEventListeners;
+
+void markDomEventListenerRoots(GC& gc) {
+    for (const auto& [_, listeners] : g_eventListeners)
+        for (const auto& listener : listeners) gc.markValue(listener.fn);
+    for (const auto& listener : g_windowEventListeners) gc.markValue(listener.fn);
+}
 // Persistent GC roots for cached DOM wrappers. These live at STABLE heap
 // addresses so the GC can mark them safely (rooting a stack local was a
 // use-after-return bug). Cleared per document in registerDom().
@@ -133,6 +139,14 @@ static void registerSubtree(const std::shared_ptr<Node>& node) {
     g_nodeStore[node.get()] = node;
     for (auto& child : node->children)
         registerSubtree(child);
+}
+
+static void unregisterSubtree(Node* node) {
+    if (!node) return;
+    for (auto& child : node->children) unregisterSubtree(child.get());
+    g_nodeStore.erase(node);
+    g_wrapperStore.erase(node);
+    g_eventListeners.erase(node);
 }
 
 static std::shared_ptr<Node> cloneDomNode(Node* source, bool deep) {
@@ -2322,6 +2336,8 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     addNativeM("addEventListener", NATIVE("addEventListener") {
         Node* n = unwrapNode(thisVal);
         if (!n || args.size() < 2 || !ARG(1).isCallable()) return JsValue::undefined();
+        vm.closeFunctionUpvalues(ARG(1));
+        vm.closeAllOpenUpvalues();
         g_eventListeners[n].push_back({ ARG_STR(0), ARG(1) });
         return JsValue::undefined();
     });
@@ -2809,6 +2825,7 @@ static void setInnerHtml(Node* parent, const std::string& html) {
     } else if (Node* body = findTag(doc.get(), "body")) {
         content = body;
     }
+    for (auto& old : parent->children) unregisterSubtree(old.get());
     parent->children.clear();
     for (auto& c : content->children) {
         c->parent = parent;
@@ -5002,6 +5019,10 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     // window.addEventListener / removeEventListener
     vm.setGlobal("addEventListener", JsValue::object(vm.gc().newNativeFunction(
         NATIVE("win_addEventListener") {
+            if (args.size() >= 2 && ARG(1).isCallable())
+                vm.closeFunctionUpvalues(ARG(1));
+            if (args.size() >= 2 && ARG(1).isCallable())
+                vm.closeAllOpenUpvalues();
             if (args.size() >= 2 && ARG(1).isCallable())
                 g_windowEventListeners.push_back({ ARG_STR(0), ARG(1) });
             return JsValue::undefined();

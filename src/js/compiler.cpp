@@ -198,7 +198,7 @@ void Compiler::storeVar(const std::string& name, uint8_t src, int ln) {
 void Compiler::compileStmt(const Stmt& s) {
     std::visit([this, &s](auto& v) {
         using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T,ExprStmt>)     { auto r = compileExpr(*v.expr); if (r >= m_fn->regCount || true) freeReg(r); }
+        if constexpr (std::is_same_v<T,ExprStmt>)     { (void)compileExpr(*v.expr); }
         else if constexpr (std::is_same_v<T,BlockStmt>)    compileBlock(v);
         else if constexpr (std::is_same_v<T,EmptyStmt>)    {}
         else if constexpr (std::is_same_v<T,VarDecl>)      compileVarDecl(v);
@@ -981,8 +981,8 @@ uint8_t Compiler::compileFuncExpr(const FuncExpr& e, int hint) {
             inner_c.compileStmt(*e.body);
         }
     }
-    inner_c.emit(OP_RETURN_UNDEF);
     inner_c.popScope();
+    inner_c.emit(OP_RETURN_UNDEF);
     // Copy upval descs
     inner->upvalDescs = std::vector<UpvalDesc>(inner_c.m_fn->upvalDescs);
 
@@ -1077,8 +1077,8 @@ uint8_t Compiler::compileYield(const YieldExpr& e, int hint) {
 void Compiler::compileProgram(const Program& prog) {
     pushScope(true);
     for (auto& s : prog.body) compileStmt(*s);
-    emit(OP_RETURN_UNDEF);
     popScope();
+    emit(OP_RETURN_UNDEF);
 }
 
 std::unique_ptr<BytecodeFunction> Compiler::compile(const Program& prog) {
@@ -1107,7 +1107,7 @@ std::unique_ptr<BytecodeFunction> Compiler::compileFn(const FuncExpr& fe, const 
             for (auto& s : fe.body->as<BlockStmt>().body) c.compileStmt(*s);
         else c.compileStmt(*fe.body);
     }
-    c.emit(OP_RETURN_UNDEF);
     c.popScope();
+    c.emit(OP_RETURN_UNDEF);
     return fn;
 }

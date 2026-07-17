@@ -193,7 +193,12 @@ void JsObject::gcMark(GC& gc) {
     if (proto) gc.markObject(proto);
     for (auto& [k, v] : props)    gc.markValue(v);
     for (auto& v : elements)      gc.markValue(v);
-    for (auto* uv : upvalues)     if (uv) gc.markObject(reinterpret_cast<JsObject*>(uv)); // upvalues are GcCells
+    for (auto* uv : upvalues) {
+        if (uv && !uv->gcMarked) {
+            uv->gcMarked = true;
+            uv->gcMark(gc);
+        }
+    }
     gc.markValue(promResult);
     for (auto& [a,b] : promHandlers) { gc.markValue(a); gc.markValue(b); }
     for (auto& [a,b] : mapEntries)   { gc.markValue(a); gc.markValue(b); }

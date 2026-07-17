@@ -4,6 +4,8 @@
 #include "render/webfont.h"
 #include "render/transition.h"
 #include "render/animation.h"
+#include "network/resource_cache.h"
+#include "network/text_decode.h"
 #include "network/url.h"
 #include "platform/chrome_theme.h"
 #include "render/svg.h"
@@ -592,7 +594,7 @@ void Renderer::SetPrefersDarkScheme(bool dark) {
     m_styleDocKey = nullptr;
 }
 
-Stylesheet Renderer::CollectStylesheet(const Node* root) {
+Stylesheet Renderer::CollectStylesheet(const Node* root, const std::string& baseUrl) {
     Stylesheet sheet;
     std::function<void(const Node*)> walk = [&](const Node* n) {
         if (!n) return;
@@ -621,6 +623,17 @@ Stylesheet Renderer::CollectStylesheet(const Node* root) {
                         sheet.rootRemBaseSet = true;
                     }
                     for (auto& r : part.rules) sheet.rules.push_back(r);
+                } else {
+                    std::string url = ResolveUrlAgainstBase(href, baseUrl);
+                    auto res = FetchResourceCached(url, 1024 * 1024, ResourceKind::Stylesheet);
+                    if (res.success && !res.body.empty()) {
+                        Stylesheet part = ParseStylesheet(DecodeTextToUtf8(res.body, res.contentType));
+                        if (part.rootRemBaseSet) {
+                            sheet.rootRemBase = part.rootRemBase;
+                            sheet.rootRemBaseSet = true;
+                        }
+                        for (auto& r : part.rules) sheet.rules.push_back(r);
+                    }
                 }
             }
         }
@@ -770,7 +783,7 @@ float Renderer::Paint(const std::shared_ptr<Node>& doc,
     if (doc) {
         if (m_styleDocKey != doc.get() || m_styleBaseUrlKey != baseUrl) {
             auto styleStart = std::chrono::steady_clock::now();
-            m_cachedSheet  = CollectStylesheet(doc.get());
+            m_cachedSheet  = CollectStylesheet(doc.get(), baseUrl);
             m_cachedSheet.setPreferredColorScheme(m_prefersDarkScheme);
             m_cachedPageBg = FindBodyBgColor(doc.get(), m_cachedSheet);
             m_cachedUsesHoverStyles = StylesheetUsesHover(m_cachedSheet);

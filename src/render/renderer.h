@@ -240,6 +240,6 @@ private:
     ID2D1SolidColorBrush* TempBrush(D2D1_COLOR_F color);
     std::string  ResolveUrl(const std::string& href, const std::string& base);
 
-    static Stylesheet CollectStylesheet(const Node* root);
+    static Stylesheet CollectStylesheet(const Node* root, const std::string& baseUrl = "");
     static CssColor   FindBodyBgColor(const Node* root, const Stylesheet& sheet);
 };

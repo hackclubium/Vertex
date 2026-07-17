@@ -30,6 +30,8 @@ public:
     // Call a JS function with given this and args.
     JsValue call(JsValue fn, JsValue thisVal, std::vector<JsValue> args);
     JsValue callNew(JsValue ctor, std::vector<JsValue> args);
+    void closeFunctionUpvalues(JsValue fn);
+    void closeAllOpenUpvalues();
 
     // Access the global object.
     JsObject* globals() { return m_globals; }
