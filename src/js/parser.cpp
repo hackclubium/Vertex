@@ -508,6 +508,21 @@ ExprPtr Parser::parseExpr(int) {
 
 ExprPtr Parser::parseAssign() {
     int ln = line();
+    if (check(TT::Ident) && peek().is(TT::Arrow)) {
+        std::string pname = consume().value;
+        consume();
+        FuncExpr fe;
+        fe.params.push_back(pname);
+        fe.defaults.push_back(nullptr);
+        fe.isArrow = true;
+        if (!check(TT::LBrace)) {
+            fe.isExprBody = true;
+            fe.body = std::make_unique<Stmt>(ExprStmt{parseAssign()}, ln);
+        } else {
+            fe.body = parseBlock();
+        }
+        return std::make_unique<Expr>(std::move(fe), ln);
+    }
     auto left = parseTernary();
 
     if (cur().isAssignOp()) {

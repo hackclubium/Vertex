@@ -1148,6 +1148,381 @@ static std::string RunDynamicScriptAppendSnapshot() {
     return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
 }
 
+static std::string RunDynamicScriptAfterFullHtmlRewriteSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><div>old</div></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "document.documentElement.innerHTML = '<!DOCTYPE html><html><head><title>Portfolio</title></head><body><div class=app5><button id=button></button></div></body></html>';\n"
+        "var script = document.createElement('script');\n"
+        "script.textContent = 'var button = document.getElementById(\"button\"); button.addEventListener(\"click\", function(){}); document.body.setAttribute(\"data-result\", button ? \"button-ok\" : \"button-missing\");';\n"
+        "document.body.appendChild(script);\n",
+        "dynamic-script-after-full-html");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunDynamicScriptAfterPortfolioRewriteSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><div>old</div></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "var newhtml = '<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"portfolio.css\"><title>Portfolio</title></head><body><div class=\"appcontainer\"><div class=\"app1\"><h1>Hi</h1></div><div class=\"app2\"><p>Languages<br><ul><li>Python</li></ul></p></div><div class=\"app3\"></div><div class=\"app4\"></div><div class=\"app5\"><button id=\"button\"></button><br><br>Text</div><div><br></div></div><br><br><div class=\"app6\">Footer</div><script>alert(\"Why\")</script></body></html>';\n"
+        "document.documentElement.innerHTML = newhtml;\n"
+        "var script = document.createElement('script');\n"
+        "script.textContent = 'var button = document.getElementById(\"button\"); document.body.setAttribute(\"data-result\", button ? button.tagName : \"missing\");';\n"
+        "document.body.appendChild(script);\n",
+        "dynamic-script-after-portfolio-html");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunLocalStorageMissingStrictEqualitySnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "document.body.setAttribute('data-result', localStorage.getItem('wentthruthing') === 'bean' ? 'bad' : 'ok');\n",
+        "localstorage-missing-strict-equality");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunConfirmFalseBranchSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "let result = confirm('x');\n"
+        "if (result) document.body.setAttribute('data-result', 'bad');\n"
+        "else document.body.setAttribute('data-result', 'ok');\n",
+        "confirm-false-branch");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunNestedIfElseBranchSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "function skipahead() { document.body.setAttribute('data-result', 'skip'); }\n"
+        "function proceed() { document.body.setAttribute('data-result', 'proceed'); }\n"
+        "if (localStorage.getItem('wentthruthing') === 'bean') {\n"
+        "  let result = confirm('Skip ahead of the whole intro?');\n"
+        "  if (result) { skipahead(); } else { proceed(); }\n"
+        "} else { proceed(); }\n",
+        "nested-if-else-branch");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunPromiseReturnedPromiseFlattensSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "Promise.resolve('x').then(function(v) { return Promise.resolve(v + 'y'); }).then(function(v) { document.body.setAttribute('data-result', v); });\n",
+        "promise-returned-promise-flattens");
+    engine.runMacrotasks(4);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunArrowPromiseReturnedPromiseFlattensSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "Promise.resolve({ text: () => Promise.resolve('ok') }).then(response => response.text()).then(text => document.body.setAttribute('data-result', text));\n",
+        "arrow-promise-returned-promise-flattens");
+    engine.runMacrotasks(4);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunDelayedDocumentClickListenerSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><p id='counter'>0</p></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "setTimeout(() => { document.addEventListener('click', () => { var c = document.getElementById('counter'); c.textContent = parseInt(c.textContent) + 1; }); }, 32);\n",
+        "delayed-document-click-listener");
+    engine.runMacrotasks(4);
+    engine.runMacrotasks(4);
+    Node* body = FindByTag(dom.get(), "body");
+    engine.dispatchClick(body, 0, 0);
+    Node* counter = FindById(dom.get(), "counter");
+    return std::string(ok ? "ok:" : "fail:") + (counter ? counter->children.empty() ? "" : counter->children.front()->text : "missing-counter") + "\n";
+}
+
+static std::string RunWindowStartupDelayedDocumentClickSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><p id='counter'>0</p></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function handleClick() { var c = document.getElementById('counter'); c.textContent = parseInt(c.textContent) + 1; }\n"
+        "window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { document.addEventListener('click', handleClick); }, 32); });\n",
+        "window-startup-delayed-document-click");
+    engine.dispatchWindowEvent("DOMContentLoaded");
+    engine.runMacrotasks(4);
+    engine.runMacrotasks(4);
+    engine.dispatchClick(FindByTag(dom.get(), "body"), 0, 0);
+    Node* counter = FindById(dom.get(), "counter");
+    return std::string(ok ? "ok:" : "fail:") + (counter ? counter->children.empty() ? "" : counter->children.front()->text : "missing-counter") + "\n";
+}
+
+static std::string RunWebsitethingHandleClickShapeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><p id='counter'>0</p><p id='thing'></p></body></html>");
+    engine.setDocument(dom, []() {}, "https://simpansoftware.cc/websitething/");
+    bool ok = engine.runScript(
+        "const counter = document.getElementById('counter');\n"
+        "function handleClick() {\n"
+        "  let value = parseInt(counter.textContent);\n"
+        "  let thing = document.getElementById('thing');\n"
+        "  value++;\n"
+        "  if (value !== 0) thing.style.display = 'none';\n"
+        "  counter.textContent = value;\n"
+        "}\n"
+        "window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { document.addEventListener('click', handleClick); }, 32); });\n",
+        "websitething-handle-click-shape");
+    engine.dispatchWindowEvent("DOMContentLoaded");
+    engine.runMacrotasks(4);
+    engine.runMacrotasks(4);
+    engine.dispatchClick(FindByTag(dom.get(), "body"), 0, 0);
+    Node* counter = FindById(dom.get(), "counter");
+    return std::string(ok ? "ok:" : "fail:") + (counter ? counter->children.empty() ? "" : counter->children.front()->text : "missing-counter") + "\n";
+}
+
+static std::string RunInnerHtmlAppendReadsLiveSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body>One</body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "document.body.innerHTML += '<br><span id=two>Two</span>';\n"
+        "document.body.innerHTML += '<br>Three';\n",
+        "innerhtml-append-reads-live");
+    Node* body = FindByTag(dom.get(), "body");
+    std::function<std::string(Node*)> text = [&](Node* n) -> std::string {
+        if (!n) return "";
+        if (n->type == NodeType::Text) return n->text;
+        std::string out;
+        for (auto& child : n->children) out += text(child.get());
+        return out;
+    };
+    return std::string(ok ? "ok:" : "fail:") + (body ? text(body) : "missing-body") + "\n";
+}
+
+static std::string RunDynamicScriptOverridesTimerFunctionSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function kpanic() { document.body.setAttribute('data-result', 'old'); }\n"
+        "var script = document.createElement('script');\n"
+        "script.textContent = 'function kpanic() { document.body.setAttribute(\"data-result\", \"new\"); } setTimeout(() => {kpanic()}, 120);';\n"
+        "document.body.appendChild(script);\n",
+        "dynamic-script-overrides-timer-function");
+    for (int i = 0; i < 8; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunNestedTimerCallsSiblingFunctionSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function reboot() { setTimeout(() => { kpanic(); }, 120); }\n"
+        "function kpanic() { document.body.setAttribute('data-result', 'ok'); }\n"
+        "setTimeout(() => { reboot(); }, 32);\n",
+        "nested-timer-calls-sibling-function");
+    for (int i = 0; i < 16; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunKpanicTimerAfterInnerHtmlBootSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function reboot() {\n"
+        "  document.body.innerHTML = 'Welcome';\n"
+        "  setTimeout(() => {document.body.innerHTML += '<br><span id=\"prompt\">root</span>';}, 32);\n"
+        "  setTimeout(() => {document.getElementById('prompt').textContent = 'root startx';}, 64);\n"
+        "  setTimeout(() => {kpanic()}, 96);\n"
+        "}\n"
+        "function kpanic() { document.documentElement.innerHTML = '<html><head><title>Portfolio</title></head><body><button id=\"button\"></button></body></html>'; }\n"
+        "setTimeout(() => { reboot(); }, 32);\n",
+        "kpanic-timer-after-innerhtml-boot");
+    for (int i = 0; i < 16; ++i) engine.runMacrotasks(8);
+    Node* button = FindById(dom.get(), "button");
+    return std::string(ok ? "ok:" : "fail:") + (button ? "button" : "missing") + "\n";
+}
+
+static std::string RunKpanicInnerHtmlAppendShapeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "document.body.innerHTML = 'Welcome to <span style=\"color: #7878d9;\">simpansoftware linux</span><br>';\n"
+        "setTimeout(() => {document.body.innerHTML += '<br>[ &nbsp;<span style=\"color: #00ff00;\">OK</span> &nbsp;] Slack opened';}, 32);\n",
+        "kpanic-innerhtml-append-shape");
+    for (int i = 0; i < 4; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    std::function<std::string(Node*)> text = [&](Node* n) -> std::string {
+        if (!n) return "";
+        if (n->type == NodeType::Text) return n->text;
+        std::string out;
+        for (auto& child : n->children) out += text(child.get());
+        return out;
+    };
+    std::string bodyText = text(body);
+    return std::string(ok ? "ok:" : "fail:") + (bodyText.find("Slack opened") != std::string::npos ? "ran" : bodyText) + "\n";
+}
+
+static std::string RunKpanicThreeInnerHtmlAppendsSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "document.body.innerHTML = 'Welcome to <span style=\"color: #7878d9;\">simpansoftware linux</span><br>';\n"
+        "setTimeout(() => {document.body.innerHTML += '<br>[ &nbsp;<span style=\"color: #00ff00;\">OK</span> &nbsp;] Slack opened';}, 32);\n"
+        "setTimeout(() => {document.body.innerHTML += '<br>[ &nbsp;<span style=\"color: #00ff00;\">OK</span> &nbsp;] Monkeys spun on the monkey bars';}, 48);\n"
+        "setTimeout(() => {document.body.innerHTML += '<br>[ &nbsp;<span style=\"color: #00ff00;\">OK</span> &nbsp;] Cleaned up background services';}, 64);\n",
+        "kpanic-three-innerhtml-appends");
+    for (int i = 0; i < 8; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    std::function<std::string(Node*)> text = [&](Node* n) -> std::string {
+        if (!n) return "";
+        if (n->type == NodeType::Text) return n->text;
+        std::string out;
+        for (auto& child : n->children) out += text(child.get());
+        return out;
+    };
+    std::string bodyText = text(body);
+    return std::string(ok ? "ok:" : "fail:") + (bodyText.find("background services") != std::string::npos ? "ran" : bodyText) + "\n";
+}
+
+static std::string RunKpanicCapturedBodyRebootShapeSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body><p>old</p></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "const bg = document.body;\n"
+        "function reboot() {\n"
+        "  document.title = 'Rebooting...';\n"
+        "  document.body.innerHTML = 'Welcome to <span style=\"color: #7878d9;\">simpansoftware linux</span><br>';\n"
+        "  setTimeout(() => {document.body.innerHTML += '<br>[ &nbsp;<span style=\"color: #00ff00;\">OK</span> &nbsp;] Slack opened';}, 32);\n"
+        "  setTimeout(() => {document.body.innerHTML += '<br><span id=\"prompt\">root@simpansoftware:~#</span>';}, 64);\n"
+        "  setTimeout(() => {document.getElementById('prompt').textContent = 'root@simpansoftware:~# startx';}, 96);\n"
+        "  setTimeout(() => {kpanic()}, 128);\n"
+        "}\n"
+        "function kpanic() { document.documentElement.innerHTML = '<html><head><title>Portfolio</title></head><body><button id=\"button\"></button></body></html>'; }\n"
+        "setTimeout(() => { bg.style.backgroundColor = 'black'; document.body.innerHTML = ''; }, 32);\n"
+        "setTimeout(() => { reboot(); }, 48);\n",
+        "kpanic-captured-body-reboot-shape");
+    for (int i = 0; i < 16; ++i) engine.runMacrotasks(8);
+    Node* button = FindById(dom.get(), "button");
+    return std::string(ok ? "ok:" : "fail:") + (button ? "button" : "missing") + "\n";
+}
+
+static std::string RunDynamicRebootOverridesOldKpanicSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function kpanic() { document.body.setAttribute('data-result', 'old'); }\n"
+        "var script = document.createElement('script');\n"
+        "script.textContent = 'function reboot() { setTimeout(() => {kpanic()}, 96); } function kpanic() { document.body.setAttribute(\"data-result\", \"new\"); } setTimeout(() => {reboot()}, 32);';\n"
+        "document.body.appendChild(script);\n",
+        "dynamic-reboot-overrides-old-kpanic");
+    for (int i = 0; i < 16; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunTimerExceptionDoesNotPoisonLaterClosureSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function later() { document.body.setAttribute('data-result', 'ok'); }\n"
+        "setTimeout(() => { missing.call(); }, 32);\n"
+        "setTimeout(() => { later(); }, 64);\n",
+        "timer-exception-does-not-poison-later-closure");
+    for (int i = 0; i < 8; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunMissingPromptTimerDoesNotPoisonLaterTimerSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function kpanic() { document.body.setAttribute('data-result', 'ok'); }\n"
+        "setTimeout(() => {document.getElementById('prompt').textContent = 'root';}, 32);\n"
+        "setTimeout(() => {kpanic()}, 64);\n",
+        "missing-prompt-timer-does-not-poison-later-timer");
+    for (int i = 0; i < 8; ++i) engine.runMacrotasks(8);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunZeroParamArrowBlockSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "var f = () => { document.body.setAttribute('data-result', 'ok'); }; f();\n",
+        "zero-param-arrow-block");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunWindowAddEventListenerMemberSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "window.addEventListener('DOMContentLoaded', () => { document.body.setAttribute('data-result', 'ok'); });\n",
+        "window-add-event-listener-member");
+    engine.dispatchWindowEvent("DOMContentLoaded");
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunWindowListenerSchedulesTimeoutSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { document.body.setAttribute('data-result', 'ok'); }, 32); });\n",
+        "window-listener-schedules-timeout");
+    engine.dispatchWindowEvent("DOMContentLoaded");
+    engine.runMacrotasks(4);
+    engine.runMacrotasks(4);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
+static std::string RunAsyncTopLevelFunctionReferenceSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><body></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "function mark() { document.body.setAttribute('data-result', 'ok'); }\n"
+        "setTimeout(() => { mark(); }, 32);\n",
+        "async-top-level-function-reference");
+    engine.runMacrotasks(4);
+    engine.runMacrotasks(4);
+    Node* body = FindByTag(dom.get(), "body");
+    return std::string(ok ? "ok:" : "fail:") + (body ? body->attr("data-result") : "missing-body") + "\n";
+}
+
 static std::string RunDomModernMutationConveniencesSnapshot() {
     JsEngine engine;
     auto dom = ParseHtml("<html><body><ul id=\"list\"><li id=\"a\">A</li><li id=\"b\">B</li></ul><p id=\"tail\">T</p></body></html>");
@@ -1726,6 +2101,150 @@ TestResult RunJsTests() {
         "js/dom/dynamic-script-append-runs",
         RunDynamicScriptAppendSnapshot(),
         "ok:dynamic-ok\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/dynamic-script-after-full-html-rewrite",
+        RunDynamicScriptAfterFullHtmlRewriteSnapshot(),
+        "ok:button-ok\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/dynamic-script-after-portfolio-html-rewrite",
+        RunDynamicScriptAfterPortfolioRewriteSnapshot(),
+        "ok:button\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/localstorage-missing-strict-equality",
+        RunLocalStorageMissingStrictEqualitySnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/web-platform/confirm-false-branch",
+        RunConfirmFalseBranchSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/compiler/nested-if-else-branch",
+        RunNestedIfElseBranchSnapshot(),
+        "ok:proceed\n",
+        result);
+
+    ExpectEqual(
+        "js/async/promise-returned-promise-flattens",
+        RunPromiseReturnedPromiseFlattensSnapshot(),
+        "ok:xy\n",
+        result);
+
+    ExpectEqual(
+        "js/async/arrow-promise-returned-promise-flattens",
+        RunArrowPromiseReturnedPromiseFlattensSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/delayed-document-click-listener",
+        RunDelayedDocumentClickListenerSnapshot(),
+        "ok:1\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/window-startup-delayed-document-click",
+        RunWindowStartupDelayedDocumentClickSnapshot(),
+        "ok:1\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/websitething-handle-click-shape",
+        RunWebsitethingHandleClickShapeSnapshot(),
+        "ok:1\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/innerhtml-append-reads-live",
+        RunInnerHtmlAppendReadsLiveSnapshot(),
+        "ok:OneTwoThree\n",
+        result);
+
+    ExpectEqual(
+        "js/async/dynamic-script-overrides-timer-function",
+        RunDynamicScriptOverridesTimerFunctionSnapshot(),
+        "ok:new\n",
+        result);
+
+    ExpectEqual(
+        "js/async/nested-timer-calls-sibling-function",
+        RunNestedTimerCallsSiblingFunctionSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/async/kpanic-timer-after-innerhtml-boot",
+        RunKpanicTimerAfterInnerHtmlBootSnapshot(),
+        "ok:button\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/kpanic-innerhtml-append-shape",
+        RunKpanicInnerHtmlAppendShapeSnapshot(),
+        "ok:ran\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/kpanic-three-innerhtml-appends",
+        RunKpanicThreeInnerHtmlAppendsSnapshot(),
+        "ok:ran\n",
+        result);
+
+    ExpectEqual(
+        "js/async/kpanic-captured-body-reboot-shape",
+        RunKpanicCapturedBodyRebootShapeSnapshot(),
+        "ok:button\n",
+        result);
+
+    ExpectEqual(
+        "js/async/dynamic-reboot-overrides-old-kpanic",
+        RunDynamicRebootOverridesOldKpanicSnapshot(),
+        "ok:new\n",
+        result);
+
+    ExpectEqual(
+        "js/async/timer-exception-does-not-poison-later-closure",
+        RunTimerExceptionDoesNotPoisonLaterClosureSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/async/missing-prompt-timer-does-not-poison-later-timer",
+        RunMissingPromptTimerDoesNotPoisonLaterTimerSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/compiler/zero-param-arrow-block",
+        RunZeroParamArrowBlockSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/window/window-add-event-listener-member",
+        RunWindowAddEventListenerMemberSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/window/window-listener-schedules-timeout",
+        RunWindowListenerSchedulesTimeoutSnapshot(),
+        "ok:ok\n",
+        result);
+
+    ExpectEqual(
+        "js/async/top-level-function-reference-survives-timeout",
+        RunAsyncTopLevelFunctionReferenceSnapshot(),
+        "ok:ok\n",
         result);
 
     ExpectEqual(

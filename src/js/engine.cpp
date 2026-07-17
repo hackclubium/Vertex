@@ -141,20 +141,32 @@ void JsEngine::runMacrotasks(size_t maxTasks) {
     auto& queue = vm.macrotasks();
     for (auto& task : queue)
         task.delay = std::max(0, task.delay - 16);
-    std::vector<VM::Macrotask> tasks;
-    tasks.reserve(std::min(maxTasks, queue.size()));
-    for (auto it = queue.begin(); it != queue.end() && tasks.size() < maxTasks; ) {
-        if (it->delay > 0) { ++it; continue; }
-        tasks.push_back(std::move(*it));
-        it = queue.erase(it);
-    }
 
-    for (auto& task : tasks) {
+    size_t ran = 0;
+    while (ran < maxTasks) {
+        auto it = std::find_if(queue.begin(), queue.end(), [](const VM::Macrotask& task) {
+            return task.delay <= 0;
+        });
+        if (it == queue.end()) break;
+        VM::Macrotask task = std::move(*it);
+        queue.erase(it);
+        ++ran;
+
         if (task.id <= 0 || !task.fn.isCallable()) continue;
+        std::vector<JsValue> roots;
+        roots.reserve(1 + task.args.size());
+        roots.push_back(task.fn);
+        for (const auto& arg : task.args) roots.push_back(arg);
+        vm.gc().pushTempRoots(roots.data(), roots.size());
         try {
             vm.call(task.fn, JsValue::undefined(), task.args);
             vm.drainMicrotasks();
-        } catch (...) {}
+        } catch (const JsException& e) {
+            std::fprintf(stderr, "[JS Timer Error] %s\n", e.val.toString().c_str());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[JS Timer Error] %s\n", e.what());
+        }
+        vm.gc().popTempRoots();
         if (task.interval) {
             task.delay = std::max(1, task.intervalDelay);
             queue.push_back(task);

@@ -143,6 +143,8 @@ int Compiler::addUpval(bool inStack, uint8_t idx, const std::string& name) {
 
 std::optional<uint8_t> Compiler::resolveUpval(const std::string& name) {
     if (!m_enclosing) return {};
+    if (m_skipGlobalUpvals && !m_enclosing->m_enclosing && m_enclosing->m_fn && m_enclosing->m_fn->name == "<global>")
+        return {};
     // Check enclosing locals
     if (auto local = m_enclosing->resolveLocal(name)) {
         // Mark as captured in enclosing
@@ -255,6 +257,11 @@ void Compiler::compileVarDecl(const VarDecl& s) {
             } else {
                 emit(OP_LOAD_UNDEF, (uint8_t)r, 0, 0, 0);
             }
+            if (!m_enclosing && m_fn && m_fn->name == "<global>") {
+                uint16_t idx = m_fn->addConstString(name);
+                Instruction ins; ins.op = OP_SET_GLOBAL; ins.a = (uint8_t)r; ins.setbc(idx);
+                m_fn->code.push_back(ins); m_fn->lines.push_back(d.target->line);
+            }
         } else if (d.target) {
             // Destructuring
             uint8_t src = allocReg();
@@ -267,15 +274,19 @@ void Compiler::compileVarDecl(const VarDecl& s) {
 }
 
 void Compiler::compileFuncDecl(const FuncDecl& s) {
+    if (!m_enclosing && m_fn && m_fn->name == "<global>") {
+        bool oldSkip = m_skipGlobalUpvals;
+        m_skipGlobalUpvals = true;
+        uint8_t fnReg = compileFuncExpr(s.fn, -1);
+        m_skipGlobalUpvals = oldSkip;
+        storeVar(s.name, fnReg, 0);
+        freeReg(fnReg);
+        return;
+    }
     // Hoist: declare the local first, then compile and assign
     int r = declareLocal(s.name, false);
     uint8_t fnReg = compileFuncExpr(s.fn, r);
     if (fnReg != (uint8_t)r) { emit(OP_MOVE, (uint8_t)r, fnReg); freeReg(fnReg); }
-    if (!m_enclosing && m_fn && m_fn->name == "<global>") {
-        uint16_t idx = m_fn->addConstString(s.name);
-        Instruction ins; ins.op = OP_SET_GLOBAL; ins.a = (uint8_t)r; ins.setbc(idx);
-        m_fn->code.push_back(ins); m_fn->lines.push_back(0);
-    }
 }
 
 void Compiler::compileIf(const IfStmt& s) {
@@ -936,6 +947,7 @@ uint8_t Compiler::compileFuncExpr(const FuncExpr& e, int hint) {
     inner->regCount   = (uint8_t)e.params.size();
 
     Compiler inner_c(inner.get(), this);
+    inner_c.m_skipGlobalUpvals = m_skipGlobalUpvals;
     inner_c.pushScope(true);
     // Declare params as locals
     for (size_t i = 0; i < e.params.size(); i++) {

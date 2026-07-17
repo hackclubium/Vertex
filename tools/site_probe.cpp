@@ -14,10 +14,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -127,6 +129,42 @@ static std::vector<Node*> Scripts(Node* root) {
     return out;
 }
 
+static Node* FindById(Node* root, const std::string& id) {
+    if (!root) return nullptr;
+    if (root->type == NodeType::Element && root->attr("id") == id) return root;
+    for (auto& child : root->children) {
+        if (Node* found = FindById(child.get(), id)) return found;
+    }
+    return nullptr;
+}
+
+static Node* FindByTagMutable(Node* root, const std::string& tag) {
+    if (!root) return nullptr;
+    if (root->type == NodeType::Element && root->tagName == tag) return root;
+    for (auto& child : root->children) {
+        if (Node* found = FindByTagMutable(child.get(), tag)) return found;
+    }
+    return nullptr;
+}
+
+static std::string FirstTags(Node* root, int limit) {
+    std::string out;
+    std::vector<Node*> stack{root};
+    while (!stack.empty() && limit > 0) {
+        Node* n = stack.back();
+        stack.pop_back();
+        if (n && n->type == NodeType::Element) {
+            if (!out.empty()) out += ",";
+            out += n->tagName;
+            if (!n->attr("id").empty()) out += "#" + n->attr("id");
+            if (!n->attr("class").empty()) out += "." + n->attr("class");
+            --limit;
+        }
+        if (n) for (auto it = n->children.rbegin(); it != n->children.rend(); ++it) stack.push_back(it->get());
+    }
+    return out;
+}
+
 static std::string NormalizeUrl(std::string url) {
     if (HasUrlScheme(url)) return url;
     return "https://" + url;
@@ -138,6 +176,13 @@ static void Log(const char* fmt, ...) {
     std::vfprintf(stdout, fmt, ap);
     std::fflush(stdout);
     va_end(ap);
+}
+
+static void Pump(JsEngine& js, int ticks) {
+    for (int i = 0; i < ticks; ++i) {
+        js.runMacrotasks(64);
+        DrainResourceCompletions(64);
+    }
 }
 
 static std::string Truncate(const std::string& s, size_t limit) {
@@ -157,9 +202,11 @@ int main(int argc, char** argv) {
     const std::string url = NormalizeUrl(argv[1]);
     int maxScripts = 64;
     bool verbose = false;
+    bool websitethingFlow = false;
     for (int i = 2; i < argc; ++i) {
         std::string arg(argv[i]);
         if (arg == "--verbose" || arg == "-v") verbose = true;
+        else if (arg == "--websitething-flow") websitethingFlow = true;
         else maxScripts = std::max(0, std::atoi(argv[i]));
     }
 
@@ -214,7 +261,6 @@ int main(int argc, char** argv) {
     budget.maxScriptBytes = 256 * 1024;
     js.setScriptBudget(budget);
     js.setDocument(dom, []() {}, finalUrl);
-
     int attempted = 0;
     int failed = 0;
     int skipped = 0;
@@ -249,7 +295,40 @@ int main(int argc, char** argv) {
     js.dispatchDocumentEvent("DOMContentLoaded");
     js.dispatchWindowEvent("DOMContentLoaded");
     js.dispatchWindowEvent("load");
-    try { js.runMacrotasks(32); } catch (...) { Log("macrotasks crashed\n"); }
+    try { Pump(js, 32); } catch (...) { Log("macrotasks crashed\n"); }
+
+    if (websitethingFlow) {
+        try { Pump(js, 130); } catch (...) { Log("flow intro macrotasks crashed\n"); }
+        Log("websitething after_intro counter=%s title=%s\n",
+            FindById(dom.get(), "counter") ? TextContent(FindById(dom.get(), "counter")).c_str() : "missing",
+            Truncate(PageTitle(dom.get()), 120).c_str());
+        Log("websitething tags=%s\n", FirstTags(dom.get(), 24).c_str());
+        for (int i = 0; i < 10; ++i) {
+            js.dispatchClick(FindByTagMutable(dom.get(), "body"), 0, 0);
+            try { Pump(js, 8); } catch (...) { Log("flow click macrotasks crashed\n"); }
+            Log("websitething click=%d counter=%s title=%s button=%d\n",
+                i + 1,
+                FindById(dom.get(), "counter") ? TextContent(FindById(dom.get(), "counter")).c_str() : "missing",
+                Truncate(PageTitle(dom.get()), 120).c_str(),
+                FindById(dom.get(), "button") ? 1 : 0);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        Pump(js, 2500);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        try { Pump(js, 64); } catch (...) { Log("flow async drain crashed\n"); }
+        Node* counter = FindById(dom.get(), "counter");
+        Node* button = FindById(dom.get(), "button");
+        Node* prompt = FindById(dom.get(), "prompt");
+        Node* body = FindByTagMutable(dom.get(), "body");
+        Log("websitething counter=%s title=%s portfolio_button=%d\n",
+            counter ? TextContent(counter).c_str() : "missing",
+            Truncate(PageTitle(dom.get()), 120).c_str(),
+            button ? 1 : 0);
+        Log("websitething prompt=%s\n", prompt ? TextContent(prompt).c_str() : "missing");
+        Log("websitething pending_macrotasks=%d\n", js.hasPendingMacrotasks() ? 1 : 0);
+        Log("websitething pending_resources=%d\n", HasPendingResourceCompletions() ? 1 : 0);
+        Log("websitething final_tags=%s\n", FirstTags(dom.get(), 96).c_str());
+    }
 
     // — Layout —
     Stylesheet sheet = CollectCss(dom.get());

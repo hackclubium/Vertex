@@ -170,6 +170,7 @@ private:
 
     // Enclosing compiler (for closures)
     Compiler* m_enclosing = nullptr;
+    bool m_skipGlobalUpvals = false;
 
     // Register allocation
     uint8_t m_nextReg = 0;

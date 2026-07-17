@@ -1992,7 +1992,7 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     }
 
     // Sibling traversal
-    if (raw && raw->parent) {
+    if (materializeRelations && raw && raw->parent) {
         const auto& siblings = raw->parent->children;
         Node* prevNode = siblingNode(raw, -1);
         Node* nextNode = siblingNode(raw, 1);
@@ -3611,7 +3611,13 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             std::string t = val.toString();
             if (!t.empty()) n->appendChild(Node::makeText(t));
         } else if (key == "innerHTML") {
-            setInnerHtml(n, val.toString());
+            std::string nextHtml = val.toString();
+            std::string currentHtml = innerHTML(*vmPtr, n);
+            if (!currentHtml.empty() && nextHtml.rfind(currentHtml, 0) == 0) {
+                insertHtmlFragment(n, nullptr, nextHtml.substr(currentHtml.size()));
+            } else {
+                setInnerHtml(n, nextHtml);
+            }
         }
         markDomDirty(*vmPtr, n, (key == "textContent" || key == "innerText" || key == "innerHTML") ? "childList" : "attributes");
     };
@@ -3631,13 +3637,16 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             g_wrapperStore.erase(found);
             auto shared = getShared(found);
             if (!shared) shared = std::shared_ptr<Node>(found, [](Node*) {});
-            out = wrapNode(*vmPtr, shared);
+            out = wrapNodeInternal(*vmPtr, shared, false);
             return true;
         }
         if (key == "cookie" && n->type == NodeType::Document) {
             out = vmPtr->str(CookieJar::instance().documentCookies(pageUrl));
             return true;
         }
+        if (key == "textContent" || key == "innerText") { out = vmPtr->str(textContent(n)); return true; }
+        if (key == "innerHTML") { out = vmPtr->str(innerHTML(*vmPtr, n)); return true; }
+        if (key == "outerHTML") { out = vmPtr->str(outerHTML(*vmPtr, n)); return true; }
         if (n->type == NodeType::Document && (key == "scripts" || key == "images" || key == "links"
             || key == "anchors" || key == "styleSheets")) {
             std::vector<Node*> nodes;
@@ -4877,6 +4886,7 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
             } else {
                 url = ARG_STR(0);
             }
+            url = ResolveUrlAgainstBase(url, g_pageUrl);
             auto* promise = vm.gc().newPromise();
             vm.initPromiseObject(promise);
             JsValue signal = JsValue::undefined();

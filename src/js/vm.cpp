@@ -18,11 +18,22 @@ VM::VM(GC& gc) : m_gc(gc) {
     m_globals = m_gc.newObject(ObjKind::Plain);
     m_globalsRoot = JsValue::object(m_globals);
     m_gc.addRoot(&m_globalsRoot);
+    m_gc.markExtraRoots = [this](GC& gc) {
+        for (const auto& task : m_macrotasks) {
+            gc.markValue(task.fn);
+            for (const auto& arg : task.args) gc.markValue(arg);
+        }
+        for (const auto& task : m_microtasks) {
+            gc.markValue(task.fn);
+            gc.markValue(task.arg);
+        }
+    };
     m_stack.reserve(1024);
     m_frames.reserve(256);
 }
 
 VM::~VM() {
+    m_gc.markExtraRoots = nullptr;
     m_gc.removeRoot(&m_globalsRoot);
 }
 
@@ -414,7 +425,23 @@ bool VM::cancelMacrotask(int id) {
 JsValue VM::call(JsValue fnVal, JsValue thisVal, std::vector<JsValue> args) {
     if (!fnVal.isCallable()) throwTypeError("not a function");
     auto* fn = fnVal.asObject();
-    return callFunction(fn, thisVal, args, false);
+    bool top = (m_executeDepth == 0);
+    if (top) { m_deadlineMs = NowMs() + kScriptBudgetMs; g_jsDeadlineMs = m_deadlineMs; }
+    ++m_executeDepth;
+    try {
+        JsValue result = callFunction(fn, thisVal, args, false);
+        --m_executeDepth;
+        if (top) { m_deadlineMs = 0; g_jsDeadlineMs = 0; }
+        return result;
+    } catch (const JsException&) {
+        --m_executeDepth;
+        if (top) { m_deadlineMs = 0; g_jsDeadlineMs = 0; }
+        throw;
+    } catch (const std::exception&) {
+        --m_executeDepth;
+        if (top) { m_deadlineMs = 0; g_jsDeadlineMs = 0; }
+        throw;
+    }
 }
 
 JsValue VM::callNew(JsValue ctorVal, std::vector<JsValue> args) {
@@ -474,7 +501,7 @@ JsValue VM::callBytecode(BytecodeFunction* bc, JsValue thisVal,
                           std::vector<Upvalue*>& closureUpvals) {
     // Grow stack for this frame
     int regBase = (int)m_stack.size();
-    int regCount = bc->regCount + 8; // some headroom
+    int regCount = bc->regCount + 64; // headroom for under-counted temporaries in complex expressions
     m_stack.resize(regBase + regCount);
 
     // Copy args into params
@@ -528,8 +555,15 @@ JsValue VM::callBytecode(BytecodeFunction* bc, JsValue thisVal,
     JsValue result;
     try {
         result = runFrame(m_frames.back());
-    } catch (...) {
+    } catch (const JsException&) {
         m_frames.pop_back();
+        closeUpvalues(m_stack.data() + regBase);
+        m_stack.resize(regBase);
+        m_gc.popTempRoots();
+        throw;
+    } catch (const std::exception&) {
+        m_frames.pop_back();
+        closeUpvalues(m_stack.data() + regBase);
         m_stack.resize(regBase);
         m_gc.popTempRoots();
         throw;
@@ -986,10 +1020,10 @@ JsValue VM::execute(BytecodeFunction* fn, JsValue thisVal) {
     try { r = callBytecode(fn, thisVal, noArgs, false, noUpvals); }
     catch (...) {
         --m_executeDepth;
-        if (top) g_jsDeadlineMs = 0;
+        if (top) { m_deadlineMs = 0; g_jsDeadlineMs = 0; }
         throw;
     }
     --m_executeDepth;
-    if (top) g_jsDeadlineMs = 0;
+    if (top) { m_deadlineMs = 0; g_jsDeadlineMs = 0; }
     return r;
 }

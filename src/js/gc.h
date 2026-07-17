@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <stdexcept>
+#include <functional>
 
 // Global wall-clock deadline (steady_clock milliseconds) for the current
 // top-level JS run, set by VM::execute. Native allocation loops check it so a
@@ -56,6 +57,8 @@ public:
 
     // Run a full mark-sweep cycle.
     void collect();
+
+    std::function<void(GC&)> markExtraRoots;
 
     // Called by VM to provide frame register ranges for marking.
     // These are temporary roots for the duration of execution.

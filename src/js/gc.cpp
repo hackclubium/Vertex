@@ -312,6 +312,8 @@ void GC::collect() {
     for (auto& r : m_tempRoots)
         for (size_t i = 0; i < r.count; i++) markValue(r.base[i]);
 
+    if (markExtraRoots) markExtraRoots(*this);
+
     // Sweep phase
     GcCell** pp = &m_head;
     while (*pp) {
