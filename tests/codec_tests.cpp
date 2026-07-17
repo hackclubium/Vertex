@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -23,6 +25,13 @@ std::vector<uint8_t> HexToBytes(const std::string& hex) {
     for (size_t i = 0; i + 1 < hex.size(); i += 2)
         out.push_back((uint8_t)((val(hex[i]) << 4) | val(hex[i + 1])));
     return out;
+}
+
+std::string BytesToHex(const std::string& bytes) {
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (unsigned char c : bytes) out << std::setw(2) << (int)c;
+    return out.str();
 }
 
 // JPEG is lossy, so comparisons against a reference decode use a small
@@ -189,8 +198,22 @@ TestResult RunCodecTests() {
             "7801013200cdff73746f72656420626c6f636b207465737420646174612c206e6f20636f6d7072657373696f6e20617420616c6c2068657265d97e1264");
         std::string out;
         bool ok = ZlibInflate(bytes.data(), bytes.size(), out);
+        uint32_t expectedAdler = ((uint32_t)bytes[bytes.size() - 4] << 24) |
+            ((uint32_t)bytes[bytes.size() - 3] << 16) |
+            ((uint32_t)bytes[bytes.size() - 2] << 8) |
+            (uint32_t)bytes[bytes.size() - 1];
+        uint32_t actualAdler = Adler32((const uint8_t*)out.data(), out.size());
+        std::string actual = (ok ? "ok:" : "fail:") + out + "\n";
+        if (!ok) {
+            actual += "debug:out_size=" + std::to_string(out.size()) +
+                " out_hex=" + BytesToHex(out) +
+                " expected_adler=" + std::to_string(expectedAdler) +
+                " actual_adler=" + std::to_string(actualAdler) +
+                " cmf=" + std::to_string(bytes[0]) +
+                " flg=" + std::to_string(bytes[1]) + "\n";
+        }
         ExpectEqual("codec/inflate/stored-block",
-            (ok ? "ok:" : "fail:") + out + "\n",
+            actual,
             "ok:stored block test data, no compression at all here\n",
             result);
     }
