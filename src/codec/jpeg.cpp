@@ -218,7 +218,7 @@ bool DecodeBlock(JpegBitReader& br, Component& comp, int Ss, int Se, int Ah, int
             if (dcSym < 0 || dcSym > 16 || br.error()) return false;
             int diff = dcSym ? Extend((int)br.ReadBits(dcSym), dcSym) : 0;
             comp.dcPred += diff;
-            coeff[0] = comp.dcPred << Al;
+            coeff[0] = comp.dcPred * (1 << Al);
         } else {
             int bit = br.ReadBit();
             if (bit) coeff[0] |= (1 << Al);
@@ -228,7 +228,7 @@ bool DecodeBlock(JpegBitReader& br, Component& comp, int Ss, int Se, int Ah, int
 
     // progressive AC
     int p1 = 1 << Al;
-    int m1 = -1 << Al;
+    int m1 = -(1 << Al);
     if (Ah == 0) {
         if (eobrun > 0) { eobrun--; return true; } // block fully covered by a prior EOB run
         int k = Ss;
@@ -248,7 +248,7 @@ bool DecodeBlock(JpegBitReader& br, Component& comp, int Ss, int Se, int Ah, int
             k += run;
             if (k > Se) return false;
             int raw = Extend((int)br.ReadBits(sizeBits), sizeBits);
-            coeff[kZigzag[k]] = raw << Al;
+            coeff[kZigzag[k]] = raw * (1 << Al);
             k++;
         }
         return !br.error();
