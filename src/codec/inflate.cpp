@@ -43,6 +43,13 @@ public:
         return data_[bytePos_++];
     }
 
+    bool ReadBytes(std::string& out, size_t len) {
+        if (bytePos_ > size_ || len > size_ - bytePos_) { error_ = true; return false; }
+        out.append(reinterpret_cast<const char*>(data_ + bytePos_), len);
+        bytePos_ += len;
+        return true;
+    }
+
     bool error() const { return error_; }
 
 private:
@@ -228,10 +235,7 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutpu
             if (br.error() || (uint16_t)(~len) != nlen) return false;
             size_t storedEnd = out.size() + (size_t)len;
             if (storedEnd > maxOutputBytes) return false;
-            while (out.size() < storedEnd) {
-                out.push_back((char)br.ReadByte());
-                if (br.error()) return false;
-            }
+            if (!br.ReadBytes(out, len)) return false;
         } else if (btype == 1 || btype == 2) {
             HuffmanTable litTable, distTable;
             if (btype == 1) {
