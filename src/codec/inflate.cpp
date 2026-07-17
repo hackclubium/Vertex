@@ -226,8 +226,9 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutpu
             uint16_t len = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             uint16_t nlen = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             if (br.error() || (uint16_t)(~len) != nlen) return false;
-            if (out.size() + len > maxOutputBytes) return false;
-            for (int i = 0; i < len; i++) {
+            size_t storedEnd = out.size() + (size_t)len;
+            if (storedEnd > maxOutputBytes) return false;
+            while (out.size() < storedEnd) {
                 out.push_back((char)br.ReadByte());
                 if (br.error()) return false;
             }
