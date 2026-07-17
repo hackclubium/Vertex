@@ -246,7 +246,7 @@ TestResult RunPaintTests() {
         std::string macMain = ReadTextFile(root / "src/platform/main_macos.mm");
         const bool cachesDocumentStyle =
             renderer.find("m_styleDocKey != doc.get()") != std::string::npos
-            && renderer.find("m_cachedSheet  = CollectStylesheet(doc.get());") != std::string::npos
+            && renderer.find("m_cachedSheet  = CollectStylesheet(doc.get(), baseUrl);") != std::string::npos
             && renderer.find("FindBodyBgColor(doc.get(), m_cachedSheet)") != std::string::npos;
         ExpectEqual("paint/document-style-is-cached-off-scroll-path",
             cachesDocumentStyle ? "cached\n" : "per-paint\n",
