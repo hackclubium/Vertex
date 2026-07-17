@@ -202,10 +202,16 @@ TestResult RunCodecTests() {
             ((uint32_t)bytes[bytes.size() - 3] << 16) |
             ((uint32_t)bytes[bytes.size() - 2] << 8) |
             (uint32_t)bytes[bytes.size() - 1];
+        uint16_t storedLen = bytes.size() >= 7 ? (uint16_t)bytes[3] | ((uint16_t)bytes[4] << 8) : 0;
+        uint16_t storedNlen = bytes.size() >= 7 ? (uint16_t)bytes[5] | ((uint16_t)bytes[6] << 8) : 0;
         uint32_t actualAdler = Adler32((const uint8_t*)out.data(), out.size());
         std::string actual = (ok ? "ok:" : "fail:") + out + "\n";
         if (!ok) {
             actual += "debug:out_size=" + std::to_string(out.size()) +
+                " zlib_size=" + std::to_string(bytes.size()) +
+                " raw_size=" + std::to_string(bytes.size() >= 6 ? bytes.size() - 6 : 0) +
+                " stored_len=" + std::to_string(storedLen) +
+                " stored_nlen=" + std::to_string(storedNlen) +
                 " out_hex=" + BytesToHex(out) +
                 " expected_adler=" + std::to_string(expectedAdler) +
                 " actual_adler=" + std::to_string(actualAdler) +
