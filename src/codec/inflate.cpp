@@ -240,8 +240,12 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutpu
 
         if (btype == 0) {
             br.AlignToByte();
-            uint16_t len = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
-            uint16_t nlen = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
+            uint16_t lenLo = br.ReadByte();
+            uint16_t lenHi = br.ReadByte();
+            uint16_t nlenLo = br.ReadByte();
+            uint16_t nlenHi = br.ReadByte();
+            uint16_t len = lenLo | (lenHi << 8);
+            uint16_t nlen = nlenLo | (nlenHi << 8);
             if (br.error() || (uint16_t)(~len) != nlen) {
                 g_lastInflateDebug += " reason=stored_header len=" + std::to_string(len) +
                     " nlen=" + std::to_string(nlen) +
