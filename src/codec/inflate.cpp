@@ -52,6 +52,9 @@ public:
     }
 
     bool error() const { return error_; }
+    size_t bytePos() const { return bytePos_; }
+    size_t size() const { return size_; }
+    int bitPos() const { return bitPos_; }
 
 private:
     const uint8_t* data_;
@@ -222,30 +225,47 @@ bool Inflate(const uint8_t* data, size_t size, std::string& out) {
 }
 
 bool Inflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes) {
+    g_lastInflateDebug = " inflate_start_size=" + std::to_string(size);
     BitReader br(data, size);
     bool final = false;
     while (!final) {
         final = br.ReadBits(1) != 0;
         uint32_t btype = br.ReadBits(2);
-        if (br.error()) return false;
+        g_lastInflateDebug += " final=" + std::to_string(final ? 1 : 0) +
+            " btype=" + std::to_string(btype) +
+            " hdr_byte_pos=" + std::to_string(br.bytePos()) +
+            " hdr_bit_pos=" + std::to_string(br.bitPos()) +
+            " hdr_err=" + std::to_string(br.error() ? 1 : 0);
+        if (br.error()) { g_lastInflateDebug += " reason=header"; return false; }
 
         if (btype == 0) {
             br.AlignToByte();
             uint16_t len = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
             uint16_t nlen = (uint16_t)br.ReadByte() | ((uint16_t)br.ReadByte() << 8);
-            if (br.error() || (uint16_t)(~len) != nlen) return false;
+            if (br.error() || (uint16_t)(~len) != nlen) {
+                g_lastInflateDebug += " reason=stored_header len=" + std::to_string(len) +
+                    " nlen=" + std::to_string(nlen) +
+                    " err=" + std::to_string(br.error() ? 1 : 0);
+                return false;
+            }
             size_t storedEnd = out.size() + (size_t)len;
-            if (storedEnd > maxOutputBytes) return false;
-            if (!br.ReadBytes(out, len)) return false;
+            if (storedEnd > maxOutputBytes) { g_lastInflateDebug += " reason=stored_cap"; return false; }
+            g_lastInflateDebug += " stored_len=" + std::to_string(len) +
+                " inflate_size=" + std::to_string(br.size()) +
+                " byte_pos=" + std::to_string(br.bytePos()) +
+                " bit_pos=" + std::to_string(br.bitPos()) +
+                " remain=" + std::to_string(br.bytePos() <= br.size() ? br.size() - br.bytePos() : 0);
+            if (!br.ReadBytes(out, len)) { g_lastInflateDebug += " reason=stored_bytes"; return false; }
         } else if (btype == 1 || btype == 2) {
             HuffmanTable litTable, distTable;
             if (btype == 1) {
                 BuildFixedTables(litTable, distTable);
             } else {
-                if (!ReadDynamicTables(br, litTable, distTable)) return false;
+                if (!ReadDynamicTables(br, litTable, distTable)) { g_lastInflateDebug += " reason=dynamic_tables"; return false; }
             }
-            if (!InflateBlock(br, litTable, distTable, out, maxOutputBytes)) return false;
+            if (!InflateBlock(br, litTable, distTable, out, maxOutputBytes)) { g_lastInflateDebug += " reason=huffman_block"; return false; }
         } else {
+            g_lastInflateDebug += " reason=reserved_btype";
             return false; // btype == 3 is reserved/invalid
         }
     }
