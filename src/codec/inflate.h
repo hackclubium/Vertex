@@ -34,3 +34,4 @@ bool GzipInflate(const uint8_t* data, size_t size, std::string& out);
 bool GzipInflate(const uint8_t* data, size_t size, std::string& out, size_t maxOutputBytes);
 
 uint32_t Adler32(const uint8_t* data, size_t size);
+std::string LastInflateDebug();

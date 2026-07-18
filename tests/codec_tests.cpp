@@ -216,7 +216,7 @@ TestResult RunCodecTests() {
                 " expected_adler=" + std::to_string(expectedAdler) +
                 " actual_adler=" + std::to_string(actualAdler) +
                 " cmf=" + std::to_string(bytes[0]) +
-                " flg=" + std::to_string(bytes[1]) + "\n";
+                " flg=" + std::to_string(bytes[1]) + LastInflateDebug() + "\n";
         }
         ExpectEqual("codec/inflate/stored-block",
             actual,

@@ -5,6 +5,7 @@
 namespace {
 
 constexpr int kMaxBits = 15;
+std::string g_lastInflateDebug;
 
 // Reads DEFLATE's bitstream. Two distinct bit orders are in play here, both
 // handled by the same underlying ReadBit() (which just walks the byte
@@ -259,6 +260,10 @@ uint32_t Adler32(const uint8_t* data, size_t size) {
         b = (b + a) % kModAdler;
     }
     return (b << 16) | a;
+}
+
+std::string LastInflateDebug() {
+    return g_lastInflateDebug;
 }
 
 bool ZlibInflate(const uint8_t* data, size_t size, std::string& out) {
