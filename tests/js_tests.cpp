@@ -2460,6 +2460,38 @@ TestResult RunJsTests() {
         result);
 
     ExpectJsResult(
+        "array/constructor-keeps-prototype",
+        "var total = 0;\n"
+        "Array(3).fill(2).forEach(function (value) { total += value; });\n"
+        "__result = total;\n",
+        "number: 6\n",
+        result);
+
+    ExpectJsResult(
+        "object/array-results-keep-prototype",
+        "var total = 0;\n"
+        "Object.values({ a: 1, b: 2, c: 3 }).forEach(function (value) { total += value; });\n"
+        "__result = total;\n",
+        "number: 6\n",
+        result);
+
+    ExpectJsResult(
+        "string/array-results-keep-prototype",
+        "var total = 0;\n"
+        "'1,2,3'.split(',').forEach(function (value) { total += Number(value); });\n"
+        "__result = total;\n",
+        "number: 6\n",
+        result);
+
+    ExpectJsResult(
+        "json/array-results-keep-prototype",
+        "var total = 0;\n"
+        "JSON.parse('[1,2,3]').forEach(function (value) { total += value; });\n"
+        "__result = total;\n",
+        "number: 6\n",
+        result);
+
+    ExpectJsResult(
         "destructuring/array-rest-preserves-tail",
         "var [first, ...rest] = [1, 2, 3, 4];\n"
         "__result = first + ':' + rest.length + ':' + rest[0] + ':' + rest[2];\n",

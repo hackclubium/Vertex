@@ -147,7 +147,7 @@ static void registerObject(VM& vm) {
     ctor->setProp("prototype", JsValue::object(proto));
 
     addNative(vm, ctor, "keys", NATIVE("keys") {
-        auto* arr = vm.gc().newArray();
+        auto* arr = newArrayWithPrototype(vm);
         if (ARG(0).isObject()) {
             for (auto& k : ARG(0).asObject()->ownEnumKeys())
                 arr->arrayPush(vm.str(k));
@@ -155,7 +155,7 @@ static void registerObject(VM& vm) {
         return JsValue::object(arr);
     });
     addNative(vm, ctor, "values", NATIVE("values") {
-        auto* arr = vm.gc().newArray();
+        auto* arr = newArrayWithPrototype(vm);
         if (ARG(0).isObject()) {
             auto* o = ARG(0).asObject();
             for (auto& k : o->ownEnumKeys()) arr->arrayPush(o->getProp(k));
@@ -163,11 +163,11 @@ static void registerObject(VM& vm) {
         return JsValue::object(arr);
     });
     addNative(vm, ctor, "entries", NATIVE("entries") {
-        auto* arr = vm.gc().newArray();
+        auto* arr = newArrayWithPrototype(vm);
         if (ARG(0).isObject()) {
             auto* o = ARG(0).asObject();
             for (auto& k : o->ownEnumKeys()) {
-                auto* pair = vm.gc().newArray();
+                auto* pair = newArrayWithPrototype(vm);
                 pair->arrayPush(vm.str(k));
                 pair->arrayPush(o->getProp(k));
                 arr->arrayPush(JsValue::object(pair));
@@ -675,6 +675,11 @@ static void registerArray(VM& vm) {
     // Static methods
     auto* ctor = vm.gc().newNativeFunction(NATIVE("Array") {
         auto* arr = vm.gc().newArray();
+        JsValue arrayCtor = vm.getGlobal("Array");
+        if (arrayCtor.isObject()) {
+            JsValue protoVal = arrayCtor.asObject()->getProp("prototype");
+            if (protoVal.isObject()) arr->proto = protoVal.asObject();
+        }
         if (args.size() == 1 && ARG(0).isInt32()) arr->arraySetLength(ARG(0).asInt32());
         else for (auto& a : args) arr->arrayPush(a);
         return JsValue::object(arr);
@@ -819,7 +824,7 @@ static void registerString(VM& vm) {
     });
     addNative(vm, proto, "split", NATIVE("split") {
         std::string s = getStr(thisVal);
-        auto* result = vm.gc().newArray();
+        auto* result = newArrayWithPrototype(vm);
         if (ARG(0).isUndefined()) { result->arrayPush(vm.str(s)); return JsValue::object(result); }
         std::string sep = ARG_STR(0);
         if (sep.empty()) { for (char c : s) result->arrayPush(vm.str(std::string(1,c))); return JsValue::object(result); }
@@ -905,14 +910,14 @@ static void registerString(VM& vm) {
                 std::regex rx(pattern, rxFlags);
                 bool global = (flags.find('g') != std::string::npos);
                 if (global) {
-                    auto* arr = vm.gc().newArray();
+                    auto* arr = newArrayWithPrototype(vm);
                     auto it = std::sregex_iterator(s.begin(), s.end(), rx);
                     for (; it != std::sregex_iterator(); ++it) arr->arrayPush(vm.str((*it)[0].str()));
                     return arr->arrayLength() > 0 ? JsValue::object(arr) : JsValue::null();
                 } else {
                     std::smatch m;
                     if (!std::regex_search(s, m, rx)) return JsValue::null();
-                    auto* arr = vm.gc().newArray();
+                    auto* arr = newArrayWithPrototype(vm);
                     for (size_t i = 0; i < m.size(); ++i) arr->arrayPush(vm.str(m[i].str()));
                     arr->setProp("index", JsValue::integer((int32_t)m.position(0)));
                     return JsValue::object(arr);
@@ -922,7 +927,7 @@ static void registerString(VM& vm) {
         std::string pat = ARG_STR(0);
         auto pos = s.find(pat);
         if (pos == std::string::npos) return JsValue::null();
-        auto* arr = vm.gc().newArray();
+        auto* arr = newArrayWithPrototype(vm);
         arr->arrayPush(vm.str(pat));
         arr->setProp("index", JsValue::integer((int32_t)pos));
         return JsValue::object(arr);
@@ -941,7 +946,7 @@ static void registerString(VM& vm) {
         return JsValue::integer(-1);
     });
     addNative(vm, proto, "matchAll", NATIVE("matchAll") {
-        auto* arr = vm.gc().newArray();
+        auto* arr = newArrayWithPrototype(vm);
         std::string s = getStr(thisVal);
         if (ARG(0).isObject() && ARG(0).asObject()->kind == ObjKind::RegExp) {
             std::string pattern = ARG(0).asObject()->getProp("source").toString();
@@ -952,7 +957,7 @@ static void registerString(VM& vm) {
                 std::regex rx(pattern, rxFlags);
                 auto it = std::sregex_iterator(s.begin(), s.end(), rx);
                 for (; it != std::sregex_iterator(); ++it) {
-                    auto* m = vm.gc().newArray();
+                    auto* m = newArrayWithPrototype(vm);
                     for (size_t i = 0; i < it->size(); ++i) m->arrayPush(vm.str((*it)[i].str()));
                     m->setProp("index", JsValue::integer((int32_t)it->position(0)));
                     arr->arrayPush(JsValue::object(m));
@@ -1205,7 +1210,7 @@ static JsValue jsonParse(VM& vm, const std::string& s, size_t& pos) {
         pos++; return vm.str(res);
     }
     if (c == '[') {
-        pos++; auto* arr = vm.gc().newArray();
+        pos++; auto* arr = newArrayWithPrototype(vm);
         skip();
         if (pos<s.size()&&s[pos]==']'){pos++;return JsValue::object(arr);}
         while (pos<s.size()) {

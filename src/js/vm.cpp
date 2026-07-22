@@ -88,6 +88,13 @@ JsValue VM::getProp(JsValue obj, const std::string& key) {
         // Check own + proto chain via JsObject::getProp
         JsValue v = o->getProp(key);
         if (!v.isUndefined()) return v;
+        if (o->kind == ObjKind::Array) {
+            JsValue arrayCtor = m_globals->getProp("Array");
+            if (arrayCtor.isObject()) {
+                JsValue proto = arrayCtor.asObject()->getProp("prototype");
+                if (proto.isObject()) return proto.asObject()->getProp(key);
+            }
+        }
         // Check prototype methods for arrays/strings/etc
         return v;
     }
@@ -533,6 +540,11 @@ JsValue VM::callBytecode(BytecodeFunction* bc, JsValue thisVal,
     // Rest param
     if (bc->hasRest) {
         auto* restArr = m_gc.newArray();
+        JsValue arrayCtor = m_globals->getProp("Array");
+        if (arrayCtor.isObject()) {
+            JsValue proto = arrayCtor.asObject()->getProp("prototype");
+            if (proto.isObject()) restArr->proto = proto.asObject();
+        }
         for (int i = (int)bc->paramCount - 1; i < (int)args.size(); i++)
             restArr->arrayPush(args[i]);
         // rest goes in last param slot
