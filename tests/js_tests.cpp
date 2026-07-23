@@ -83,6 +83,19 @@ static std::string RunEngineDomKeepsBuiltinsSnapshot() {
     return dom->children[0]->attr("data-result") + "\n";
 }
 
+static std::string RunDomBrowserConstructorsSnapshot() {
+    JsEngine engine;
+    auto dom = ParseHtml("<html><head><link id=css></head><body><script id=s></script></body></html>");
+    engine.setDocument(dom, []() {});
+    bool ok = engine.runScript(
+        "var link = document.getElementById('css');\n"
+        "var script = document.getElementById('s');\n"
+        "document.documentElement.setAttribute('data-result', (link instanceof HTMLLinkElement) + ':' + (script instanceof HTMLScriptElement) + ':' + (link.dataset instanceof DOMStringMap));\n",
+        "browser-constructors");
+    if (!ok) return "script failed\n";
+    return dom->children[0]->attr("data-result") + "\n";
+}
+
 static std::string RunEngineDeepDomRegistrationSnapshot() {
     std::string html = "<html><body>";
     for (int i = 0; i < 1600; ++i) {
@@ -2800,6 +2813,12 @@ TestResult RunJsTests() {
         "js/engine/dom-registration-keeps-builtins",
         RunEngineDomKeepsBuiltinsSnapshot(),
         "function:a%20b\n",
+        result);
+
+    ExpectEqual(
+        "js/dom/browser-element-constructors",
+        RunDomBrowserConstructorsSnapshot(),
+        "true:true:true\n",
         result);
 
     ExpectEqual(

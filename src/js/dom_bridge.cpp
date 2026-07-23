@@ -869,7 +869,10 @@ static void notifyMutationObservers(VM& vm, Node* target, const std::string& typ
         record->setProp("type", vm.str(type));
         auto shared = getShared(target);
         record->setProp("target", shared ? wrapNode(vm, shared) : JsValue::null());
-        auto* records = vm.gc().newArray();
+        auto* addedNodes = newArrayWithPrototype(vm);
+        record->setProp("addedNodes", JsValue::object(addedNodes));
+        record->setProp("removedNodes", JsValue::object(newArrayWithPrototype(vm)));
+        auto* records = newArrayWithPrototype(vm);
         records->arrayPush(JsValue::object(record));
         try {
             vm.call(callback, JsValue::undefined(), { JsValue::object(records), JsValue::object(entry.observer) });
@@ -2039,6 +2042,11 @@ static JsValue wrapNodeInternal(VM& vm, std::shared_ptr<Node> node, bool materia
     // dataset — proxy for data-* attributes.
     {
         auto* ds = vm.gc().newObject(ObjKind::Plain);
+        JsValue domStringMap = vm.getGlobal("DOMStringMap");
+        if (domStringMap.isObject()) {
+            JsValue proto = domStringMap.asObject()->getProp("prototype");
+            if (proto.isObject()) ds->proto = proto.asObject();
+        }
         ds->domNode = raw;
         g_datasetObjects.insert(ds);
         if (raw) {
@@ -3892,6 +3900,15 @@ void registerDom(VM& vm, std::shared_ptr<Node> docNode,
     auto* htmlCtor = vm.gc().newNativeFunction(NATIVE("HTMLElement") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "HTMLElement");
     htmlCtor->setProp("prototype", JsValue::object(g_elementProto));
     vm.setGlobal("HTMLElement", JsValue::object(htmlCtor));
+    auto* linkCtor = vm.gc().newNativeFunction(NATIVE("HTMLLinkElement") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "HTMLLinkElement");
+    linkCtor->setProp("prototype", JsValue::object(g_elementProto));
+    vm.setGlobal("HTMLLinkElement", JsValue::object(linkCtor));
+    auto* scriptCtor = vm.gc().newNativeFunction(NATIVE("HTMLScriptElement") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "HTMLScriptElement");
+    scriptCtor->setProp("prototype", JsValue::object(g_elementProto));
+    vm.setGlobal("HTMLScriptElement", JsValue::object(scriptCtor));
+    auto* domStringMapCtor = vm.gc().newNativeFunction(NATIVE("DOMStringMap") { return JsValue::object(vm.gc().newObject(ObjKind::Plain)); }, "DOMStringMap");
+    domStringMapCtor->setProp("prototype", JsValue::object(vm.gc().newObject(ObjKind::Plain)));
+    vm.setGlobal("DOMStringMap", JsValue::object(domStringMapCtor));
 
     JsValue docVal = wrapNode(vm, docNode);
     vm.setGlobal("document", docVal);
